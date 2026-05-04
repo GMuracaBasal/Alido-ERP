@@ -4803,17 +4803,55 @@ const LotesDespieceView = ({
                           </td>
                           <td className="px-8 py-4 text-sm text-slate-400 font-mono">{formatNum(c.cantidadEsperada, 2)}</td>
                           <td className="px-8 py-4 text-sm font-bold text-sleek-dark">
-                             <div className="flex flex-col">
-                               <span>{displayNum(currentQty, 3)} kg</span>
-                               {hasLabels && <span className="text-[8px] text-sleek-accent font-bold uppercase tracking-tighter">Lectura de etiquetas</span>}
-                             </div>
+                             {hasLabels ? (
+                               <div className="flex flex-col">
+                                 <span>{displayNum(currentQty, 3)} kg</span>
+                                 <span className="text-[8px] text-sleek-accent font-bold uppercase tracking-tighter">Lectura de etiquetas</span>
+                               </div>
+                             ) : (
+                               <input
+                                 type="number"
+                                 step="0.001"
+                                 min="0"
+                                 value={c.cantidadReal || ''}
+                                 onChange={e => {
+                                   const val = parseFloat(e.target.value) || 0;
+                                   const factor = getPesoEquivalente(c.productoId);
+                                   const newCortes = [...formData.cortes];
+                                   newCortes[idx] = {
+                                     ...newCortes[idx],
+                                     cantidadReal: val,
+                                     unidadesReales: factor > 0 ? Math.round(val / factor) : newCortes[idx].unidadesReales
+                                   };
+                                   setFormData({ ...formData, cortes: newCortes });
+                                 }}
+                                 className="w-28 px-3 py-2 bg-white border border-slate-200 rounded text-sm font-bold text-sleek-dark focus:outline-none focus:border-sleek-accent focus:ring-1 focus:ring-sleek-accent/30"
+                                 placeholder="0.000"
+                               />
+                             )}
                           </td>
                           <td className="px-8 py-4">
                             {prod?.unidadMedidaId !== 'u1' ? (
-                              <div className="p-1 text-xs font-black text-sleek-dark">
-                                {hasLabels ? le.envases.filter((e: any) => !e.anulado).length : (c.unidadesReales || 0)}
-                                <span className="ml-1 text-slate-300 font-bold uppercase text-[9px]">un.</span>
-                              </div>
+                              hasLabels ? (
+                                <div className="p-1 text-xs font-black text-sleek-dark">
+                                  {le.envases.filter((e: any) => !e.anulado).length}
+                                  <span className="ml-1 text-slate-300 font-bold uppercase text-[9px]">un.</span>
+                                </div>
+                              ) : (
+                                <input
+                                  type="number"
+                                  step="1"
+                                  min="0"
+                                  value={c.unidadesReales || ''}
+                                  onChange={e => {
+                                    const newCortes = [...formData.cortes];
+                                    newCortes[idx] = { ...newCortes[idx], unidadesReales: parseInt(e.target.value) || 0 };
+                                    setFormData({ ...formData, cortes: newCortes });
+                                  }}
+                                  className="w-20 px-3 py-2 bg-white border border-slate-200 rounded text-sm font-bold text-sleek-dark focus:outline-none focus:border-sleek-accent focus:ring-1 focus:ring-sleek-accent/30"
+                                  placeholder="0"
+                                />
+                              )
                             ) : (
                               <span className="text-[10px] text-slate-300 font-bold uppercase">N/A (KG)</span>
                             )}
@@ -14623,10 +14661,13 @@ export default function App() {
         const matchesId = item.loteId === targetLoteNum;
         const matchesInternalId = internalId && (item.loteId === internalId || item.parentLoteId === internalId);
         const matchesRawId = item.loteId === l.id;
-        // Specialized butchery matching (e.g., lp1-pt1)
-        const butcheryPartMatch = internalId && item.loteId?.startsWith(`${internalId}-`);
+        // Specialized butchery matching: must match BOTH lote AND product
+        const butcheryPartMatch = internalId && item.loteId === `${internalId}-${l.productoId}`;
 
-        return matchesNumero || matchesId || matchesInternalId || matchesRawId || butcheryPartMatch;
+        // For non-butchery matches, also verify productoId if available
+        const productMatch = !item.productoId || item.productoId === l.productoId;
+
+        return butcheryPartMatch || ((matchesNumero || matchesId || matchesInternalId || matchesRawId) && productMatch);
       });
 
       if (le && le.envases && le.envases.length > 0) {
