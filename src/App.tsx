@@ -8508,7 +8508,17 @@ const AlmacenesView = ({
 
   if (selectedAlmacen) {
     const assignedProducts = stockSeguridad.filter((s: any) => s.almacenId === selectedAlmacen.id);
-    const filteredProducts = assignedProducts.filter((ap: any) => {
+    const assignedProductIds = new Set(assignedProducts.map((ap: any) => ap.productoId));
+
+    // Find products with stock in this almacen that are NOT assigned via stockSeguridad
+    const unassignedWithStock = Array.from(new Set(
+      lotesStock.filter((ls: any) => ls.almacenId === selectedAlmacen.id && ls.cantidad > 0.001 && !assignedProductIds.has(ls.productoId))
+        .map((ls: any) => ls.productoId)
+    )).map((pid: any) => ({ productoId: pid, cantidad: 0, almacenId: selectedAlmacen.id, _unassigned: true }));
+
+    const allProducts = [...assignedProducts, ...unassignedWithStock];
+
+    const filteredProducts = allProducts.filter((ap: any) => {
       const prod = productos.find((p: any) => p.id === ap.productoId);
       if (!prod) return false;
       
