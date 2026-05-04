@@ -9227,25 +9227,27 @@ const VentasPedidosView = ({
                   }
                 });
               } else {
-                // FEFO manual
+                // FEFO manual - track stock per lote AND per almacen
                 let pending = item.cantidad;
                 const prod = productos.find((p: any) => p.id === item.productoId);
                 const isKg = prod?.unidadMedidaId === 'u1';
                 
-                // Get all relevant movements to calculate current stock per batch
-                const stockPorLote: any = {};
-                movimientos.filter((m: any) => !m.anulado && m.productoId === item.productoId).forEach((m: any) => {
-                  const cant = m.tipo === 'entrada' ? m.cantidad : -m.cantidad;
-                  stockPorLote[m.loteNumero] = (stockPorLote[m.loteNumero] || 0) + cant;
+                // Get stock per lote+almacen combination
+                const stockPorLoteAlmacen: any = {};
+                finalMovimientos.filter((m: any) => !m.anulado && m.productoId === item.productoId).forEach((m: any) => {
+                  const key = `${m.loteNumero}|||${m.almacenId}`;
+                  const cant = m.tipo === 'entrada' ? m.cantidad : (m.tipo === 'salida' ? -m.cantidad : 0);
+                  stockPorLoteAlmacen[key] = (stockPorLoteAlmacen[key] || 0) + cant;
                 });
 
-                // Find batch info (expiry)
-                const batches = Object.keys(stockPorLote)
-                  .map(num => {
-                    const entry = movimientos.find((m: any) => m.productoId === item.productoId && m.loteNumero === num && m.tipo === 'entrada');
-                    return { numero: num, stock: stockPorLote[num], vencimiento: entry?.fechaVencimiento || '9999-12-31' };
+                // Build batches with almacen info, sorted FEFO
+                const batches = Object.keys(stockPorLoteAlmacen)
+                  .map(key => {
+                    const [num, almId] = key.split('|||');
+                    const entry = finalMovimientos.find((m: any) => m.productoId === item.productoId && m.loteNumero === num && m.tipo === 'entrada');
+                    return { numero: num, almacenId: almId, stock: stockPorLoteAlmacen[key], vencimiento: entry?.fechaVencimiento || '9999-12-31' };
                   })
-                  .filter(b => b.stock > 0)
+                  .filter(b => b.stock > 0.001)
                   .sort((a, b) => a.vencimiento.localeCompare(b.vencimiento));
 
                 batches.forEach(b => {
@@ -9255,7 +9257,7 @@ const VentasPedidosView = ({
                     id: `MOV-${Date.now()}-${b.numero}-${pending}`,
                     tipo: 'salida',
                     productoId: item.productoId,
-                    almacenId: 'a2', // Default PT warehouse
+                    almacenId: b.almacenId, // Use the actual almacen where stock exists
                     cantidad: toTake,
                     unidad: item.unidad,
                     cantidadKg: isKg ? toTake : (toTake * (prod?.pesoNetoUnidad || 0)),
@@ -9274,12 +9276,13 @@ const VentasPedidosView = ({
                 });
 
                 if (pending > 0) {
-                  // Finalizing with negative stock warning (already permitted by requirements)
+                  // Finalizing with negative stock warning
+                  const defaultAlmacen = batches.length > 0 ? batches[0].almacenId : 'a1';
                    newMovs.push({
                     id: `MOV-${Date.now()}-neg-${pending}`,
                     tipo: 'salida',
                     productoId: item.productoId,
-                    almacenId: 'a2',
+                    almacenId: defaultAlmacen,
                     cantidad: pending,
                     unidad: item.unidad,
                     cantidadKg: isKg ? pending : (pending * (prod?.pesoNetoUnidad || 0)),
