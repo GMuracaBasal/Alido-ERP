@@ -2755,7 +2755,7 @@ const LoginView = ({ onLogin }: {
     <div className="min-h-screen flex items-center justify-center bg-sleek-bg p-4">
       <div className="bg-white p-10 rounded-lg shadow-xl w-full max-w-md border border-slate-200">
         <div className="text-center mb-8">
-          <img id="logo-alido" src="/alido-logo.svg" alt="Alido Logo" className="h-24 mx-auto mb-6" />
+          <img id="logo-alido" src="/alido-logo.png" alt="Alido Logo" className="h-24 mx-auto mb-6" />
           <h1 className="text-2xl font-bold text-sleek-dark uppercase tracking-widest">Alido - Gestión</h1>
           <p className="text-slate-400 text-sm mt-2">Inicie sesión para continuar</p>
         </div>
@@ -2795,7 +2795,7 @@ const LoginView = ({ onLogin }: {
         </div>
         <div className="mt-8 pt-6 border-t border-slate-100 text-center">
           <p className="text-[9px] font-bold text-slate-400 uppercase tracking-[0.2em] mb-3">Desarrollado por</p>
-          <img src="/basal-logo.svg" alt="Basal Logo" className="h-8 mx-auto hover:scale-110 transition-all" />
+          <img src="/basal-logo.png" alt="Basal Logo" className="h-8 mx-auto hover:scale-110 transition-all" />
         </div>
       </div>
     </div>
@@ -14966,7 +14966,7 @@ export default function App() {
         sidebarExpanded ? "w-[260px]" : "w-20"
       )}>
         <div className="p-8 flex flex-col items-center gap-4 border-b border-white/10">
-          <img src="/alido-logo.svg" alt="Logo" className="h-12" />
+          <img src="/alido-logo.png" alt="Logo" className="h-12" />
           {sidebarExpanded && <span className="font-bold text-lg uppercase tracking-[0.2em]">Alido</span>}
         </div>
 
@@ -15047,7 +15047,7 @@ export default function App() {
           {sidebarExpanded && (
             <div className="flex flex-col items-center gap-3 opacity-40 hover:opacity-100 transition-opacity">
               <p className="text-[8px] font-bold uppercase tracking-widest text-white/60">Desarrollado por</p>
-              <img src="/basal-logo.svg" alt="Basal Logo" className="h-6 brightness-0 invert" />
+              <img src="/basal-logo.png" alt="Basal Logo" className="h-6 brightness-0 invert" />
             </div>
           )}
           <button 
