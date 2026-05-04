@@ -1,0 +1,73 @@
+1173:function formatNum(valor: any, decimales: number = 3) {
+1181:  const num = formatNum(valor, decimales);
+1518:                        Equivalencia: 1 {unidades.find((u: any) => u.id === p.unidadMedidaId)?.abreviatura} = {formatNum(p.pesoEquivalenteKg)} kg
+2112:                    Equivale a aproximadamente {formatNum(formData.cantidadBase / factorBase, 2)} {unidades.find((u: any) => u.id === prodBase.unidadMedidaId)?.abreviatura || 'un'}
+3374:                        Equivale a aproximadamente {formatNum(formData.cantidadEstimada / getPesoEquivalente(formData.productoId))} {unidades.find((u: any) => u.id === productos.find((p: any) => p.id === formData.productoId)?.unidadMedidaId)?.abreviatura || 'un'}
+3442:                          <td className="px-8 py-4 text-sm text-slate-400 font-mono">{formatNum(ins.cantidadTeorica)}</td>
+3450:                                newInsumos[idx].cantidadReal = formatNum(parseFloat(e.target.value) || 0);
+3462:                              {formatNum(stock, 2)}
+3487:                  <p className="text-xl font-bold">{formatNum(formData.insumos.reduce((sum: number, ins: any) => sum + ins.cantidadTeorica, 0), 2)} kg</p>
+3491:                  <p className="text-xl font-bold">{formatNum(formData.insumos.reduce((sum: number, ins: any) => sum + ins.cantidadReal, 0), 2)} kg</p>
+3543:      const pesoNetoProducido = formatNum(envases
+3548:      const stockActual = formatNum(envases
+3552:      const despachado = formatNum(envases
+3561:      const rendimientoProd = totalRealInsumosKg > 0 ? formatNum((displayProducido / totalRealInsumosKg) * 100, 1) : 0;
+3562:      const mermaProdKg = formatNum(totalRealInsumosKg - displayProducido, 2);
+3563:      const mermaProdPerc = totalRealInsumosKg > 0 ? formatNum((mermaProdKg / totalRealInsumosKg) * 100, 1) : 0;
+3566:      const desvioRendimiento = formatNum(rendimientoProd - (receta?.rendimientoEsperado || 100), 1);
+3635:              {formatNum(selectedLote.cantidadEstimada)} {unit?.abreviatura}
+3637:                <span className="text-slate-400 ml-1 text-[10px]">({formatNum(selectedLote.cantidadEstimada * factorEquivalencia)} kg)</span>
+3691:                  <p className="text-2xl font-bold text-sleek-dark font-mono">{formatNum(rendimientoProd, 1)}%</p>
+3701:                <p className="text-2xl font-bold text-sleek-dark font-mono">{formatNum(mermaProdKg, 2)} kg</p>
+3702:                <p className="text-[10px] text-slate-400 font-bold uppercase">{formatNum(mermaProdPerc, 1)}% del total</p>
+3710:                  {desvioRendimiento > 0 ? '+' : ''}{formatNum(desvioRendimiento, 1)}%
+3751:                          <td className="px-6 py-4 text-sm text-slate-400 font-mono">{formatNum(ins.cantidadTeorica)}</td>
+3752:                          <td className="px-6 py-4 text-sm text-sleek-dark font-bold font-mono">{formatNum(ins.cantidadReal)}</td>
+3758:                              {diff > 0 ? '+' : ''}{formatNum(diff)} ({formatNum(ins.cantidadTeorica > 0 ? diffPerc : 0, 1)}%)
+3769:                        {formatNum((selectedLote.insumos || []).reduce((sum: number, ins: any) => sum + (ins.cantidadTeorica || 0), 0))}
+3772:                        {formatNum(totalRealInsumosKg)}
+3799:                        <p className="text-xs font-black text-sleek-dark">{envs.length} ({formatNum(envs.reduce((s: number, e: any) => s + e.pesoNeto, 0), 1)} kg)</p>
+3803:                        <p className="text-xs font-black text-emerald-600">{active.length} ({formatNum(active.reduce((s: number, e: any) => s + e.pesoNeto, 0), 1)} kg)</p>
+3807:                        <p className="text-xs font-black text-rose-600">{baja.length} ({formatNum(baja.reduce((s: number, e: any) => s + e.pesoNeto, 0), 1)} kg)</p>
+3905:                <p className="text-xl font-bold text-sleek-accent">{formatNum(totalRealInsumosKg, 2)} kg</p>
+3976:                  {totalRealInsumosKg > 0 ? formatNum((finalizeData.pesoNeto / totalRealInsumosKg) * 100, 1) : 0}%
+3982:                  {formatNum(totalRealInsumosKg - finalizeData.pesoNeto, 2)} kg
+4112:                           const stockActualKg = formatNum(envases
+4120:                           const pesoProducidoKg = formatNum(envases
+4126:                           const rendimientoActual = totalInsumosKg > 0 ? formatNum((displayProdKg / totalInsumosKg) * 100, 1) : (l.rendimientoReal || 0);
+4131:                                 {unit?.id !== 'u1' && factorEquiv > 0 ? formatNum(displayStockKg / factorEquiv) : formatNum(displayStockKg)} {unit?.abreviatura}
+4135:                                   ({formatNum(displayStockKg)} kg)
+4150:                                   <p className="text-[10px] text-slate-400 font-bold font-mono">{formatNum(rendimientoActual, 1)}% rend.</p>
+4477:    const totalCortesKg = finalCortes.reduce((sum: number, c: any) => sum + formatNum(c.cantidadReal), 0);
+4478:    const cantidadIngresadaKg = formatNum(parseFloat(formData.cantidadIngresada) || 0);
+4479:    const rendimientoReal = cantidadIngresadaKg > 0 ? formatNum((totalCortesKg / cantidadIngresadaKg) * 100, 1) : 0;
+4530:      return sum + formatNum(qty);
+4532:    const cantidadIngresadaKg = formatNum(parseFloat(formData.cantidadIngresada) || 0);
+4533:    const rendimientoReal = cantidadIngresadaKg > 0 ? formatNum((totalCortesKg / cantidadIngresadaKg) * 100, 1) : 0;
+4534:    const mermaRealKg = formatNum(cantidadIngresadaKg - totalCortesKg);
+4535:    const mermaPerc = formatNum(100 - rendimientoReal, 1);
+4594:                        Equivale a aproximadamente {formatNum(formData.cantidadIngresada / getPesoEquivalente(formData.materiaPrimaId), 2)} {unidades.find((u: any) => u.id === productos.find((p: any) => p.id === formData.materiaPrimaId)?.unidadMedidaId)?.abreviatura || 'un'}
+4647:                          <td className="px-8 py-4 text-sm text-slate-400 font-mono">{formatNum(c.cantidadEsperada, 2)}</td>
+4692:                                {!hasLabels && <p className="text-[8px] font-bold text-slate-400 uppercase">Estimado: {formatNum(c.cantidadReal / (getPesoEquivalente(c.productoId) || 1), 1)}</p>}
+4735:                    <span className={cn(rendimientoReal >= 90 ? "text-sleek-success" : "text-sleek-warning")}>{formatNum(rendimientoReal, 1)}%</span>
+4738:                    <div className={cn("h-full transition-all", rendimientoReal >= 90 ? "bg-sleek-success" : "bg-sleek-warning")} style={{ width: `${formatNum(rendimientoReal, 1)}%` }}></div>
+4744:                    <p className="text-lg font-bold text-sleek-dark">{formatNum(totalCortesKg, 2)} kg</p>
+4748:                    <p className="text-lg font-bold text-sleek-danger">{formatNum(mermaRealKg, 2)} kg</p>
+4885:                        {formatNum(l.cantidadIngresada)} kg
+4898:                               📦 {totalEnvases} env. | {formatNum(totalPeso, 1)} kg
+4906:                            <span className="text-sm font-bold text-sleek-dark">{formatNum(l.rendimientoReal || 0, 1)}%</span>
+4908:                              <div className="h-full bg-sleek-success" style={{ width: `${formatNum(l.rendimientoReal || 0, 1)}%` }}></div>
+6901:                          {m.tipo === 'entrada' ? '+' : '-'}{formatNum(m.cantidad)} {m.unidad}
+6904:                          <p className="text-[10px] text-slate-400">({formatNum(m.cantidadKg, 2)} kg)</p>
+7134:                <p className="text-lg font-black text-sleek-dark">{formatNum(selectedMov.cantidad)} {selectedMov.unidad} ({formatNum(selectedMov.cantidadKg, 2)} kg)</p>
+7385:                <p className="text-[10px] text-amber-500 font-bold uppercase mt-1">Este producto tiene {formatNum(currentPendientes.reduce((sum, p) => sum + p.cantidadPendiente, 0), 2)} kg pendientes de descontar por falta de stock en producciones anteriores.</p>
+8157:                              ? formatNum(prodLotes.reduce((sum: number, l: any) => sum + (l.cantidad * getPesoEquivalente(prod.id, l)), 0)) 
+8158:                              : formatNum(actual || 0)} {prod.tipo === 'Materia Prima' ? 'kg' : prodUnidad}
+8161:                            <p className="text-[10px] text-slate-400">({formatNum(actual || 0)} {prodUnidad})</p>
+8164:                            <p className="text-[10px] text-slate-400">({formatNum(prodLotes.reduce((sum: number, l: any) => sum + (l.cantidad * getPesoEquivalente(prod.id, l)), 0), 2)} kg)</p>
+8171:                                ? `${formatNum(seguridad * getPesoEquivalente(prod.id))} kg`
+8172:                                : `${formatNum(seguridad || 0)} ${prodUnidad}`
+8176:                            <p className="text-[10px] text-slate-400">({formatNum(seguridad || 0)} {prodUnidad})</p>
+8340:                                                                <td className="px-6 py-2 text-right font-mono font-bold text-sleek-dark">{formatNum(env.pesoNeto, 3)} kg</td>
+8347:                                                              <td className="px-6 py-3 text-right">Peso total: {formatNum(totalPeso, 2)} kg</td>
+13801:                          ({formatNum(mov.cantidad * getPesoEquivalente(mov.productoId), 2)} kg)
