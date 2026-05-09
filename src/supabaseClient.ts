@@ -5,6 +5,9 @@ const SUPABASE_ANON_KEY = 'sb_publishable_2PJkoRnnjjtMVG-sQofqTw_Hxb27ndH';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+// Session ID to distinguish our own saves
+export const SESSION_ID = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
 // --- Funciones de persistencia ---
 
 export async function loadFromSupabase(key: string, initial: any): Promise<any> {
@@ -26,7 +29,7 @@ export async function saveToSupabase(key: string, value: any): Promise<void> {
   try {
     await supabase
       .from('app_data')
-      .upsert({ key, value }, { onConflict: 'key' });
+      .upsert({ key, value, updated_by: SESSION_ID }, { onConflict: 'key' });
   } catch (err) {
     console.error(`Error guardando ${key} en Supabase:`, err);
   }
@@ -52,5 +55,21 @@ export async function loadAllData(keys: string[], initials: Record<string, any>)
     return result;
   } catch {
     return initials;
+  }
+}
+
+// --- Sync: check for changes from other users ---
+export async function checkForUpdates(since: string): Promise<{ key: string; value: any }[]> {
+  try {
+    const { data, error } = await supabase
+      .from('app_data')
+      .select('key, value, updated_at, updated_by')
+      .gt('updated_at', since)
+      .neq('updated_by', SESSION_ID);
+
+    if (error || !data) return [];
+    return data.map(row => ({ key: row.key, value: row.value }));
+  } catch {
+    return [];
   }
 }
