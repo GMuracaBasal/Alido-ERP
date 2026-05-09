@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { loadAllData, saveToSupabase } from './supabaseClient';
+import { loadAllData, saveToSupabase, checkForUpdates } from './supabaseClient';
 import { 
   LayoutDashboard, 
   Package, 
@@ -520,6 +520,7 @@ interface VentaProducto {
   descuento: number; // porcentaje Individual
   subtotal: number;
   manualPrice?: boolean;
+  pesoKg?: number; // peso real en kg (para productos vendidos por unidad)
 }
 
 interface Cobro {
@@ -9688,20 +9689,24 @@ const VentaForm = ({
         showNotification('Este envase ya está en la venta', 'error');
       } else {
         const prod = productos.find((p_obj: any) => p_obj.id === foundLote?.productoId);
-        const price = getPriceForQuantity(prod?.id || '', p.pesoNeto, [...form.productos]);
+        const isKg = prod?.unidadMedidaId === 'u1';
+        // Si el producto se vende por kg, la cantidad es el peso. Si se vende por unidad, la cantidad es 1.
+        const cantidadVenta = isKg ? p.pesoNeto : 1;
+        const price = getPriceForQuantity(prod?.id || '', cantidadVenta, [...form.productos]);
         const discountObj = selectedCliente?.descuentosEspeciales.find((d: any) => d.productoId === prod?.id);
         const discount = discountObj ? discountObj.porcentaje : 0;
         
-        const sub = (p.pesoNeto * price) * (1 - discount / 100);
+        const sub = (cantidadVenta * price) * (1 - discount / 100);
         const newItem: VentaProducto = {
           productoId: prod?.id || '',
           codigoBarras: barcodeInput,
-          cantidad: p.pesoNeto,
-          unidad: prod?.unidadMedidaId === 'u1' ? 'kg' : 'un',
+          cantidad: cantidadVenta,
+          unidad: isKg ? 'kg' : 'un',
           precioUnitario: price,
           descuento: discount,
           subtotal: sub,
-          manualPrice: false
+          manualPrice: false,
+          pesoKg: p.pesoNeto  // Always store weight for reference
         };
         updateTotals([...form.productos, newItem]);
         showNotification('Envase agregado', 'success');
@@ -10065,6 +10070,9 @@ const VentaForm = ({
                                           className="w-20 px-2 py-1 bg-white border border-slate-100 rounded text-xs font-black text-center outline-none disabled:bg-slate-100 disabled:text-slate-400 shadow-inner"
                                         />
                                         <span className="text-[10px] font-black text-slate-400 uppercase">{item.unidad}</span>
+                                        {item.pesoKg && item.unidad !== 'kg' && (
+                                          <span className="text-[9px] font-bold text-slate-300">({formatNum(item.pesoKg, 2)} kg)</span>
+                                        )}
                                      </div>
                                   </td>
                                   <td className="py-4 text-right">
@@ -10635,6 +10643,7 @@ const RemitoView = ({ venta, cliente, productos, onBack }: any) => {
                        <th className="text-left py-4 text-[10px] font-black uppercase text-slate-400">Producto / Descripción</th>
                        <th className="text-center py-4 text-[10px] font-black uppercase text-slate-400">Bulto / ID</th>
                        <th className="text-right py-4 text-[10px] font-black uppercase text-slate-400 font-black">Cant.</th>
+                       <th className="text-right py-4 text-[10px] font-black uppercase text-slate-400">Peso</th>
                        <th className="text-right py-4 text-[10px] font-black uppercase text-slate-400">Precio Unit.</th>
                        <th className="text-right py-4 text-[10px] font-black uppercase text-slate-400 tracking-widest">Subtotal</th>
                     </tr>
@@ -10642,6 +10651,7 @@ const RemitoView = ({ venta, cliente, productos, onBack }: any) => {
                  <tbody className="divide-y divide-slate-50">
                     {venta.productos.map((item: any, idx: number) => {
                        const p = productos.find((prod: any) => prod.id === item.productoId);
+                       const isKg = p?.unidadMedidaId === 'u1';
                        return (
                          <tr key={idx}>
                             <td className="py-6 pr-8">
@@ -10652,7 +10662,10 @@ const RemitoView = ({ venta, cliente, productos, onBack }: any) => {
                                {item.codigoBarras || '-'}
                             </td>
                             <td className="py-6 text-right font-black text-xs text-sleek-dark">
-                               {item.cantidad} {item.unidad}
+                               {isKg ? `${formatNum(item.cantidad, 2)} kg` : `${item.cantidad} un`}
+                            </td>
+                            <td className="py-6 text-right font-bold text-[10px] text-slate-400">
+                               {isKg ? '-' : `${formatNum(item.pesoKg || (item.cantidad * (p?.pesoNetoUnidad || 0)), 2)} kg`}
                             </td>
                             <td className="py-6 text-right font-bold text-xs text-slate-500">
                                $ {item.precioUnitario.toLocaleString()}
@@ -10923,7 +10936,7 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
                           return (
                             <tr key={i}>
                               <td className="py-3 text-[11px] font-bold text-slate-600">{prod?.nombre}</td>
-                              <td className="py-3 text-[11px] font-bold text-slate-400 text-right">{p.cantidad}</td>
+                              <td className="py-3 text-[11px] font-bold text-slate-400 text-right">{p.cantidad} {p.unidad}</td>
                               <td className="py-3 text-[11px] font-black text-sleek-dark text-right">$ {(p.cantidad * (parseFloat(p.precioUnitario) || 0)).toLocaleString()}</td>
                             </tr>
                           );
@@ -14708,9 +14721,12 @@ export default function App() {
   // --- Persistence: Save to Supabase (debounced) ---
   const saveTimerRef = useRef<any>(null);
   const dataLoadedRef = useRef(false);
+  const isApplyingRemoteRef = useRef(false);
+  const lastSyncRef = useRef(new Date().toISOString());
 
   useEffect(() => {
     if (isLoading) return; // Don't save while loading from Supabase
+    if (isApplyingRemoteRef.current) return; // Don't save when applying remote changes
     if (!dataLoadedRef.current) {
       dataLoadedRef.current = true;
       return; // Skip first render after loading
@@ -14736,6 +14752,7 @@ export default function App() {
         alido_plantillas_egresos: plantillasEgresos, alido_mercaderia_pendiente: mercaderiaPendiente
       };
       // Save to Supabase
+      lastSyncRef.current = new Date().toISOString();
       Object.entries(dataMap).forEach(([key, value]) => {
         saveToSupabase(key, value);
       });
@@ -14745,6 +14762,51 @@ export default function App() {
       });
     }, 800); // Debounce 800ms to batch rapid changes
   }, [users, almacenes, familias, subfamilias, unidades, productos, stockSeguridad, movimientos, recetas, recetasHistorial, lotesProduccion, lotesHistorial, plantillasDespiece, plantillasDespieceHistorial, lotesDespiece, lotesDespieceHistorial, lotesEtiquetados, descuentosPendientes, clientes, listasPrecios, puntosVenta, ventas, cobrosClientes, planCuentas, tiposEgreso, proveedores, egresos, pagosProveedores, plantillasEgresos, mercaderiaPendiente, isLoading]);
+
+  // --- Realtime Sync: poll for changes from other users every 10 seconds ---
+  useEffect(() => {
+    if (isLoading) return;
+
+    const KEY_TO_SETTER: Record<string, (v: any) => void> = {
+      alido_users: setUsers, alido_almacenes: setAlmacenes, alido_familias: setFamilias,
+      alido_subfamilias: setSubfamilias, alido_unidades_medida: setUnidades,
+      alido_productos: setProductos, alido_stock_seguridad: setStockSeguridad,
+      alido_movimientos: setMovimientos, alido_recetas: setRecetas,
+      alido_recetas_historial: setRecetasHistorial, alido_lotes_produccion: setLotesProduccion,
+      alido_lotes_historial: setLotesHistorial, alido_plantillas_despiece: setPlantillasDespiece,
+      alido_plantillas_despiece_historial: setPlantillasDespieceHistorial,
+      alido_lotes_despiece: setLotesDespiece, alido_lotes_despiece_historial: setLotesDespieceHistorial,
+      alido_lotes_etiquetados: setLotesEtiquetados, alido_descuentos_pendientes: setDescuentosPendientes,
+      alido_clientes: setClientes, alido_listas_precios: setListasPrecios,
+      alido_puntos_venta: setPuntosVenta, alido_ventas: setVentas,
+      alido_cobros_clientes: setCobrosClientes, alido_plan_cuentas: setPlanCuentas,
+      alido_tipos_egreso: setTiposEgreso, alido_proveedores: setProveedores,
+      alido_egresos: setEgresos, alido_pagos_proveedores: setPagosProveedores,
+      alido_plantillas_egresos: setPlantillasEgresos, alido_mercaderia_pendiente: setMercaderiaPendiente
+    };
+
+    const intervalId = setInterval(async () => {
+      try {
+        const updates = await checkForUpdates(lastSyncRef.current);
+        if (updates.length > 0) {
+          isApplyingRemoteRef.current = true;
+          updates.forEach(({ key, value }) => {
+            const setter = KEY_TO_SETTER[key];
+            if (setter && value !== null && value !== undefined) {
+              setter(value);
+            }
+          });
+          lastSyncRef.current = new Date().toISOString();
+          // Allow save effect to skip, then re-enable
+          setTimeout(() => { isApplyingRemoteRef.current = false; }, 1500);
+        }
+      } catch (err) {
+        console.error('Sync error:', err);
+      }
+    }, 10000); // Check every 10 seconds
+
+    return () => clearInterval(intervalId);
+  }, [isLoading]);
 
   // --- Data Cleanup Period (Run once on init) ---
   useEffect(() => {
