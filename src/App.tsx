@@ -4466,6 +4466,18 @@ const LotesDespieceView = ({
 
       const updatedLote = { ...formData, cortes: updatedCortes, estado };
       setLotesDespiece(lotesDespiece.map((l: any) => l.id === selectedLote.id ? updatedLote : l));
+
+      // Sync label almacenIds to match corte almacenDestinoId (single source of truth)
+      const updatedLabels = lotesEtiquetados.map((le: any) => {
+        if (le.parentLoteId === selectedLote.id) {
+          const corte = updatedCortes.find((c: any) => c.productoId === le.productoId);
+          if (corte?.almacenDestinoId) {
+            return { ...le, almacenId: corte.almacenDestinoId };
+          }
+        }
+        return le;
+      });
+      setLotesEtiquetados(updatedLabels);
       
       const historyEntry: LoteDespieceHistorial = {
         id: `ldh-${Date.now()}`,
@@ -5222,7 +5234,9 @@ const EtiquetasView = ({
       loteNumero: selectedLote?.numeroLote,
       tipoLote: selectedLote?.tipo,
       productoId: product?.id,
-      almacenId: selectedLote?.tipo === 'despiece' && selectedCorteId ? corteAlmacenes[selectedCorteId] : '',
+      almacenId: selectedLote?.tipo === 'despiece' && selectedCorteId 
+        ? (selectedLote.cortes?.find((c: any) => c.productoId === selectedCorteId)?.almacenDestinoId || '') 
+        : '',
       envases: [],
       pesoTotalEtiquetado: 0,
       estado: 'en_proceso',
@@ -5549,7 +5563,14 @@ const EtiquetasView = ({
   };
 
   const handleConfirmFinalize = () => {
-    if (!finalizeForm.almacenDestinoId) {
+    if (selectedLote?.tipo === 'despiece') {
+      // For despiece, check that all cortes have almacen assigned in the lote
+      const allCortesHaveAlmacen = selectedLote.cortes?.every((c: any) => c.almacenDestinoId);
+      if (!allCortesHaveAlmacen) {
+        showNotification('Todos los cortes deben tener almacén asignado desde Lotes de Despiece', 'error');
+        return;
+      }
+    } else if (!finalizeForm.almacenDestinoId) {
       showNotification('Debe seleccionar un almacén de destino', 'error');
       return;
     }
@@ -5688,11 +5709,15 @@ const EtiquetasView = ({
          
          if (pesoTotalCorte <= 0) return;
 
+         // Get almacen from the lote's corte (single source of truth)
+         const corteDelLote = lote.cortes?.find((c: any) => c.productoId === le.productoId);
+         const almacenCorte = corteDelLote?.almacenDestinoId || finalizeForm.almacenDestinoId;
+
          addedMovimientos.push({
            id: `MOV-${Date.now()}-${le.productoId}-ent`,
            tipo: 'entrada',
            productoId: le.productoId,
-           almacenId: le.almacenId || finalizeForm.almacenDestinoId,
+           almacenId: almacenCorte,
            cantidad: prodCorte?.unidadMedidaId === 'u1' ? pesoTotalCorte : activeEnvases.length,
            unidad: unitCorte,
            cantidadKg: pesoTotalCorte,
@@ -5773,7 +5798,7 @@ const EtiquetasView = ({
              ...c,
              cantidadReal: qty,
              unidadesReales: activeEnvases.length,
-             almacenDestinoId: le.almacenId || finalizeForm.almacenDestinoId
+             // almacenDestinoId stays as set in lote (single source of truth)
            };
          }
          return c;
@@ -6024,31 +6049,21 @@ const EtiquetasView = ({
               </div>
 
               {selectedCorteId && (
-                <div className="pt-4 border-t border-slate-100 flex flex-col gap-3">
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest">¿En qué almacén se guarda?</label>
-                  <select 
-                    value={corteAlmacenes[selectedCorteId] || ''}
-                    onChange={(e) => setCorteAlmacenes({ ...corteAlmacenes, [selectedCorteId]: e.target.value })}
-                    className="w-full bg-slate-50 border-2 border-slate-100 rounded-lg px-3 py-2 text-[10px] font-bold text-sleek-dark focus:border-sleek-accent outline-none"
-                  >
-                    <option value="">Seleccione Almacén...</option>
-                    {almacenes.map((a: any) => (
-                      <option key={a.id} value={a.id}>{a.nombre}</option>
-                    ))}
-                  </select>
-                  <button 
-                    onClick={() => {
-                       const currentVal = corteAlmacenes[selectedCorteId];
-                       if (!currentVal) return;
-                       const newMap: Record<string, string> = {};
-                       selectedLote.cortes.forEach((c: any) => { newMap[c.productoId] = currentVal; });
-                       setCorteAlmacenes(newMap);
-                       showNotification('Almacén aplicado a todos los cortes', 'info');
-                    }}
-                    className="text-[8px] font-black text-sleek-accent uppercase self-end hover:underline"
-                  >
-                    Aplicar a todos los cortes
-                  </button>
+                <div className="pt-4 border-t border-slate-100 flex flex-col gap-2">
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest">Almacén destino</label>
+                  {(() => {
+                    const corte = selectedLote?.cortes?.find((c: any) => c.productoId === selectedCorteId);
+                    const alm = almacenes.find((a: any) => a.id === corte?.almacenDestinoId);
+                    return alm ? (
+                      <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 text-[10px] font-bold text-emerald-700 uppercase">
+                        {alm.nombre}
+                      </div>
+                    ) : (
+                      <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-[10px] font-bold text-amber-700">
+                        ⚠ Sin almacén asignado. Asignar desde <span className="underline">Lotes de Despiece → Editar Lote</span>
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
             </Card>
@@ -6580,19 +6595,48 @@ const EtiquetasView = ({
           </div>
 
           <div className="space-y-4">
-            <div>
-              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Almacén Destino (Obligatorio)</label>
-              <select 
-                value={finalizeForm.almacenDestinoId}
-                onChange={(e) => setFinalizeForm({ ...finalizeForm, almacenDestinoId: e.target.value })}
-                className="w-full bg-slate-50 border-2 border-slate-100 rounded-xl px-4 py-3 text-xs font-bold text-sleek-dark focus:border-sleek-accent transition-all outline-none"
-              >
-                <option value="">Seleccione Almacén...</option>
-                {almacenes.map((a: any) => (
-                  <option key={a.id} value={a.id}>{a.nombre}</option>
-                ))}
-              </select>
-            </div>
+            {selectedLote?.tipo === 'despiece' ? (
+              <div>
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Almacén Destino (desde Lote)</label>
+                {(() => {
+                  const cortesWithAlmacen = selectedLote.cortes?.filter((c: any) => c.almacenDestinoId) || [];
+                  const cortesWithoutAlmacen = selectedLote.cortes?.filter((c: any) => !c.almacenDestinoId) || [];
+                  return (
+                    <div className="space-y-2">
+                      {cortesWithAlmacen.map((c: any) => {
+                        const prod = productos.find((p: any) => p.id === c.productoId);
+                        const alm = almacenes.find((a: any) => a.id === c.almacenDestinoId);
+                        return (
+                          <div key={c.productoId} className="flex justify-between items-center bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+                            <span className="text-[10px] font-bold text-emerald-800 uppercase">{prod?.nombre}</span>
+                            <span className="text-[10px] font-black text-emerald-600">→ {alm?.nombre}</span>
+                          </div>
+                        );
+                      })}
+                      {cortesWithoutAlmacen.length > 0 && (
+                        <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-[10px] font-bold text-amber-700">
+                          ⚠ {cortesWithoutAlmacen.length} corte(s) sin almacén asignado. Asigne desde Lotes de Despiece → Editar Lote.
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
+            ) : (
+              <div>
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Almacén Destino (Obligatorio)</label>
+                <select 
+                  value={finalizeForm.almacenDestinoId}
+                  onChange={(e) => setFinalizeForm({ ...finalizeForm, almacenDestinoId: e.target.value })}
+                  className="w-full bg-slate-50 border-2 border-slate-100 rounded-xl px-4 py-3 text-xs font-bold text-sleek-dark focus:border-sleek-accent transition-all outline-none"
+                >
+                  <option value="">Seleccione Almacén...</option>
+                  {almacenes.map((a: any) => (
+                    <option key={a.id} value={a.id}>{a.nombre}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 gap-4">
                <div>
