@@ -4648,8 +4648,7 @@ const LotesDespieceView = ({
     setView(estado === 'Finalizado' && selectedLote ? 'detail' : 'list');
   };
 
-  const filteredLotes = lotesDespiece.filter((l: any) => {
-    if (isFinalizing) return;
+const handleFinalize = () => {
     if (formData.estado === 'Finalizado') {
       showNotification('Este lote ya fue finalizado.', 'error');
       setView('list');
