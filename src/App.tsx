@@ -2796,7 +2796,7 @@ const LoginView = ({ onLogin }: {
         </div>
         <div className="mt-8 pt-6 border-t border-slate-100 text-center">
           <p className="text-[9px] font-bold text-slate-400 uppercase tracking-[0.2em] mb-3">Desarrollado por</p>
-          <img src="/basal-logo.png" alt="Basal Logo" className="h-8 mx-auto hover:scale-110 transition-all" />
+          <img src="/basal-logo.png" alt="Basal Logo" className="h-10 mx-auto hover:scale-110 transition-all" />
         </div>
       </div>
     </div>
@@ -15382,7 +15382,7 @@ export default function App() {
         sidebarExpanded ? "w-[260px]" : "w-20"
       )}>
         <div className="p-8 flex flex-col items-center gap-4 border-b border-white/10">
-          <img src="/alido-logo.png" alt="Logo" className="h-24" />
+          <img src="/alido-logo.png" alt="Logo" className="h-34" />
        
         </div>
 
@@ -15463,7 +15463,7 @@ export default function App() {
           {sidebarExpanded && (
             <div className="flex flex-col items-center gap-3 opacity-40 hover:opacity-100 transition-opacity">
               <p className="text-[8px] font-bold uppercase tracking-widest text-white/60">Desarrollado por</p>
-              <img src="/basal-logo.png" alt="Basal Logo" className="h-10 brightness-0 invert" />
+              <img src="/basal-logo.png" alt="Basal Logo" className="h-14 brightness-0 invert" />
             </div>
           )}
           <button 
