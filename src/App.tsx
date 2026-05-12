@@ -2756,8 +2756,8 @@ const LoginView = ({ onLogin }: {
     <div className="min-h-screen flex items-center justify-center bg-sleek-bg p-4">
       <div className="bg-white p-10 rounded-lg shadow-xl w-full max-w-md border border-slate-200">
         <div className="text-center mb-8">
-          <img id="logo-alido" src="/alido-logo.png" alt="Alido Logo" className="h-34 mx-auto mb-6" />
-          <h1 className="text-2xl font-bold text-sleek-dark uppercase tracking-widest">Alido - Gestión</h1>
+          <img id="logo-alido" src="/alido-logo.png" alt="Alido Logo" className="h-40 mx-auto mb-6" />
+          <h1 className="text-2xl font-bold text-sleek-dark uppercase tracking-widest">Alido - ERP</h1>
           <p className="text-slate-400 text-sm mt-2">Inicie sesión para continuar</p>
         </div>
         <form onSubmit={handleSubmit} className="space-y-6">
@@ -15382,7 +15382,7 @@ export default function App() {
         sidebarExpanded ? "w-[260px]" : "w-20"
       )}>
         <div className="p-8 flex flex-col items-center gap-4 border-b border-white/10">
-          <img src="/alido-logo.png" alt="Logo" className="h-12" />
+          <img src="/alido-logo.png" alt="Logo" className="h-24" />
        
         </div>
 
