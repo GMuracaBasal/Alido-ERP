@@ -309,7 +309,7 @@ interface Movimiento {
   numeroFactura?: string;
   costoUnitario?: number;
   referencia?: string | null; // referencia a lote de producción si es automático
-  origen: 'manual' | 'produccion' | 'despiece';
+  origen: 'manual' | 'produccion' | 'despiece' | 'transferencia';
   usuario: string;
   fechaHora: string;
   anulado: boolean;
@@ -3251,7 +3251,7 @@ const LotesProduccionView = ({
     setFormData({ ...formData, cantidadEstimada: val, insumos: newInsumos });
   };
 
-  const handleSaveLote = (estado: 'Planificado' | 'En Proceso') => {
+  const handleSaveLote = (estado: 'Planificado' | 'En Proceso' | 'Finalizado') => {
     if (!formData.productoId || formData.cantidadEstimada <= 0) {
       showNotification('Complete los campos obligatorios', 'error');
       return;
@@ -3261,7 +3261,57 @@ const LotesProduccionView = ({
     const detail = selectedLote ? `Edición de lote ${formData.numeroLote}` : `Creación de lote ${formData.numeroLote}`;
 
     if (selectedLote) {
-      const updatedLote = { ...formData, estado };
+      const leProd = lotesEtiquetados.find((item: any) => item.loteId === selectedLote.id || item.loteId === selectedLote.numeroLote);
+      const activeEnv = (leProd?.envases || []).filter((e: any) => !(e.anulado === true || e.anulado === 'true' || e.estado === 'baja'));
+      const pesoDesdeEtiquetas = activeEnv.reduce((s: number, e: any) => s + (parseFloat(e.pesoNeto) || 0), 0);
+      const prodPT = productos.find((p: any) => p.id === formData.productoId);
+      const usesUnitsPT = prodPT?.unidadMedidaId !== 'u1';
+      const mergedForm = estado === 'Finalizado' && activeEnv.length > 0
+        ? {
+            ...formData,
+            pesoNeto: pesoDesdeEtiquetas,
+            unidadesReales: usesUnitsPT ? activeEnv.length : formData.unidadesReales
+          }
+        : formData;
+
+      const updatedLote = { ...mergedForm, estado: estado === 'Finalizado' ? 'Finalizado' : estado };
+
+      if (estado === 'Finalizado') {
+        const oldAlm = selectedLote.almacenDestinoId;
+        const newAlm = mergedForm.almacenDestinoId;
+        if (oldAlm && newAlm && oldAlm !== newAlm) {
+          const cantidadMove = usesUnitsPT ? (updatedLote.unidadesReales || 0) : (parseFloat(updatedLote.pesoNeto) || 0);
+          const cantidadKg = parseFloat(updatedLote.pesoNeto) || 0;
+          if (cantidadMove > 0) {
+            const unitPT = unidades.find((u: any) => u.id === prodPT?.unidadMedidaId)?.abreviatura || 'kg';
+            const nombreViejo = almacenes.find((a: any) => a.id === oldAlm)?.nombre || String(oldAlm);
+            const nombreNuevo = almacenes.find((a: any) => a.id === newAlm)?.nombre || String(newAlm);
+            const motivo = `Transferencia: ${nombreViejo} → ${nombreNuevo} (Lote ${formData.numeroLote})`;
+            const base = {
+              productoId: formData.productoId,
+              cantidad: cantidadMove,
+              unidad: unitPT,
+              cantidadKg,
+              motivo,
+              loteNumero: formData.numeroLote,
+              fechaIngreso: safeFormat(new Date(), 'yyyy-MM-dd'),
+              fechaVencimiento: formData.fechaVencimiento,
+              origen: 'transferencia' as const,
+              usuario: currentUser.name,
+              fechaHora: now,
+              anulado: false,
+              referencia: formData.numeroLote,
+              observaciones: ''
+            };
+            setMovimientos([
+              { ...base, id: `MOV-${Date.now()}-${Math.random()}`, tipo: 'salida' as const, almacenId: oldAlm },
+              { ...base, id: `MOV-${Date.now()}-${Math.random()}`, tipo: 'entrada' as const, almacenId: newAlm },
+              ...movimientos
+            ]);
+          }
+        }
+      }
+
       setLotesProduccion(lotesProduccion.map((l: any) => l.id === selectedLote.id ? updatedLote : l));
       
       const historyEntry: LoteProduccionHistorial = {
@@ -3289,8 +3339,9 @@ const LotesProduccionView = ({
       setLotesHistorial([historyEntry, ...lotesHistorial]);
     }
 
-    showNotification(`Lote ${estado === 'Planificado' ? 'planificado' : 'iniciado'} correctamente`, 'success');
-    setView('list');
+    const saveMsg = estado === 'Planificado' ? 'planificado' : estado === 'Finalizado' ? 'guardado' : 'iniciado';
+    showNotification(`Lote ${saveMsg} correctamente`, 'success');
+    setView(estado === 'Finalizado' && selectedLote ? 'detail' : 'list');
   };
 
   const handleFinalize = () => {
@@ -3590,12 +3641,13 @@ const LotesProduccionView = ({
                               type="number" 
                               step="0.001"
                               value={ins.cantidadReal || 0}
+                              disabled={selectedLote?.estado === 'Finalizado'}
                               onChange={e => {
                                 const newInsumos = [...formData.insumos];
                                 newInsumos[idx].cantidadReal = formatNum(parseFloat(e.target.value) || 0);
                                 setFormData({ ...formData, insumos: newInsumos });
                               }}
-                              className="w-24 px-2 py-1 bg-slate-50 border border-slate-200 rounded text-sm font-bold focus:outline-none focus:border-sleek-accent"
+                              className="w-24 px-2 py-1 bg-slate-50 border border-slate-200 rounded text-sm font-bold focus:outline-none focus:border-sleek-accent disabled:opacity-50 disabled:cursor-not-allowed"
                             />
                           </td>
                           <td className="px-8 py-4 text-xs font-bold text-slate-400 uppercase">{unit?.abreviatura}</td>
@@ -3648,20 +3700,50 @@ const LotesProduccionView = ({
             </Card>
 
             <div className="flex flex-col gap-3">
+              {selectedLote?.estado === 'Finalizado' ? (
+                <>
+                  <div className="p-4 bg-sleek-success/10 border border-sleek-success/20 rounded-xl text-center">
+                    <p className="text-[10px] font-black text-sleek-success uppercase tracking-widest">Lote finalizado</p>
+                    <p className="text-[9px] text-slate-500 font-bold mt-2 uppercase">Peso neto y unidades provienen de la estación de Etiquetas</p>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Almacén de destino</label>
+                    <select
+                      value={formData.almacenDestinoId || ''}
+                      onChange={e => setFormData({ ...formData, almacenDestinoId: e.target.value })}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold focus:outline-none focus:border-sleek-accent"
+                    >
+                      <option value="">Seleccionar…</option>
+                      {almacenes.map((a: any) => (
+                        <option key={a.id} value={a.id}>{a.nombre}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <button 
+                    onClick={() => handleSaveLote('Finalizado')}
+                    className="w-full py-4 bg-sleek-dark text-white rounded font-bold uppercase tracking-widest text-xs hover:bg-slate-800 transition-all flex items-center justify-center gap-2"
+                  >
+                    <Edit2 className="w-4 h-4" /> Guardar Cambios
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button 
+                    onClick={() => handleSaveLote('En Proceso')}
+                    className="w-full py-4 bg-sleek-accent text-white rounded font-bold uppercase tracking-widest text-xs hover:bg-sleek-accent/90 transition-all shadow-lg shadow-sleek-accent/20 flex items-center justify-center gap-2"
+                  >
+                    <Play className="w-4 h-4" /> Iniciar Producción
+                  </button>
+                  <button 
+                    onClick={() => handleSaveLote('Planificado')}
+                    className="w-full py-4 bg-white border border-slate-200 text-slate-600 rounded font-bold uppercase tracking-widest text-xs hover:bg-slate-50 transition-all flex items-center justify-center gap-2"
+                  >
+                    <Calendar className="w-4 h-4" /> Guardar como Planificado
+                  </button>
+                </>
+              )}
               <button 
-                onClick={() => handleSaveLote('En Proceso')}
-                className="w-full py-4 bg-sleek-accent text-white rounded font-bold uppercase tracking-widest text-xs hover:bg-sleek-accent/90 transition-all shadow-lg shadow-sleek-accent/20 flex items-center justify-center gap-2"
-              >
-                <Play className="w-4 h-4" /> Iniciar Producción
-              </button>
-              <button 
-                onClick={() => handleSaveLote('Planificado')}
-                className="w-full py-4 bg-white border border-slate-200 text-slate-600 rounded font-bold uppercase tracking-widest text-xs hover:bg-slate-50 transition-all flex items-center justify-center gap-2"
-              >
-                <Calendar className="w-4 h-4" /> Guardar como Planificado
-              </button>
-              <button 
-                onClick={() => setView('list')}
+                onClick={() => setView(selectedLote?.estado === 'Finalizado' ? 'detail' : 'list')}
                 className="w-full py-4 text-slate-400 font-bold uppercase tracking-widest text-[10px] hover:text-slate-600 transition-all"
               >
                 Cancelar
@@ -3750,9 +3832,9 @@ const LotesProduccionView = ({
                 <CheckCircle2 className="w-4 h-4" /> Finalizar Lote
               </button>
             )}
-            {(selectedLote.estado === 'Planificado' || selectedLote.estado === 'En Proceso') && (
+            {(selectedLote.estado === 'Planificado' || selectedLote.estado === 'En Proceso' || selectedLote.estado === 'Finalizado') && (
               <button onClick={() => handleEditLote(selectedLote)} className="bg-white border border-slate-200 text-slate-600 px-6 py-2 rounded font-bold text-xs uppercase tracking-widest hover:bg-slate-50 transition-all flex items-center gap-2">
-                <Edit2 className="w-4 h-4" /> Editar
+                <Edit2 className="w-4 h-4" /> {selectedLote.estado === 'Finalizado' ? 'Editar Lote' : 'Editar'}
               </button>
             )}
             <button className="bg-white border border-slate-200 text-slate-600 px-6 py-2 rounded font-bold text-xs uppercase tracking-widest hover:bg-slate-50 transition-all flex items-center gap-2">
@@ -4439,7 +4521,7 @@ const LotesDespieceView = ({
     setFormData({ ...formData, cantidadIngresada: val, cortes: newCortes });
   };
 
-  const handleSaveLote = (estado: 'Planificado' | 'En Proceso') => {
+  const handleSaveLote = (estado: 'Planificado' | 'En Proceso' | 'Finalizado') => {
     if (!formData.materiaPrimaId || formData.cantidadIngresada <= 0) {
       showNotification('Complete los campos obligatorios', 'error');
       return;
@@ -4478,6 +4560,63 @@ const LotesDespieceView = ({
         return le;
       });
       setLotesEtiquetados(updatedLabels);
+
+      if (estado === 'Finalizado') {
+        const oldCortes = selectedLote.cortes || [];
+        const transferMovs: Movimiento[] = [];
+        let transferCount = 0;
+
+        updatedCortes.forEach((c: any, idx: number) => {
+          const oldC = oldCortes.find((oc: any) => oc.productoId === c.productoId);
+          if (!oldC) return;
+          const oldAlmacen = oldC.almacenDestinoId;
+          const newAlmacen = c.almacenDestinoId;
+          if (!oldAlmacen || !newAlmacen || oldAlmacen === newAlmacen) return;
+
+          const prod = productos.find((p: any) => p.id === c.productoId);
+          const usesUnits = prod?.unidadMedidaId !== 'u1';
+          const cantidadRealNum = parseFloat(c.cantidadReal) || 0;
+          const cantidadMove = usesUnits ? (c.unidadesReales || 0) : cantidadRealNum;
+          if (cantidadMove <= 0) return;
+          const unitCut = unidades.find((u: any) => u.id === prod?.unidadMedidaId)?.abreviatura || 'kg';
+          const cantidadKg = cantidadRealNum;
+          const vencDate = prod?.vidaUtil?.valor
+            ? safeFormat(addDays(parseISO(formData.fechaElaboracion), prod.vidaUtil.unidad === 'meses' ? prod.vidaUtil.valor * 30 : prod.vidaUtil.valor), 'yyyy-MM-dd')
+            : formData.fechaVencimiento;
+
+          const nombreAlmacenViejo = almacenes.find((a: any) => a.id === oldAlmacen)?.nombre || String(oldAlmacen);
+          const nombreAlmacenNuevo = almacenes.find((a: any) => a.id === newAlmacen)?.nombre || String(newAlmacen);
+          const motivo = `Transferencia: ${nombreAlmacenViejo} → ${nombreAlmacenNuevo} (Lote ${formData.numeroLote})`;
+
+          const base = {
+            productoId: c.productoId,
+            cantidad: cantidadMove,
+            unidad: unitCut,
+            cantidadKg,
+            motivo,
+            loteNumero: `${formData.numeroLote}-${idx + 1}`,
+            fechaIngreso: safeFormat(new Date(), 'yyyy-MM-dd'),
+            fechaVencimiento: vencDate,
+            origen: 'transferencia' as const,
+            usuario: currentUser.name,
+            fechaHora: now,
+            anulado: false,
+            referencia: formData.numeroLote,
+            observaciones: ''
+          };
+
+          transferMovs.push(
+            { ...base, id: `MOV-${Date.now()}-${Math.random()}`, tipo: 'salida' as const, almacenId: oldAlmacen },
+            { ...base, id: `MOV-${Date.now()}-${Math.random()}`, tipo: 'entrada' as const, almacenId: newAlmacen }
+          );
+          transferCount += 1;
+        });
+
+        if (transferMovs.length > 0) {
+          setMovimientos([...transferMovs, ...movimientos]);
+          showNotification(`Se generaron ${transferCount} transferencia(s) de almacén`, 'success');
+        }
+      }
       
       const historyEntry: LoteDespieceHistorial = {
         id: `ldh-${Date.now()}`,
@@ -4504,11 +4643,12 @@ const LotesDespieceView = ({
       setLotesDespieceHistorial([historyEntry, ...lotesDespieceHistorial]);
     }
 
-    showNotification(`Lote ${estado === 'Planificado' ? 'planificado' : 'iniciado'} correctamente`, 'success');
-    setView('list');
+    const saveMsg = estado === 'Planificado' ? 'planificado' : estado === 'Finalizado' ? 'guardado' : 'iniciado';
+    showNotification(`Lote ${saveMsg} correctamente`, 'success');
+    setView(estado === 'Finalizado' && selectedLote ? 'detail' : 'list');
   };
 
-  const handleFinalize = () => {
+  const filteredLotes = lotesDespiece.filter((l: any) => {
     if (isFinalizing) return;
     if (formData.estado === 'Finalizado') {
       showNotification('Este lote ya fue finalizado.', 'error');
@@ -4672,7 +4812,8 @@ const LotesDespieceView = ({
 
     setIsFinalizing(false);
     showNotification('Lote de despiece finalizado correctamente', 'success');
-    setView('list');
+    setSelectedLote(finalizedLote);
+    setView('detail');
   };
 
   const filteredLotes = lotesDespiece.filter((l: any) => {
@@ -4691,6 +4832,88 @@ const LotesDespieceView = ({
     return fechaB - fechaA;
   });
 
+  if (view === 'detail' && selectedLote) {
+    const mpId = getLoteField(selectedLote, 'materia_prima');
+    const mp = productos.find((p: any) => p.id === mpId);
+    const resp = users.find((u: any) => u.id === selectedLote.responsableId);
+    const estado = getLoteField(selectedLote, 'estado');
+
+    return (
+      <div className="space-y-8 animate-in fade-in duration-500">
+        <div className="flex justify-between items-center">
+          <div className="flex items-center gap-4">
+            <button onClick={() => { setSelectedLote(null); setView('list'); }} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
+              <ArrowLeft className="w-5 h-5 text-slate-400" />
+            </button>
+            <div>
+              <div className="flex items-center gap-3 mb-1">
+                <h2 className="text-2xl font-bold text-sleek-dark uppercase tracking-widest">Lote {selectedLote.numeroLote}</h2>
+                <Badge variant={estado === 'Finalizado' ? 'success' : 'warning'}>{estado}</Badge>
+              </div>
+              <p className="text-sm text-slate-400 font-bold uppercase tracking-tight">{mp?.nombre}</p>
+            </div>
+          </div>
+          <button
+            onClick={() => { setFormData(selectedLote); setView('form'); }}
+            className="bg-sleek-dark text-white px-6 py-2 rounded font-bold text-xs uppercase tracking-widest hover:bg-slate-800 transition-all flex items-center gap-2"
+          >
+            <Edit2 className="w-4 h-4" /> Editar Lote
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Card className="p-6">
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Cant. ingresada</p>
+            <p className="text-lg font-bold text-sleek-dark">{displayNum(selectedLote.cantidadIngresada, 2)} kg</p>
+          </Card>
+          <Card className="p-6">
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Rendimiento</p>
+            <p className="text-lg font-bold text-sleek-dark">{displayNum(selectedLote.rendimientoReal || 0, 1)}%</p>
+          </Card>
+          <Card className="p-6">
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Responsable</p>
+            <p className="text-lg font-bold text-sleek-dark">{resp?.name || '-'}</p>
+          </Card>
+        </div>
+
+        <Card className="p-0 overflow-hidden">
+          <div className="p-6 border-b border-slate-100">
+            <h3 className="text-xs font-bold text-sleek-dark uppercase tracking-widest">Cortes (lectura)</h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-slate-50/50">
+                <tr>
+                  <th className="px-6 py-3 text-[9px] font-bold text-slate-400 uppercase">Corte</th>
+                  <th className="px-6 py-3 text-[9px] font-bold text-slate-400 uppercase">Real (kg)</th>
+                  <th className="px-6 py-3 text-[9px] font-bold text-slate-400 uppercase">Almacén</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {(selectedLote.cortes || []).map((c: any) => {
+                  const pr = productos.find((p: any) => p.id === c.productoId);
+                  const alm = almacenes.find((a: any) => a.id === c.almacenDestinoId);
+                  const key = `${selectedLote.id}-${c.productoId}`;
+                  const le = lotesEtiquetados.find((item: any) => item.loteId === key);
+                  const qty = le && le.envases?.length
+                    ? le.envases.filter((e: any) => !e.anulado && e.estado !== 'baja').reduce((s: number, e: any) => s + e.pesoNeto, 0)
+                    : (parseFloat(c.cantidadReal) || 0);
+                  return (
+                    <tr key={c.productoId}>
+                      <td className="px-6 py-3 font-bold text-sleek-dark">{pr?.nombre}</td>
+                      <td className="px-6 py-3 font-mono">{displayNum(qty, 3)}</td>
+                      <td className="px-6 py-3 text-xs font-bold text-slate-600">{alm?.nombre || '-'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
   if (view === 'form') {
     const totalCortesKg = formData.cortes.reduce((sum: number, c: any) => {
       const key = `${selectedLote?.id || formData.id}-${c.productoId}`;
@@ -4707,7 +4930,7 @@ const LotesDespieceView = ({
     return (
       <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
         <div className="flex items-center gap-4">
-          <button onClick={() => setView('list')} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
+          <button onClick={() => setView(selectedLote?.estado === 'Finalizado' ? 'detail' : 'list')} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
             <ArrowLeft className="w-5 h-5 text-slate-400" />
           </button>
           <h2 className="text-2xl font-bold text-sleek-dark uppercase tracking-widest">
@@ -4827,6 +5050,7 @@ const LotesDespieceView = ({
                                  step="0.001"
                                  min="0"
                                  value={c.cantidadReal || ''}
+                                 disabled={selectedLote?.estado === 'Finalizado'}
                                  onChange={e => {
                                    const val = parseFloat(e.target.value) || 0;
                                    const factor = getPesoEquivalente(c.productoId);
@@ -4838,7 +5062,7 @@ const LotesDespieceView = ({
                                    };
                                    setFormData({ ...formData, cortes: newCortes });
                                  }}
-                                 className="w-28 px-3 py-2 bg-white border border-slate-200 rounded text-sm font-bold text-sleek-dark focus:outline-none focus:border-sleek-accent focus:ring-1 focus:ring-sleek-accent/30"
+                                 className="w-28 px-3 py-2 bg-white border border-slate-200 rounded text-sm font-bold text-sleek-dark focus:outline-none focus:border-sleek-accent focus:ring-1 focus:ring-sleek-accent/30 disabled:opacity-50 disabled:cursor-not-allowed"
                                  placeholder="0.000"
                                />
                              )}
@@ -4926,7 +5150,7 @@ const LotesDespieceView = ({
             </Card>
 
             <div className="flex flex-col gap-3">
-              {formData.estado === 'Finalizado' ? (
+              {selectedLote?.estado === 'Finalizado' ? (
                 <>
                   <div className="bg-sleek-success/10 border-2 border-sleek-success/20 p-6 rounded-xl flex flex-col items-center gap-3">
                     <CheckCircle2 className="w-10 h-10 text-sleek-success" />
@@ -4936,13 +5160,10 @@ const LotesDespieceView = ({
                     </p>
                   </div>
                   <button 
-                    onClick={() => {
-                      setFormData({ ...formData, estado: 'En Proceso' });
-                      showNotification('Modo edición activado. No olvide volver a finalizar para aplicar cambios.', 'info');
-                    }}
+                    onClick={() => handleSaveLote('Finalizado')}
                     className="w-full py-4 bg-sleek-dark text-white text-xs font-bold uppercase tracking-widest rounded-xl hover:bg-slate-800 transition-all flex items-center justify-center gap-2"
                   >
-                    <Edit2 className="w-4 h-4" /> Editar Lote
+                    <Edit2 className="w-4 h-4" /> Guardar Cambios
                   </button>
                 </>
               ) : (
@@ -4959,6 +5180,16 @@ const LotesDespieceView = ({
                   >
                     {selectedLote ? 'Guardar Cambios' : 'Iniciar Despiece'}
                   </button>
+                  {formData.estado === 'En Proceso' && (
+                    <button 
+                      type="button"
+                      onClick={() => handleFinalize()}
+                      disabled={isFinalizing}
+                      className="w-full py-4 bg-sleek-success text-white text-xs font-bold uppercase tracking-widest rounded-xl hover:bg-emerald-600 transition-all flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 disabled:opacity-50"
+                    >
+                      <CheckCircle2 className="w-4 h-4" /> {isFinalizing ? 'Finalizando...' : 'Finalizar lote de despiece'}
+                    </button>
+                  )}
                 </>
               )}
             </div>
@@ -5097,11 +5328,25 @@ const LotesDespieceView = ({
                       <td className="px-6 py-4 text-right">
                         <div className="flex justify-end gap-2">
                           <button 
-                            onClick={() => { setSelectedLote(l); setFormData(l); setView('form'); }} 
+                            onClick={() => {
+                              setSelectedLote(l);
+                              setFormData(l);
+                              setView(getLoteField(l, 'estado') === 'Finalizado' ? 'detail' : 'form');
+                            }} 
                             className="p-2 text-slate-400 hover:text-sleek-accent transition-colors"
+                            title={getLoteField(l, 'estado') === 'Finalizado' ? 'Ver detalle' : 'Abrir'}
                           >
-                            <Edit2 className="w-4 h-4" />
+                            <Eye className="w-4 h-4" />
                           </button>
+                          {getLoteField(l, 'estado') !== 'Finalizado' && (
+                            <button 
+                              onClick={() => { setSelectedLote(l); setFormData(l); setView('form'); }} 
+                              className="p-2 text-slate-400 hover:text-sleek-accent transition-colors"
+                              title="Editar"
+                            >
+                              <Edit2 className="w-4 h-4" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -5165,6 +5410,8 @@ const EtiquetasView = ({
     envase: null, 
     motivo: '' 
   });
+  const [editingPesoBarras, setEditingPesoBarras] = useState<string | null>(null);
+  const [editingPesoDraft, setEditingPesoDraft] = useState('');
   const [manualWeight, setManualWeight] = useState<string>('');
   const [manualGrossWeight, setManualGrossWeight] = useState<string>('');
   const [manualUnits, setManualUnits] = useState<number>(1);
@@ -5391,24 +5638,29 @@ const EtiquetasView = ({
     setLotesEtiquetados([...newLotesEtiquetados, updatedLoteEtiquetado]);
 
     // Track movement if it's already finalized (editing mode) or if we want real-time stock
-    if (isEditingFinalized && selectedLote.estado === 'Finalizado') {
+    if (selectedLote.estado === 'Finalizado') {
        const now = new Date().toISOString();
        const prodPT = productos.find((p: any) => p.id === updatedLoteEtiquetado.productoId);
        const unitPT = unidades.find((u: any) => u.id === prodPT?.unidadMedidaId)?.abreviatura || 'kg';
+       const almId = selectedLote.tipo === 'despiece'
+         ? (updatedLoteEtiquetado.almacenId || almacenes[0]?.id || '')
+         : (selectedLote.almacenDestinoId || almacenes[0]?.id || '');
        
        const move: Movimiento = {
          id: `MOV-${Date.now()}-edit-add`,
          tipo: 'entrada',
          productoId: updatedLoteEtiquetado.productoId,
-         almacenId: selectedLote.almacenDestinoId || almacenes[0]?.id || '',
+         almacenId: almId,
          cantidad: prodPT?.unidadMedidaId === 'u1' ? currentPackagingWeight : 1,
          unidad: unitPT,
          cantidadKg: currentPackagingWeight,
          motivo: `Nuevo envase (#${newEnvase.numero}) - Edición Lote ${selectedLote.numeroLote}`,
-         loteNumero: selectedLote.numeroLote,
+         loteNumero: selectedLote.tipo === 'despiece'
+           ? `${selectedLote.numeroLote}-${Math.max(0, (selectedLote.cortes || []).findIndex((c: any) => c.productoId === updatedLoteEtiquetado.productoId)) + 1}`
+           : selectedLote.numeroLote,
          fechaIngreso: safeFormat(new Date(), 'yyyy-MM-dd'),
          fechaVencimiento: selectedLote.fechaVencimiento,
-         origen: 'produccion',
+         origen: selectedLote.tipo === 'despiece' ? 'despiece' : 'produccion',
          usuario: currentUser.name,
          fechaHora: now,
          anulado: false,
@@ -5557,20 +5809,141 @@ const EtiquetasView = ({
     }
   };
 
+  const resolveLeIdForEnvase = (env: any): string | null => {
+    if (!selectedLoteId || !selectedLote) return null;
+    if (selectedLote.tipo === 'produccion') {
+      const le = lotesEtiquetados.find((x: any) => x.loteId === selectedLoteId || x.loteId === selectedLote.numeroLote);
+      return le?.loteId || null;
+    }
+    const match = lotesEtiquetados.find((x: any) =>
+      x.parentLoteId === selectedLoteId &&
+      (x.envases || []).some((ev: any) => ev.numero === env.numero && ev.codigoBarras === env.codigoBarras)
+    );
+    return match?.loteId || loteEtiquetado?.loteId || null;
+  };
+
+  const commitEnvasePesoEdit = (env: any, draft: string) => {
+    const newKg = parseFloat(draft);
+    if (!selectedLote || Number.isNaN(newKg) || newKg < 0) {
+      setEditingPesoBarras(null);
+      return;
+    }
+    const oldKg = parseFloat(env.pesoNeto) || 0;
+    const delta = newKg - oldKg;
+    if (Math.abs(delta) < 0.0001) {
+      setEditingPesoBarras(null);
+      return;
+    }
+    const leId = resolveLeIdForEnvase(env);
+    if (!leId) {
+      setEditingPesoBarras(null);
+      return;
+    }
+    const now = new Date().toISOString();
+    const targetLe = lotesEtiquetados.find((l: any) => l.loteId === leId);
+    if (!targetLe) {
+      setEditingPesoBarras(null);
+      return;
+    }
+    const updatedEnvases = targetLe.envases.map((ev: any) =>
+      ev.codigoBarras === env.codigoBarras && ev.numero === env.numero ? { ...ev, pesoNeto: newKg } : ev
+    );
+    const active = updatedEnvases.filter((ev: any) => !(ev.anulado === true || ev.anulado === 'true' || ev.estado === 'baja'));
+    const pesoTotalEtiquetado = active.reduce((s: number, ev: any) => s + (parseFloat(ev.pesoNeto) || 0), 0);
+    setLotesEtiquetados(lotesEtiquetados.map((l: any) =>
+      l.loteId === leId ? { ...l, envases: updatedEnvases, pesoTotalEtiquetado } : l
+    ));
+
+    if (selectedLote.tipo === 'despiece') {
+      const prodId = targetLe.productoId;
+      setLotesDespiece(lotesDespiece.map((ld: any) => {
+        if (ld.id !== selectedLoteId) return ld;
+        const cortes = (ld.cortes || []).map((c: any) =>
+          c.productoId === prodId
+            ? { ...c, cantidadReal: pesoTotalEtiquetado, unidadesReales: active.length }
+            : c
+        );
+        const totalCortesKg = cortes.reduce((s: number, c: any) => s + (parseFloat(c.cantidadReal) || 0), 0);
+        const cantIng = parseFloat(ld.cantidadIngresada) || 0;
+        const rendimientoReal = cantIng > 0 ? formatNum((totalCortesKg / cantIng) * 100, 1) : ld.rendimientoReal;
+        return { ...ld, cortes, rendimientoReal, totalCortes: totalCortesKg };
+      }));
+    } else {
+      const prodPT = productos.find((p: any) => p.id === targetLe.productoId);
+      const usesUnits = prodPT?.unidadMedidaId !== 'u1';
+      setLotesProduccion(lotesProduccion.map((lp: any) => {
+        if (lp.id !== selectedLoteId) return lp;
+        return {
+          ...lp,
+          pesoNeto: pesoTotalEtiquetado,
+          unidadesReales: usesUnits ? active.length : lp.unidadesReales
+        };
+      }));
+    }
+
+    if (selectedLote.estado === 'Finalizado') {
+      const prodPT = productos.find((p: any) => p.id === targetLe.productoId);
+      const unitPT = unidades.find((u: any) => u.id === prodPT?.unidadMedidaId)?.abreviatura || 'kg';
+      const almId = selectedLote.tipo === 'despiece'
+        ? (targetLe.almacenId || selectedLote.cortes?.find((c: any) => c.productoId === targetLe.productoId)?.almacenDestinoId || almacenes[0]?.id)
+        : (selectedLote.almacenDestinoId || almacenes[0]?.id);
+      const loteNumMov = selectedLote.tipo === 'despiece'
+        ? `${selectedLote.numeroLote}-${Math.max(0, (selectedLote.cortes || []).findIndex((c: any) => c.productoId === targetLe.productoId)) + 1}`
+        : selectedLote.numeroLote;
+      const tipoMov = delta > 0 ? 'entrada' : 'salida';
+      const absKg = Math.abs(delta);
+      const movUsesUnits = prodPT?.unidadMedidaId !== 'u1';
+      const cantMov = movUsesUnits
+        ? Math.max(1, Math.round(absKg / (prodPT?.pesoNetoUnidad || 1)))
+        : absKg;
+      const move: Movimiento = {
+        id: `MOV-${Date.now()}-peso-adj`,
+        tipo: tipoMov,
+        productoId: targetLe.productoId,
+        almacenId: almId,
+        cantidad: cantMov,
+        unidad: unitPT,
+        cantidadKg: absKg,
+        motivo: `Ajuste peso envase (#${env.numero}) — Lote ${selectedLote.numeroLote}`,
+        loteNumero: loteNumMov,
+        fechaIngreso: safeFormat(new Date(), 'yyyy-MM-dd'),
+        fechaVencimiento: selectedLote.fechaVencimiento,
+        origen: selectedLote.tipo === 'despiece' ? 'despiece' : 'produccion',
+        usuario: currentUser.name,
+        fechaHora: now,
+        anulado: false,
+        referencia: selectedLote.numeroLote,
+        observaciones: `Peso anterior ${oldKg.toFixed(3)} kg → ${newKg.toFixed(3)} kg`
+      };
+      setMovimientos([move, ...movimientos]);
+    }
+
+    setEditingPesoBarras(null);
+    showNotification('Peso del envase actualizado', 'success');
+  };
+
   const finalizeEtiquetado = () => {
     if (!loteEtiquetado || loteEtiquetado.envases.length === 0) return;
+    if (selectedLote?.tipo === 'despiece') {
+      showNotification('Finalice el lote de despiece en Producción → Lotes de Despiece (botón «Finalizar lote de despiece»).', 'info');
+      return;
+    }
     setIsFinalizeModalOpen(true);
   };
 
   const handleConfirmFinalize = () => {
     if (selectedLote?.tipo === 'despiece') {
-      // For despiece, check that all cortes have almacen assigned in the lote
-      const allCortesHaveAlmacen = selectedLote.cortes?.every((c: any) => c.almacenDestinoId);
-      if (!allCortesHaveAlmacen) {
-        showNotification('Todos los cortes deben tener almacén asignado desde Lotes de Despiece', 'error');
-        return;
-      }
-    } else if (!finalizeForm.almacenDestinoId) {
+      showNotification('La finalización del despiece solo se realiza en Lotes de Despiece.', 'error');
+      setIsFinalizeModalOpen(false);
+      return;
+    }
+
+    if (selectedLote?.tipo !== 'produccion') {
+      setIsFinalizeModalOpen(false);
+      return;
+    }
+
+    if (!finalizeForm.almacenDestinoId) {
       showNotification('Debe seleccionar un almacén de destino', 'error');
       return;
     }
@@ -5578,10 +5951,12 @@ const EtiquetasView = ({
     const now = new Date().toISOString();
     const addedMovimientos: any[] = [];
     
-    // 1. Determine Lote and Type
-    if (selectedLote?.tipo === 'produccion') {
+    {
       const lote = lotesProduccion.find((l: any) => l.id === selectedLoteId);
-      if (!lote) return;
+      if (!lote) {
+        setIsFinalizeModalOpen(false);
+        return;
+      }
 
       const pesoNetoTotal = pesoEtiquetado;
       const totalInsumosKg = lote.insumos.reduce((sum: number, ins: any) => sum + (ins.cantidadReal * getPesoEquivalente(ins.materiaPrimaId)), 0);
@@ -5689,152 +6064,6 @@ const EtiquetasView = ({
         detalle: `Lote finalizado desde estación de etiquetas. Rendimiento: ${rendimiento.toFixed(1)}%. Stock ingresado a ${almacenes.find((a: any) => a.id === finalizeForm.almacenDestinoId)?.nombre}`
       };
       setLotesHistorial([histEntry, ...lotesHistorial]);
-
-    } else if (selectedLote?.tipo === 'despiece') {
-       const lote = lotesDespiece.find((l: any) => l.id === selectedLoteId);
-       if (!lote) return;
-
-       const now = new Date().toISOString();
-       
-       // 1. Generate movements for ALL cuts that have labels in this session/lot
-       const allRelatedLabels = lotesEtiquetados.filter((le: any) => le.parentLoteId === selectedLoteId);
-       
-       allRelatedLabels.forEach((le: any) => {
-         if (le.envases.length === 0) return;
-         
-         const prodCorte = productos.find((p: any) => p.id === le.productoId);
-         const unitCorte = unidades.find((u: any) => u.id === prodCorte?.unidadMedidaId)?.abreviatura || 'kg';
-         const activeEnvases = le.envases.filter((e: any) => !(e.anulado === true || e.anulado === 'true'));
-         const pesoTotalCorte = activeEnvases.reduce((sum: number, e: any) => sum + e.pesoNeto, 0);
-         
-         if (pesoTotalCorte <= 0) return;
-
-         // Get almacen from the lote's corte (single source of truth)
-         const corteDelLote = lote.cortes?.find((c: any) => c.productoId === le.productoId);
-         const almacenCorte = corteDelLote?.almacenDestinoId || finalizeForm.almacenDestinoId;
-
-         addedMovimientos.push({
-           id: `MOV-${Date.now()}-${le.productoId}-ent`,
-           tipo: 'entrada',
-           productoId: le.productoId,
-           almacenId: almacenCorte,
-           cantidad: prodCorte?.unidadMedidaId === 'u1' ? pesoTotalCorte : activeEnvases.length,
-           unidad: unitCorte,
-           cantidadKg: pesoTotalCorte,
-           motivo: `Ingreso Despiece Lote ${lote.numeroLote}`,
-           loteNumero: lote.numeroLote, // User says same as label loteId
-           fechaIngreso: safeFormat(new Date(), 'yyyy-MM-dd'),
-           fechaVencimiento: lote.fechaVencimiento || safeFormat(addDays(new Date(), (prodCorte?.vidaUtil?.valor || 30)), 'yyyy-MM-dd'),
-           origen: 'despiece',
-           usuario: currentUser.name,
-           fechaHora: now,
-           anulado: false,
-           referencia: lote.numeroLote
-         });
-       });
-
-       // 2. Generate SALIDA of raw material if not already done
-       const alreadyDeducted = movimientos.some((m: any) => {
-          const isActivo = !(m.anulado === true || m.anulado === 'true' || m.estado === 'anulado');
-          return isActivo && m.referencia === lote.numeroLote && m.tipo === 'salida' && m.origen === 'despiece';
-        });
-       
-       if (!alreadyDeducted) {
-          let remainingToDeduct = lote.cantidadIngresada;
-          const availableMPLots = [...lotesStock]
-            .filter((ls: any) => ls.productoId === lote.materiaPrimaId)
-            .sort((a, b) => new Date(a.fechaVencimiento).getTime() - new Date(b.fechaVencimiento).getTime());
-
-          availableMPLots.forEach((ls: any) => {
-            if (remainingToDeduct <= 0) return;
-            const deduct = Math.min(ls.cantidad, remainingToDeduct);
-            remainingToDeduct -= deduct;
-
-            const prodMP = productos.find((p: any) => p.id === lote.materiaPrimaId);
-            const unitMP = unidades.find((u: any) => u.id === prodMP?.unidadMedidaId)?.abreviatura || 'kg';
-
-            addedMovimientos.push({
-              id: `MOV-${Date.now()}-${Math.random()}`,
-              tipo: 'salida',
-              productoId: lote.materiaPrimaId,
-              almacenId: ls.almacenId,
-              cantidad: deduct,
-              unidad: unitMP,
-              cantidadKg: deduct * getPesoEquivalente(lote.materiaPrimaId),
-              motivo: `Consumo Despiece Lote ${lote.numeroLote}`,
-              loteNumero: ls.numeroLote,
-              fechaIngreso: safeFormat(new Date(), 'yyyy-MM-dd'),
-              fechaVencimiento: ls.fechaVencimiento,
-              origen: 'despiece',
-              usuario: currentUser.name,
-              fechaHora: now,
-              anulado: false,
-              referencia: lote.numeroLote
-            });
-          });
-
-          if (remainingToDeduct > 0) {
-             const stockAvailable = lotesStock.filter((ls: any) => ls.productoId === lote.materiaPrimaId).reduce((s: number, l: any) => s + l.cantidad, 0);
-             setDescuentosPendientes((prev: any) => [...prev, {
-                id: `dp-${Date.now()}-${Math.random()}`,
-                loteId: lote.id,
-                loteNumero: lote.numeroLote,
-                productoId: lote.materiaPrimaId,
-                cantidadSolicitada: lote.cantidadIngresada,
-                cantidadDisponible: stockAvailable,
-                pendiente: remainingToDeduct,
-                fecha: now
-             }]);
-          }
-       }
-
-       // 3. Update Lote data from labels
-       const finalCortes = lote.cortes.map((c: any) => {
-         const le = allRelatedLabels.find(item => item.productoId === c.productoId);
-         if (le) {
-           const activeEnvases = le.envases.filter((e: any) => !(e.anulado === true || e.anulado === 'true'));
-           const qty = activeEnvases.reduce((s: number, e: any) => s + e.pesoNeto, 0);
-           return {
-             ...c,
-             cantidadReal: qty,
-             unidadesReales: activeEnvases.length,
-             // almacenDestinoId stays as set in lote (single source of truth)
-           };
-         }
-         return c;
-       });
-
-       const totalCortesKg = finalCortes.reduce((sum: number, c: any) => sum + (c.cantidadReal), 0);
-       const totalMPKg = lote.cantidadIngresada;
-       const rendimientoReal = totalMPKg > 0 ? (totalCortesKg / totalMPKg) * 100 : 0;
-
-       const updatedLote = {
-         ...lote,
-         cortes: finalCortes,
-         rendimientoReal,
-         estado: 'Finalizado',
-         fechaFinalizacion: now,
-         observaciones: `${lote.observaciones || ''}\n[Finalizado desde Estación de Etiquetas]: ${finalizeForm.observaciones}`
-       };
-       setLotesDespiece(lotesDespiece.map((l: any) => l.id === lote.id ? updatedLote : l));
-
-       const histEntry = {
-        id: `ldh-${Date.now()}`,
-        loteId: lote.id,
-        fecha: now,
-        usuarioId: currentUser.id,
-        accion: 'Finalización Etiquetado',
-        detalle: `Lote de despiece finalizado completamente. Rendimiento: ${rendimientoReal.toFixed(1)}%.`
-      };
-      setLotesDespieceHistorial([histEntry, ...lotesDespieceHistorial]);
-
-      // 4. Update ALL related labels to 'finalizado'
-      setLotesEtiquetados(lotesEtiquetados.map((le: any) => {
-        if (le.parentLoteId === selectedLoteId) {
-          return { ...le, estado: 'finalizado', fechaFinalizacion: now };
-        }
-        return le;
-      }));
     }
 
     setMovimientos([...addedMovimientos, ...movimientos]);
@@ -6134,47 +6363,58 @@ const EtiquetasView = ({
                          <span className="text-[10px] font-black text-orange-600 uppercase tracking-widest">Editando Lote Finalizado</span>
                        </div>
                     )}
-                    <button 
-                      onClick={isEditingFinalized ? () => {
-                        // Recalculate totals and close
-                        const activeEnvases = loteEtiquetado.envases.filter((e: any) => {
-                          const isAnulado = e.anulado === true || e.anulado === 'true';
-                          return e.estado === 'en_stock' && !isAnulado;
-                        });
-                        const totalPeso = activeEnvases.reduce((sum: number, e: any) => sum + e.pesoNeto, 0);
-                        const totalUnits = activeEnvases.length;
-                        
-                        if (selectedLote.tipo === 'produccion') {
-                          const totalInsumosKg = selectedLote.insumos.reduce((sum: number, ins: any) => sum + (ins.cantidadReal * getPesoEquivalente(ins.materiaPrimaId)), 0);
-                          const rendimiento = totalInsumosKg > 0 ? (totalPeso / totalInsumosKg) * 100 : 0;
+                    {selectedLote.tipo === 'despiece' && !isEditingFinalized ? (
+                      <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-center">
+                        <p className="text-[10px] font-bold text-slate-600 leading-relaxed uppercase tracking-wide">
+                          El cierre y los movimientos de stock del despiece se registran en <span className="text-sleek-accent font-black">Lotes de Despiece</span> con el botón «Finalizar lote de despiece».
+                        </p>
+                      </div>
+                    ) : (
+                      <button 
+                        onClick={isEditingFinalized ? () => {
+                          const activeEnvases = loteEtiquetado.envases.filter((e: any) => {
+                            const isAnulado = e.anulado === true || e.anulado === 'true';
+                            return e.estado === 'en_stock' && !isAnulado;
+                          });
+                          const totalPeso = activeEnvases.reduce((sum: number, e: any) => sum + e.pesoNeto, 0);
+                          const totalUnits = activeEnvases.length;
                           
-                          const updatedLote = {
-                            ...selectedLote,
-                            pesoNeto: totalPeso,
-                            unidadesReales: totalUnits,
-                            rendimientoReal: rendimiento,
-                            mermaKg: totalInsumosKg - totalPeso,
-                            mermaPorcentaje: 100 - rendimiento,
-                            desvioRendimiento: rendimiento - (recetas.find((r: any) => r.productoTerminadoId === selectedLote.productoId)?.rendimientoEsperado || 100)
-                          };
-                          setLotesProduccion(lotesProduccion.map((l: any) => l.id === selectedLote.id ? updatedLote : l));
-                        }
-                        
-                        setIsEditingFinalized(false);
-                        showNotification('Edición guardada y cerrada', 'success');
-                      } : finalizeEtiquetado}
-                      disabled={loteEtiquetado?.envases.filter((e: any) => !(e.anulado === true || e.anulado === 'true')).length === 0}
-                      className={cn(
-                        "w-full py-3 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all shadow-lg",
-                        (loteEtiquetado?.envases.filter((e: any) => !(e.anulado === true || e.anulado === 'true')).length > 0) ? "bg-sleek-dark text-white hover:bg-slate-800" : "bg-slate-100 text-slate-300 cursor-not-allowed"
-                      )}
-                    >
-                      {isEditingFinalized ? 'Guardar y Cerrar Edición' : 'Finalizar Etiquetado'}
-                    </button>
+                          if (selectedLote.tipo === 'produccion') {
+                            const totalInsumosKg = selectedLote.insumos.reduce((sum: number, ins: any) => sum + (ins.cantidadReal * getPesoEquivalente(ins.materiaPrimaId)), 0);
+                            const rendimiento = totalInsumosKg > 0 ? (totalPeso / totalInsumosKg) * 100 : 0;
+                            
+                            const updatedLote = {
+                              ...selectedLote,
+                              pesoNeto: totalPeso,
+                              unidadesReales: totalUnits,
+                              rendimientoReal: rendimiento,
+                              mermaKg: totalInsumosKg - totalPeso,
+                              mermaPorcentaje: 100 - rendimiento,
+                              desvioRendimiento: rendimiento - (recetas.find((r: any) => r.productoTerminadoId === selectedLote.productoId)?.rendimientoEsperado || 100)
+                            };
+                            setLotesProduccion(lotesProduccion.map((l: any) => l.id === selectedLote.id ? updatedLote : l));
+                          }
+                          
+                          setIsEditingFinalized(false);
+                          showNotification('Edición guardada y cerrada', 'success');
+                        } : finalizeEtiquetado}
+                        disabled={loteEtiquetado?.envases.filter((e: any) => !(e.anulado === true || e.anulado === 'true')).length === 0}
+                        className={cn(
+                          "w-full py-3 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all shadow-lg",
+                          (loteEtiquetado?.envases.filter((e: any) => !(e.anulado === true || e.anulado === 'true')).length > 0) ? "bg-sleek-dark text-white hover:bg-slate-800" : "bg-slate-100 text-slate-300 cursor-not-allowed"
+                        )}
+                      >
+                        {isEditingFinalized ? 'Guardar y Cerrar Edición' : 'Finalizar Etiquetado'}
+                      </button>
+                    )}
                   </>
                 )}
                 {selectedLote.estado === 'En Proceso' && (
-                  <p className="text-[8px] text-center text-slate-400 font-bold uppercase">Nota: Al finalizar el etiquetado total, el lote podrá ser cerrado definitivamente.</p>
+                  <p className="text-[8px] text-center text-slate-400 font-bold uppercase">
+                    {selectedLote.tipo === 'despiece'
+                      ? 'Nota: Finalice el lote en Lotes de Despiece para aplicar movimientos de inventario.'
+                      : 'Nota: Al finalizar el etiquetado total, el lote podrá ser cerrado definitivamente.'}
+                  </p>
                 )}
               </div>
             </Card>
@@ -6448,7 +6688,38 @@ const EtiquetasView = ({
                       )}
                       <td className="px-8 py-3 font-mono text-[10px] font-bold text-sleek-dark lowercase">{e.codigoBarras}</td>
                       <td className="px-8 py-3">
-                        <span className="text-xs font-black text-sleek-dark">{e.pesoNeto.toFixed(3)} kg</span>
+                        {editingPesoBarras === e.codigoBarras ? (
+                          <input
+                            type="number"
+                            step="0.001"
+                            min="0"
+                            autoFocus
+                            value={editingPesoDraft}
+                            onChange={(ev) => setEditingPesoDraft(ev.target.value)}
+                            onBlur={() => commitEnvasePesoEdit(e, editingPesoDraft)}
+                            onKeyDown={(ev) => {
+                              if (ev.key === 'Enter') {
+                                (ev.target as HTMLInputElement).blur();
+                              }
+                              if (ev.key === 'Escape') {
+                                setEditingPesoBarras(null);
+                              }
+                            }}
+                            className="w-24 px-2 py-1 text-xs font-black border border-sleek-accent rounded"
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={e.anulado === true || e.anulado === 'true' || e.estado === 'baja'}
+                            onClick={() => {
+                              setEditingPesoBarras(e.codigoBarras);
+                              setEditingPesoDraft(String(e.pesoNeto ?? ''));
+                            }}
+                            className="text-xs font-black text-sleek-dark hover:text-sleek-accent disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            {e.pesoNeto.toFixed(3)} kg
+                          </button>
+                        )}
                       </td>
                       <td className="px-8 py-3 text-[10px] font-bold text-slate-400">
                         {safeFormat(e.fechaHora, 'HH:mm:ss')}
@@ -6465,11 +6736,7 @@ const EtiquetasView = ({
                             </button>
                             <button 
                               onClick={() => setAnularModal({ isOpen: true, envase: e, motivo: '' })}
-                              disabled={selectedLote?.estado === 'Finalizado' && !isEditingFinalized}
-                              className={cn(
-                                "p-1.5 transition-colors",
-                                (selectedLote?.estado === 'Finalizado' && !isEditingFinalized) ? "text-slate-200 cursor-not-allowed" : "text-slate-400 hover:text-rose-500"
-                              )}
+                              className="p-1.5 text-slate-400 hover:text-rose-500 transition-colors"
                               title="Anular / Dar de Baja"
                             >
                               <X className="w-4 h-4" />
@@ -6485,9 +6752,9 @@ const EtiquetasView = ({
                       </td>
                     </tr>
                   ))}
-                  {(!loteEtiquetado || loteEtiquetado.envases.length === 0) && (
+                  {envasesParaMostrar.length === 0 && (
                     <tr>
-                      <td colSpan={5} className="px-8 py-12 text-center text-slate-300 italic text-[10px] font-bold uppercase tracking-widest">
+                      <td colSpan={selectedLote?.tipo === 'despiece' ? 6 : 5} className="px-8 py-12 text-center text-slate-300 italic text-[10px] font-bold uppercase tracking-widest">
                         Aún no hay envases registrados para este lote
                       </td>
                     </tr>
@@ -6595,48 +6862,19 @@ const EtiquetasView = ({
           </div>
 
           <div className="space-y-4">
-            {selectedLote?.tipo === 'despiece' ? (
-              <div>
-                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Almacén Destino (desde Lote)</label>
-                {(() => {
-                  const cortesWithAlmacen = selectedLote.cortes?.filter((c: any) => c.almacenDestinoId) || [];
-                  const cortesWithoutAlmacen = selectedLote.cortes?.filter((c: any) => !c.almacenDestinoId) || [];
-                  return (
-                    <div className="space-y-2">
-                      {cortesWithAlmacen.map((c: any) => {
-                        const prod = productos.find((p: any) => p.id === c.productoId);
-                        const alm = almacenes.find((a: any) => a.id === c.almacenDestinoId);
-                        return (
-                          <div key={c.productoId} className="flex justify-between items-center bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
-                            <span className="text-[10px] font-bold text-emerald-800 uppercase">{prod?.nombre}</span>
-                            <span className="text-[10px] font-black text-emerald-600">→ {alm?.nombre}</span>
-                          </div>
-                        );
-                      })}
-                      {cortesWithoutAlmacen.length > 0 && (
-                        <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-[10px] font-bold text-amber-700">
-                          ⚠ {cortesWithoutAlmacen.length} corte(s) sin almacén asignado. Asigne desde Lotes de Despiece → Editar Lote.
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()}
-              </div>
-            ) : (
-              <div>
-                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Almacén Destino (Obligatorio)</label>
-                <select 
-                  value={finalizeForm.almacenDestinoId}
-                  onChange={(e) => setFinalizeForm({ ...finalizeForm, almacenDestinoId: e.target.value })}
-                  className="w-full bg-slate-50 border-2 border-slate-100 rounded-xl px-4 py-3 text-xs font-bold text-sleek-dark focus:border-sleek-accent transition-all outline-none"
-                >
-                  <option value="">Seleccione Almacén...</option>
-                  {almacenes.map((a: any) => (
-                    <option key={a.id} value={a.id}>{a.nombre}</option>
-                  ))}
-                </select>
-              </div>
-            )}
+            <div>
+              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Almacén Destino (Obligatorio)</label>
+              <select 
+                value={finalizeForm.almacenDestinoId}
+                onChange={(e) => setFinalizeForm({ ...finalizeForm, almacenDestinoId: e.target.value })}
+                className="w-full bg-slate-50 border-2 border-slate-100 rounded-xl px-4 py-3 text-xs font-bold text-sleek-dark focus:border-sleek-accent transition-all outline-none"
+              >
+                <option value="">Seleccione Almacén...</option>
+                {almacenes.map((a: any) => (
+                  <option key={a.id} value={a.id}>{a.nombre}</option>
+                ))}
+              </select>
+            </div>
 
             <div className="grid grid-cols-1 gap-4">
                <div>
@@ -6721,53 +6959,113 @@ const EtiquetasView = ({
                   return;
                 }
                 const env = anularModal.envase;
-                const updatedEnvases = loteEtiquetado.envases.map((envItem: any) => 
-                  envItem.numero === env.numero ? { 
-                    ...envItem, 
-                    estado: 'baja', 
-                    anulado: true, 
-                    motivoBaja: anularModal.motivo,
-                    fechaBaja: new Date().toISOString(),
-                    usuarioBaja: currentUser.name
-                  } : envItem
-                );
-                
-                const updatedLoteSummary = {
-                  ...loteEtiquetado,
-                  envases: updatedEnvases,
-                  pesoTotalEtiquetado: updatedEnvases.filter((envItem: any) => !(envItem.anulado === true || envItem.anulado === 'true')).reduce((s: number, envItem: any) => s + envItem.pesoNeto, 0)
-                };
-                
-                setLotesEtiquetados(lotesEtiquetados.map((l: any) => l.loteId === loteEtiquetado.loteId ? updatedLoteSummary : l));
+                const leId = resolveLeIdForEnvase(env);
+                if (!leId) {
+                  showNotification('No se encontró el registro de etiquetado del envase', 'error');
+                  return;
+                }
+                const targetLe = lotesEtiquetados.find((l: any) => l.loteId === leId);
+                if (!targetLe) return;
 
-                // Auto-Movement: Salida
-                const now = new Date().toISOString();
-                const prod = productos.find((p: any) => p.id === (loteEtiquetado.productoId));
-                const unit = unidades.find((u: any) => u.id === prod?.unidadMedidaId)?.abreviatura || 'kg';
-                
-                const move: any = {
-                  id: `MOV-${Date.now()}-baja-env`,
-                  tipo: 'salida',
-                  productoId: loteEtiquetado.productoId,
-                  almacenId: selectedLote.almacenDestinoId || almacenes[0]?.id || '',
-                  cantidad: prod?.unidadMedidaId === 'u1' ? env.pesoNeto : 1,
-                  unidad: unit,
-                  cantidadKg: env.pesoNeto,
-                  motivo: `Baja de envase (#${env.numero}) - ${anularModal.motivo}`,
-                  loteNumero: selectedLote.numeroLote,
-                  fechaIngreso: safeFormat(new Date(), 'yyyy-MM-dd'),
-                  fechaVencimiento: selectedLote.fechaVencimiento,
-                  origen: 'produccion',
-                  usuario: currentUser.name,
-                  fechaHora: now,
-                  anulado: false,
-                  referencia: selectedLote.numeroLote,
-                  observaciones: `Registro de baja automático desde estación de etiquetas. Código bloqueado: ${env.codigoBarras}`
-                };
-                setMovimientos([move, ...movimientos]);
+                const updatedEnvases = targetLe.envases.map((envItem: any) =>
+                  envItem.numero === env.numero && envItem.codigoBarras === env.codigoBarras
+                    ? {
+                        ...envItem,
+                        estado: 'baja',
+                        anulado: true,
+                        motivoBaja: anularModal.motivo,
+                        fechaBaja: new Date().toISOString(),
+                        usuarioBaja: currentUser.name
+                      }
+                    : envItem
+                );
+                const active = updatedEnvases.filter((ev: any) =>
+                  !(ev.anulado === true || ev.anulado === 'true' || ev.estado === 'baja')
+                );
+                const pesoTotalEtiquetado = active.reduce((s: number, ev: any) => s + (parseFloat(ev.pesoNeto) || 0), 0);
+
+                setLotesEtiquetados(
+                  lotesEtiquetados.map((l: any) =>
+                    l.loteId === leId ? { ...l, envases: updatedEnvases, pesoTotalEtiquetado } : l
+                  )
+                );
+
+                if (selectedLote.tipo === 'despiece') {
+                  const prodId = targetLe.productoId;
+                  setLotesDespiece(
+                    lotesDespiece.map((ld: any) => {
+                      if (ld.id !== selectedLoteId) return ld;
+                      const cortes = (ld.cortes || []).map((c: any) =>
+                        c.productoId === prodId
+                          ? { ...c, cantidadReal: pesoTotalEtiquetado, unidadesReales: active.length }
+                          : c
+                      );
+                      const totalCortesKg = cortes.reduce((s: number, c: any) => s + (parseFloat(c.cantidadReal) || 0), 0);
+                      const cantIng = parseFloat(ld.cantidadIngresada) || 0;
+                      const rendimientoReal =
+                        cantIng > 0 ? formatNum((totalCortesKg / cantIng) * 100, 1) : ld.rendimientoReal;
+                      return { ...ld, cortes, rendimientoReal, totalCortes: totalCortesKg };
+                    })
+                  );
+                } else {
+                  const prodPT = productos.find((p: any) => p.id === targetLe.productoId);
+                  const usesUnits = prodPT?.unidadMedidaId !== 'u1';
+                  setLotesProduccion(
+                    lotesProduccion.map((lp: any) => {
+                      if (lp.id !== selectedLoteId) return lp;
+                      return {
+                        ...lp,
+                        pesoNeto: pesoTotalEtiquetado,
+                        unidadesReales: usesUnits ? active.length : lp.unidadesReales
+                      };
+                    })
+                  );
+                }
+
+                const hadStockEntry =
+                  selectedLote.estado === 'Finalizado' &&
+                  !(env.anulado === true || env.anulado === 'true') &&
+                  env.estado === 'en_stock';
+                if (hadStockEntry) {
+                  const now = new Date().toISOString();
+                  const prod = productos.find((p: any) => p.id === targetLe.productoId);
+                  const unit = unidades.find((u: any) => u.id === prod?.unidadMedidaId)?.abreviatura || 'kg';
+                  const almId =
+                    selectedLote.tipo === 'despiece'
+                      ? (targetLe.almacenId ||
+                          selectedLote.cortes?.find((c: any) => c.productoId === targetLe.productoId)
+                            ?.almacenDestinoId ||
+                          almacenes[0]?.id ||
+                          '')
+                      : (selectedLote.almacenDestinoId || almacenes[0]?.id || '');
+                  const loteNumMov =
+                    selectedLote.tipo === 'despiece'
+                      ? `${selectedLote.numeroLote}-${Math.max(0, (selectedLote.cortes || []).findIndex((c: any) => c.productoId === targetLe.productoId)) + 1}`
+                      : selectedLote.numeroLote;
+                  const move: Movimiento = {
+                    id: `MOV-${Date.now()}-baja-env`,
+                    tipo: 'salida',
+                    productoId: targetLe.productoId,
+                    almacenId: almId,
+                    cantidad: prod?.unidadMedidaId === 'u1' ? env.pesoNeto : 1,
+                    unidad: unit,
+                    cantidadKg: env.pesoNeto,
+                    motivo: `Baja de envase (#${env.numero}) - ${anularModal.motivo}`,
+                    loteNumero: loteNumMov,
+                    fechaIngreso: safeFormat(new Date(), 'yyyy-MM-dd'),
+                    fechaVencimiento: selectedLote.fechaVencimiento,
+                    origen: selectedLote.tipo === 'despiece' ? 'despiece' : 'produccion',
+                    usuario: currentUser.name,
+                    fechaHora: now,
+                    anulado: false,
+                    referencia: selectedLote.numeroLote,
+                    observaciones: `Baja desde estación de etiquetas. ${env.codigoBarras}`
+                  };
+                  setMovimientos([move, ...movimientos]);
+                }
 
                 setAnularModal({ isOpen: false, envase: null, motivo: '' });
-                showNotification(`Envase #${env.numero} dado de baja. Stock actualizado.`, 'success');
+                showNotification(`Envase #${env.numero} dado de baja.`, 'success');
               }}
               className="flex-[2] py-4 bg-rose-500 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-rose-600 transition-all font-mono shadow-lg shadow-rose-500/20"
             >
