@@ -14919,7 +14919,7 @@ const InicioView = ({
     });
     return Array.from(byProduct.values())
       .sort((a, b) => b.deficit - a.deficit)
-      .slice(0, 5);
+      .slice(0, 4);
   }, [stockSeguridad, lotesStock]);
 
   const proximosVencer = useMemo(() => {
@@ -14936,15 +14936,18 @@ const InicioView = ({
       })
       .filter(Boolean)
       .sort((a: any, b: any) => a.dias - b.dias)
-      .slice(0, 5);
+      .slice(0, 4);
   }, [lotesStock, productos]);
 
   const actividadReciente = useMemo(() => {
     return [...movimientos]
       .filter((m: Movimiento) => !m.anulado)
       .sort((a: Movimiento, b: Movimiento) => b.fechaHora.localeCompare(a.fechaHora))
-      .slice(0, 8);
+      .slice(0, 5);
   }, [movimientos]);
+
+  const lotesVisibles = misLotes.slice(0, 5);
+  const lotesRestantes = misLotes.length - lotesVisibles.length;
 
   const navigateToLote = (item: { tipo: 'produccion' | 'despiece' }) => {
     setActiveModule('PRODUCCIÓN');
@@ -14975,12 +14978,12 @@ const InicioView = ({
   const hasAnyBlock = config.misLotes || config.stockCritico || config.proximosVencer || config.actividadReciente;
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
-      <div className="bg-sleek-dark text-white rounded-2xl px-8 py-10 shadow-xl border border-white/10">
-        <h1 className="text-2xl md:text-3xl font-black tracking-tight">
+    <div className="space-y-3 animate-in fade-in duration-500">
+      <div className="bg-sleek-dark text-white rounded-xl p-4 shadow-lg border border-white/10">
+        <h1 className="text-xl font-black tracking-tight">
           {getGreeting()}, {currentUser?.name?.split(' ')[0] || currentUser?.name}
         </h1>
-        <p className="text-sm text-white/60 mt-2 font-bold uppercase tracking-widest">
+        <p className="text-xs text-white/60 mt-1 font-bold uppercase tracking-widest">
           {(() => {
             const s = format(new Date(), "EEEE d 'de' MMMM, yyyy", { locale: es });
             return s.charAt(0).toUpperCase() + s.slice(1);
@@ -14989,57 +14992,62 @@ const InicioView = ({
       </div>
 
       {!hasAnyBlock && (
-        <Card className="p-10 text-center">
-          <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">No hay bloques habilitados en tu pantalla de inicio</p>
+        <Card className="p-4 text-center">
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">No hay bloques habilitados en tu pantalla de inicio</p>
         </Card>
       )}
 
       {config.misLotes && (
-        <Card className="p-6 border border-slate-100 rounded-2xl">
-          <div className="flex items-center gap-2 mb-5">
-            <Flame className="w-5 h-5 text-orange-500" />
-            <h2 className="text-sm font-black text-sleek-dark uppercase tracking-widest">Mis lotes del día</h2>
+        <Card className="p-4 border border-slate-100 rounded-xl">
+          <div className="flex items-center gap-2 mb-2">
+            <Flame className="w-4 h-4 text-orange-500" />
+            <h2 className="text-xs font-black text-sleek-dark uppercase tracking-widest">Mis lotes del día</h2>
           </div>
           {misLotes.length === 0 ? (
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">No hay lotes activos ni finalizados hoy</p>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">No hay lotes activos ni finalizados hoy</p>
           ) : (
-            <div className="space-y-3">
-              {misLotes.map((lote) => (
+            <div className="space-y-1">
+              {lotesVisibles.map((lote) => (
                 <button
                   key={`${lote.tipo}-${lote.id}`}
                   type="button"
                   onClick={() => navigateToLote(lote)}
                   className={cn(
-                    "w-full text-left p-4 rounded-xl border border-slate-100 border-l-4 bg-slate-50/80 hover:bg-slate-50 transition-all",
+                    "w-full text-left py-2 px-3 rounded-lg border border-slate-100 border-l-4 bg-slate-50/80 hover:bg-slate-50 transition-all",
                     loteBorderClass(lote.estado)
                   )}
                 >
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <p className="text-[11px] font-black text-sleek-dark uppercase">{lote.numero}</p>
-                      <p className="text-xs font-bold text-slate-500 mt-1">{lote.descripcion}</p>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-xs font-black text-sleek-dark uppercase truncate">{lote.numero}</p>
+                      <p className="text-[10px] font-bold text-slate-500 truncate">{lote.descripcion}</p>
                     </div>
-                    <Badge variant={loteBadgeVariant(lote.estado)}>{lote.estado}</Badge>
+                    <Badge variant={loteBadgeVariant(lote.estado)} className="shrink-0">{lote.estado}</Badge>
                   </div>
                 </button>
               ))}
+              {lotesRestantes > 0 && (
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pt-1 pl-1">
+                  y {lotesRestantes} más...
+                </p>
+              )}
             </div>
           )}
         </Card>
       )}
 
       {(config.stockCritico || config.proximosVencer) && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {config.stockCritico && (
-            <Card className="p-6 border border-slate-100 rounded-2xl">
-              <h2 className="text-sm font-black text-sleek-dark uppercase tracking-widest mb-4 flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-sleek-danger" />
+            <Card className="p-4 border border-slate-100 rounded-xl">
+              <h2 className="text-xs font-black text-sleek-dark uppercase tracking-widest mb-2 flex items-center gap-2">
+                <AlertTriangle className="w-3.5 h-3.5 text-sleek-danger" />
                 Stock crítico
               </h2>
               {stockCritico.length === 0 ? (
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Sin alertas de stock</p>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Sin alertas de stock</p>
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-1">
                   {stockCritico.map((item) => {
                     const prod = productos.find((p: Producto) => p.id === item.productoId);
                     const critico = item.actual <= 0;
@@ -15047,12 +15055,12 @@ const InicioView = ({
                       <div
                         key={item.productoId}
                         className={cn(
-                          "p-3 rounded-xl text-xs font-bold",
+                          "py-1.5 px-2.5 rounded-lg text-xs font-bold",
                           critico ? "bg-red-50 text-red-800" : "bg-amber-50 text-amber-800"
                         )}
                       >
-                        <p className="uppercase tracking-wide">{prod?.nombre || 'Producto'}</p>
-                        <p className="mt-1 opacity-80">Stock actual: {item.actual.toLocaleString('es-AR')}</p>
+                        <p className="uppercase tracking-wide truncate">{prod?.nombre || 'Producto'}</p>
+                        <p className="opacity-80 text-[10px]">Stock: {item.actual.toLocaleString('es-AR')}</p>
                       </div>
                     );
                   })}
@@ -15062,25 +15070,25 @@ const InicioView = ({
           )}
 
           {config.proximosVencer && (
-            <Card className="p-6 border border-slate-100 rounded-2xl">
-              <h2 className="text-sm font-black text-sleek-dark uppercase tracking-widest mb-4 flex items-center gap-2">
-                <Clock className="w-4 h-4 text-sleek-warning" />
+            <Card className="p-4 border border-slate-100 rounded-xl">
+              <h2 className="text-xs font-black text-sleek-dark uppercase tracking-widest mb-2 flex items-center gap-2">
+                <Clock className="w-3.5 h-3.5 text-sleek-warning" />
                 Próximos a vencer
               </h2>
               {proximosVencer.length === 0 ? (
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Sin vencimientos próximos</p>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Sin vencimientos próximos</p>
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-1">
                   {proximosVencer.map((item: any) => (
                     <div
                       key={item.lote.id}
                       className={cn(
-                        "p-3 rounded-xl text-xs font-bold",
+                        "py-1.5 px-2.5 rounded-lg text-xs font-bold",
                         item.dias === 0 ? "bg-red-50 text-red-800" : "bg-amber-50 text-amber-800"
                       )}
                     >
-                      <p className="uppercase tracking-wide">{item.productoNombre}</p>
-                      <p className="mt-1 opacity-80">{diasLabel(item.dias)}</p>
+                      <p className="uppercase tracking-wide truncate">{item.productoNombre}</p>
+                      <p className="opacity-80 text-[10px]">{diasLabel(item.dias)}</p>
                     </div>
                   ))}
                 </div>
@@ -15091,15 +15099,15 @@ const InicioView = ({
       )}
 
       {config.actividadReciente && (
-        <Card className="p-6 border border-slate-100 rounded-2xl">
-          <h2 className="text-sm font-black text-sleek-dark uppercase tracking-widest mb-4 flex items-center gap-2">
-            <History className="w-4 h-4 text-sleek-accent" />
+        <Card className="p-4 border border-slate-100 rounded-xl">
+          <h2 className="text-xs font-black text-sleek-dark uppercase tracking-widest mb-2 flex items-center gap-2">
+            <History className="w-3.5 h-3.5 text-sleek-accent" />
             Actividad reciente
           </h2>
           {actividadReciente.length === 0 ? (
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Sin movimientos recientes</p>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Sin movimientos recientes</p>
           ) : (
-            <ul className="space-y-3">
+            <ul className="divide-y divide-slate-50">
               {actividadReciente.map((m: Movimiento) => {
                 const prod = productos.find((p: Producto) => p.id === m.productoId);
                 const alm = almacenes.find((a: Almacen) => a.id === m.almacenId);
@@ -15108,13 +15116,13 @@ const InicioView = ({
                   m.tipo === 'salida' ? 'bg-rose-500' : 'bg-sky-500';
                 const tipoLabel = m.tipo.charAt(0).toUpperCase() + m.tipo.slice(1);
                 return (
-                  <li key={m.id} className="flex gap-3 items-start text-[11px]">
-                    <span className={cn("w-2 h-2 rounded-full mt-1.5 shrink-0", dotClass)} />
+                  <li key={m.id} className="flex gap-2 items-start py-1.5">
+                    <span className={cn("w-1.5 h-1.5 rounded-full mt-1 shrink-0", dotClass)} />
                     <div className="flex-1 min-w-0">
-                      <p className="font-bold text-sleek-dark leading-snug">
+                      <p className="font-bold text-sleek-dark leading-tight text-[11px] truncate">
                         {tipoLabel} · {prod?.nombre || 'Producto'} · {m.cantidad} {m.unidad} · {alm?.nombre || 'Almacén'}
                       </p>
-                      <p className="text-slate-400 font-bold mt-0.5">
+                      <p className="text-slate-400 font-bold text-[10px]">
                         {m.usuario} · {formatRelativeTime(m.fechaHora)}
                       </p>
                     </div>
@@ -15876,7 +15884,7 @@ export default function App() {
               <ChevronRight className={cn("w-5 h-5 transition-transform", sidebarExpanded && "rotate-180")} />
             </button>
             <div className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">
-              {activeModule} / {activeSubSection}
+              {activeModule === 'INICIO' ? 'INICIO' : `${activeModule} / ${activeSubSection}`}
             </div>
           </div>
           
