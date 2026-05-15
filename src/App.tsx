@@ -64,7 +64,11 @@ import {
   Building,
   FolderTree,
   TrendingDown,
-  ShoppingBag
+  ShoppingBag,
+  Home,
+  Flame,
+  ShoppingCart,
+  Truck
 } from 'lucide-react';
 import { 
   Chart as ChartJS, 
@@ -81,6 +85,7 @@ import {
 import { Bar, Line, Pie } from 'react-chartjs-2';
 import JsBarcode from 'jsbarcode';
 import { format, addDays, isBefore, isAfter, parseISO, differenceInDays, isValid } from 'date-fns';
+import { es } from 'date-fns/locale';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -171,6 +176,15 @@ interface Permisos {
 
 type UserRole = 'Administrador' | 'Operario';
 
+interface InicioConfig {
+  misLotes: boolean;
+  stockCritico: boolean;
+  proximosVencer: boolean;
+  actividadReciente: boolean;
+  pedidosDelDia: boolean;
+  comprasEsperadas: boolean;
+}
+
 interface User {
   id: string;
   username: string;
@@ -179,7 +193,25 @@ interface User {
   name: string;
   estado?: 'activo' | 'inactivo';
   permisos?: Permisos;
+  inicioConfig?: InicioConfig;
 }
+
+const DEFAULT_INICIO_CONFIG: InicioConfig = {
+  misLotes: true,
+  stockCritico: true,
+  proximosVencer: true,
+  actividadReciente: true,
+  pedidosDelDia: true,
+  comprasEsperadas: true,
+};
+
+const INICIO_SCROLL_LIST = 'max-h-[250px] overflow-y-auto custom-scrollbar pr-1 mt-2 space-y-1 min-h-0';
+const INICIO_SECTION_CARD = 'p-4 border border-slate-100 rounded-xl h-full flex flex-col min-h-0';
+
+const getInicioConfig = (user: User | null): InicioConfig => ({
+  ...DEFAULT_INICIO_CONFIG,
+  ...user?.inicioConfig,
+});
 
 const DEFAULT_PERMISSIONS: Permisos = {
   inventario: { dashboard: true, almacenes: true, productos: true, movimientos: true, alertas: true, reportes: true },
@@ -193,6 +225,7 @@ const normalizeSection = (section: string) => section.toLowerCase().replace(/ de
 
 const hasPermission = (user: User | null, moduleName: string, sectionName: string): boolean => {
   if (!user) return false;
+  if (normalizeSection(moduleName) === 'inicio') return true;
   if (user.username === 'GuidoM') return true; // Superadmin
   if (!user.permisos) return true; // Backwards compatibility for old users
   
@@ -662,14 +695,14 @@ const CONDICIONES_ALMACENAMIENTO = ['Refrigerado', 'Congelado', 'Ambiente', 'Tem
 // --- Initial Data ---
 
 const INITIAL_USERS: User[] = [
-  { id: '1', username: 'GuidoM', password: 'Alido', role: 'Administrador', name: 'Guido Muraca', estado: 'activo', permisos: {
+  { id: '1', username: 'GuidoM', password: 'Alido', role: 'Administrador', name: 'Guido Muraca', estado: 'activo', inicioConfig: { ...DEFAULT_INICIO_CONFIG }, permisos: {
     inventario: { dashboard: true, almacenes: true, productos: true, movimientos: true, alertas: true, reportes: true },
     produccion: { lotes_produccion: true, lotes_despiece: true, recetas_estandar: true, plantillas_despiece: true, etiquetas: true, dashboard: true, trazabilidad: true },
     ventas: { ventas_pedidos: true, dashboard_ventas: true, clientes: true, listas_precios: true, puntos_venta: true },
     egresos: { egresos_compras: true, proveedores: true, tipos_egreso: true, plan_cuentas: true },
     usuarios: { gestion_usuarios: true }
   }},
-  { id: '2', username: 'Operario1', password: '123', role: 'Operario', name: 'Juan Pérez', estado: 'activo', permisos: {
+  { id: '2', username: 'Operario1', password: '123', role: 'Operario', name: 'Juan Pérez', estado: 'activo', inicioConfig: { ...DEFAULT_INICIO_CONFIG }, permisos: {
     inventario: { dashboard: false, almacenes: true, productos: false, movimientos: true, alertas: false, reportes: false },
     produccion: { lotes_produccion: true, lotes_despiece: true, recetas_estandar: false, plantillas_despiece: false, etiquetas: true, dashboard: false, trazabilidad: false },
     ventas: { ventas_pedidos: true, dashboard_ventas: false, clientes: false, listas_precios: false, puntos_venta: false },
@@ -7089,7 +7122,8 @@ const UserForm = ({ editingItem, loggedUser, onSave, onClose }: any) => {
     confirmPassword: '',
     role: editingItem?.role || 'Operario',
     estado: editingItem?.estado || 'activo',
-    permisos: editingItem?.permisos ? JSON.parse(JSON.stringify(editingItem.permisos)) : JSON.parse(JSON.stringify(DEFAULT_PERMISSIONS))
+    permisos: editingItem?.permisos ? JSON.parse(JSON.stringify(editingItem.permisos)) : JSON.parse(JSON.stringify(DEFAULT_PERMISSIONS)),
+    inicioConfig: getInicioConfig(editingItem || null),
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -7110,7 +7144,8 @@ const UserForm = ({ editingItem, loggedUser, onSave, onClose }: any) => {
       username: formData.username,
       role: formData.role,
       estado: formData.estado,
-      permisos: isSuperadmin ? DEFAULT_PERMISSIONS : formData.permisos
+      permisos: isSuperadmin ? DEFAULT_PERMISSIONS : formData.permisos,
+      inicioConfig: isSuperadmin ? { ...DEFAULT_INICIO_CONFIG } : formData.inicioConfig,
     };
 
     if (formData.password) {
@@ -7209,6 +7244,35 @@ const UserForm = ({ editingItem, loggedUser, onSave, onClose }: any) => {
                   <option value="Administrador">Administrador</option>
                </select>
             </div>
+          </div>
+        </div>
+
+        <div>
+          <h3 className="text-sm font-bold text-sleek-dark uppercase tracking-widest mb-4 border-b border-slate-100 pb-2">Pantalla de inicio</h3>
+          <p className="text-xs text-slate-500 mb-4">Seleccioná qué bloques verá este usuario en la pantalla de inicio.</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {([
+              { key: 'misLotes' as const, label: 'Mis lotes del día' },
+              { key: 'stockCritico' as const, label: 'Stock crítico' },
+              { key: 'proximosVencer' as const, label: 'Próximos a vencer' },
+              { key: 'actividadReciente' as const, label: 'Actividad reciente' },
+              { key: 'pedidosDelDia' as const, label: 'Pedidos del día' },
+              { key: 'comprasEsperadas' as const, label: 'Compras esperadas' },
+            ]).map(({ key, label }) => (
+              <label key={key} className={cn("flex items-center gap-3 p-3 rounded-lg border border-slate-100 cursor-pointer hover:bg-slate-50", isSuperadmin && "opacity-60 cursor-not-allowed")}>
+                <input
+                  type="checkbox"
+                  disabled={isSuperadmin}
+                  checked={formData.inicioConfig[key]}
+                  onChange={(e) => setFormData((prev: any) => ({
+                    ...prev,
+                    inicioConfig: { ...prev.inicioConfig, [key]: e.target.checked },
+                  }))}
+                  className="w-4 h-4 rounded border-slate-300 text-sleek-accent focus:ring-sleek-accent"
+                />
+                <span className="text-xs font-bold text-slate-700">{label}</span>
+              </label>
+            ))}
           </div>
         </div>
 
@@ -14747,6 +14811,442 @@ const InventarioDashboard = ({
   );
 };
 
+const getGreeting = () => {
+  const h = new Date().getHours();
+  if (h >= 5 && h < 12) return 'Buen día';
+  if (h >= 12 && h < 19) return 'Buenas tardes';
+  return 'Buenas noches';
+};
+
+const formatRelativeTime = (fechaHora: string) => {
+  const then = parseISO(fechaHora);
+  if (!isValid(then)) return '';
+  const diffMin = Math.floor((Date.now() - then.getTime()) / 60000);
+  if (diffMin < 60) return `Hace ${Math.max(1, diffMin)} min`;
+  const diffHours = Math.floor(diffMin / 60);
+  if (diffHours < 24) return `Hace ${diffHours} horas`;
+  return `Hace ${Math.floor(diffHours / 24)} días`;
+};
+
+const SidebarHomeItem = ({ activeModule, setActiveModule, setActiveSubSection, setExpandedModule, sidebarExpanded }: any) => {
+  const isActive = activeModule === 'INICIO';
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        setActiveModule('INICIO');
+        setActiveSubSection('Inicio');
+        setExpandedModule(null);
+      }}
+      className={cn(
+        "w-full flex items-center gap-3 px-6 py-4 transition-all duration-200 border-l-4 mb-0",
+        isActive ? "bg-white/5 text-white border-sleek-accent" : "text-white/60 border-transparent hover:bg-white/5 hover:text-white"
+      )}
+    >
+      <Home className="w-4 h-4 shrink-0" />
+      {sidebarExpanded && <span className="font-bold text-xs uppercase tracking-widest">INICIO</span>}
+    </button>
+  );
+};
+
+const InicioView = ({
+  currentUser,
+  productos,
+  lotesProduccion,
+  lotesDespiece,
+  movimientos,
+  almacenes,
+  unidades,
+  lotesStock,
+  stockSeguridad,
+  ventas,
+  clientes,
+  egresos,
+  proveedores,
+  tiposEgreso,
+  setActiveModule,
+  setActiveSubSection,
+  setExpandedModule,
+}: any) => {
+  const config = getInicioConfig(currentUser);
+  const today = format(new Date(), 'yyyy-MM-dd');
+
+  const misLotes = useMemo(() => {
+    const items: { id: string; numero: string; estado: string; descripcion: string; tipo: 'produccion' | 'despiece' }[] = [];
+
+    lotesProduccion.forEach((l: LoteProduccion) => {
+      const finalizadoHoy = l.estado === 'Finalizado' && (
+        (l.fechaFinalizacion && l.fechaFinalizacion.startsWith(today)) || l.fechaElaboracion === today
+      );
+      if (['En Proceso', 'Planificado'].includes(l.estado) || finalizadoHoy) {
+        const prod = productos.find((p: Producto) => p.id === l.productoTerminadoId);
+        const unidad = unidades.find((u: UnidadMedida) => u.id === prod?.unidadMedidaId);
+        items.push({
+          id: l.id,
+          numero: l.numeroLote,
+          estado: l.estado,
+          descripcion: `${prod?.nombre || 'Producto'} · ${l.cantidadEstimada} ${unidad?.abreviatura || ''}`.trim(),
+          tipo: 'produccion',
+        });
+      }
+    });
+
+    lotesDespiece.forEach((l: any) => {
+      const estado = (getLoteField(l, 'estado') || l.estado) as string;
+      const fechaElab = getLoteField(l, 'fecha') || l.fechaElaboracion;
+      const fechaFin = l.fechaFinalizacion;
+      const finalizadoHoy = estado === 'Finalizado' && (
+        (fechaFin && String(fechaFin).startsWith(today)) || fechaElab === today
+      );
+      if (['En Proceso', 'Planificado'].includes(estado) || finalizadoHoy) {
+        const mpId = getLoteField(l, 'materia_prima') || l.materiaPrimaId;
+        const prod = productos.find((p: Producto) => p.id === mpId);
+        const cantidad = getLoteField(l, 'cantidad') ?? l.cantidadIngresada;
+        const unidad = unidades.find((u: UnidadMedida) => u.id === prod?.unidadMedidaId);
+        items.push({
+          id: l.id,
+          numero: getLoteField(l, 'numeroLote') || l.numeroLote,
+          estado,
+          descripcion: `${prod?.nombre || 'Materia prima'} · ${cantidad} ${unidad?.abreviatura || ''}`.trim(),
+          tipo: 'despiece',
+        });
+      }
+    });
+
+    return items;
+  }, [lotesProduccion, lotesDespiece, productos, unidades, today]);
+
+  const stockCritico = useMemo(() => {
+    const byProduct = new Map<string, { productoId: string; actual: number; seguridad: number; deficit: number }>();
+    stockSeguridad.forEach((ss: StockSeguridad) => {
+      if (ss.cantidad <= 0) return;
+      const actual = lotesStock
+        .filter((l: LoteStock) => l.productoId === ss.productoId && l.almacenId === ss.almacenId)
+        .reduce((sum: number, l: LoteStock) => sum + l.cantidad, 0);
+      if (actual >= ss.cantidad) return;
+      const prev = byProduct.get(ss.productoId);
+      const deficit = ss.cantidad - actual;
+      if (!prev || deficit > prev.deficit) {
+        const totalActual = lotesStock
+          .filter((l: LoteStock) => l.productoId === ss.productoId)
+          .reduce((sum: number, l: LoteStock) => sum + l.cantidad, 0);
+        byProduct.set(ss.productoId, { productoId: ss.productoId, actual: totalActual, seguridad: ss.cantidad, deficit });
+      }
+    });
+    return Array.from(byProduct.values())
+      .sort((a, b) => b.deficit - a.deficit)
+      .slice(0, 4);
+  }, [stockSeguridad, lotesStock]);
+
+  const proximosVencer = useMemo(() => {
+    const hoy = new Date();
+    hoy.setHours(0, 0, 0, 0);
+    return lotesStock
+      .map((l: LoteStock) => {
+        const venc = parseISO(l.fechaVencimiento);
+        if (!isValid(venc)) return null;
+        const dias = safeDiffDays(venc, hoy);
+        if (dias < 0 || dias > 5) return null;
+        const prod = productos.find((p: Producto) => p.id === l.productoId);
+        return { lote: l, productoNombre: prod?.nombre || 'Producto', dias };
+      })
+      .filter(Boolean)
+      .sort((a: any, b: any) => a.dias - b.dias)
+      .slice(0, 4);
+  }, [lotesStock, productos]);
+
+  const actividadReciente = useMemo(() => {
+    return [...movimientos]
+      .filter((m: Movimiento) => !m.anulado)
+      .sort((a: Movimiento, b: Movimiento) => b.fechaHora.localeCompare(a.fechaHora))
+      .slice(0, 5);
+  }, [movimientos]);
+
+  const pedidosDelDia = useMemo(() => {
+    return [...ventas]
+      .filter((v: Venta) => v.fecha === today && v.estado !== 'Anulado')
+      .sort((a: Venta, b: Venta) => b.fechaCreacion.localeCompare(a.fechaCreacion))
+      .slice(0, 5);
+  }, [ventas, today]);
+
+  const comprasEsperadas = useMemo(() => {
+    return [...egresos]
+      .filter((e: Egreso) => {
+        if (e.fecha !== today) return false;
+        const tipo = tiposEgreso.find((t: TipoEgreso) => t.id === e.tipoEgresoId);
+        return tipo?.impactaInventario === true;
+      })
+      .sort((a: Egreso, b: Egreso) => b.fechaCreacion.localeCompare(a.fechaCreacion))
+      .slice(0, 5);
+  }, [egresos, tiposEgreso, today]);
+
+  const lotesVisibles = misLotes.slice(0, 5);
+  const lotesRestantes = misLotes.length - lotesVisibles.length;
+
+  const navigateToLote = (item: { tipo: 'produccion' | 'despiece' }) => {
+    setActiveModule('PRODUCCIÓN');
+    setExpandedModule('PRODUCCIÓN');
+    setActiveSubSection(item.tipo === 'produccion' ? 'Lotes de Producción' : 'Lotes de Despiece');
+  };
+
+  const loteBorderClass = (estado: string) => {
+    if (estado === 'En Proceso') return 'border-l-orange-500';
+    if (estado === 'Finalizado') return 'border-l-emerald-500';
+    if (estado === 'Planificado') return 'border-l-sky-500';
+    return 'border-l-slate-300';
+  };
+
+  const loteBadgeVariant = (estado: string): 'default' | 'success' | 'warning' | 'danger' | 'info' => {
+    if (estado === 'En Proceso') return 'warning';
+    if (estado === 'Finalizado') return 'success';
+    if (estado === 'Planificado') return 'info';
+    return 'default';
+  };
+
+  const ventaBadgeVariant = (estado: string): 'default' | 'success' | 'warning' | 'danger' | 'info' => {
+    if (estado === 'Finalizado') return 'success';
+    if (estado === 'Anulado') return 'danger';
+    return 'info';
+  };
+
+  const egresoBadgeVariant = (estado: string): 'default' | 'success' | 'warning' | 'danger' | 'info' => {
+    if (estado === 'Confirmado') return 'success';
+    if (estado === 'Anulado') return 'danger';
+    return 'warning';
+  };
+
+  const diasLabel = (dias: number) => {
+    if (dias === 0) return 'Hoy';
+    if (dias === 1) return '1 día';
+    return `${dias} días`;
+  };
+
+  const hasAnyBlock = config.misLotes || config.stockCritico || config.proximosVencer || config.actividadReciente
+    || config.pedidosDelDia || config.comprasEsperadas;
+
+  const sectionTitle = (icon: React.ReactNode, title: string) => (
+    <h2 className="text-xs font-black text-sleek-dark uppercase tracking-widest flex items-center gap-2 shrink-0">
+      {icon}
+      {title}
+    </h2>
+  );
+
+  return (
+    <div className="space-y-3 animate-in fade-in duration-500">
+      <div className="bg-sleek-dark text-white rounded-xl p-4 shadow-lg border border-white/10">
+        <h1 className="text-xl font-black tracking-tight">
+          {getGreeting()}, {currentUser?.name?.split(' ')[0] || currentUser?.name}
+        </h1>
+        <p className="text-xs text-white/60 mt-1 font-bold uppercase tracking-widest">
+          {(() => {
+            const s = format(new Date(), "EEEE d 'de' MMMM, yyyy", { locale: es });
+            return s.charAt(0).toUpperCase() + s.slice(1);
+          })()}
+        </p>
+      </div>
+
+      {!hasAnyBlock && (
+        <Card className="p-4 text-center">
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">No hay bloques habilitados en tu pantalla de inicio</p>
+        </Card>
+      )}
+
+      {(config.misLotes || config.actividadReciente) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 items-stretch">
+          {config.misLotes && (
+            <Card className={INICIO_SECTION_CARD}>
+              {sectionTitle(<Flame className="w-4 h-4 text-orange-500" />, 'Mis lotes del día')}
+              {misLotes.length === 0 ? (
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-2">No hay lotes activos ni finalizados hoy</p>
+              ) : (
+                <div className={INICIO_SCROLL_LIST}>
+              {lotesVisibles.map((lote) => (
+                <button
+                  key={`${lote.tipo}-${lote.id}`}
+                  type="button"
+                  onClick={() => navigateToLote(lote)}
+                  className={cn(
+                    "w-full text-left py-2 px-3 rounded-lg border border-slate-100 border-l-4 bg-slate-50/80 hover:bg-slate-50 transition-all",
+                    loteBorderClass(lote.estado)
+                  )}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-xs font-black text-sleek-dark uppercase truncate">{lote.numero}</p>
+                      <p className="text-[10px] font-bold text-slate-500 truncate">{lote.descripcion}</p>
+                    </div>
+                    <Badge variant={loteBadgeVariant(lote.estado)} className="shrink-0">{lote.estado}</Badge>
+                  </div>
+                </button>
+              ))}
+              {lotesRestantes > 0 && (
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pt-1 pl-1">
+                  y {lotesRestantes} más...
+                </p>
+              )}
+                </div>
+              )}
+            </Card>
+          )}
+
+          {config.actividadReciente && (
+            <Card className={INICIO_SECTION_CARD}>
+              {sectionTitle(<History className="w-4 h-4 text-sleek-accent" />, 'Actividad reciente')}
+              {actividadReciente.length === 0 ? (
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-2">Sin movimientos recientes</p>
+              ) : (
+                <ul className={cn(INICIO_SCROLL_LIST, 'divide-y divide-slate-50')}>
+                  {actividadReciente.map((m: Movimiento) => {
+                    const prod = productos.find((p: Producto) => p.id === m.productoId);
+                    const alm = almacenes.find((a: Almacen) => a.id === m.almacenId);
+                    const dotClass =
+                      m.tipo === 'entrada' ? 'bg-emerald-500' :
+                      m.tipo === 'salida' ? 'bg-rose-500' : 'bg-sky-500';
+                    const tipoLabel = m.tipo.charAt(0).toUpperCase() + m.tipo.slice(1);
+                    return (
+                      <li key={m.id} className="flex gap-2 items-start py-1.5">
+                        <span className={cn('w-1.5 h-1.5 rounded-full mt-1 shrink-0', dotClass)} />
+                        <div className="flex-1 min-w-0">
+                          <p className="font-bold text-sleek-dark leading-tight text-[11px] truncate">
+                            {tipoLabel} · {prod?.nombre || 'Producto'} · {m.cantidad} {m.unidad} · {alm?.nombre || 'Almacén'}
+                          </p>
+                          <p className="text-slate-400 font-bold text-[10px]">
+                            {m.usuario} · {formatRelativeTime(m.fechaHora)}
+                          </p>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </Card>
+          )}
+        </div>
+      )}
+
+      {(config.stockCritico || config.proximosVencer) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 items-stretch">
+          {config.stockCritico && (
+            <Card className={INICIO_SECTION_CARD}>
+              {sectionTitle(<AlertTriangle className="w-4 h-4 text-sleek-danger" />, 'Stock crítico')}
+              {stockCritico.length === 0 ? (
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-2">Sin alertas de stock</p>
+              ) : (
+                <div className={INICIO_SCROLL_LIST}>
+                  {stockCritico.map((item) => {
+                    const prod = productos.find((p: Producto) => p.id === item.productoId);
+                    const critico = item.actual <= 0;
+                    return (
+                      <div
+                        key={item.productoId}
+                        className={cn(
+                          "py-1.5 px-2.5 rounded-lg text-xs font-bold",
+                          critico ? "bg-red-50 text-red-800" : "bg-amber-50 text-amber-800"
+                        )}
+                      >
+                        <p className="uppercase tracking-wide truncate">{prod?.nombre || 'Producto'}</p>
+                        <p className="opacity-80 text-[10px]">Stock: {item.actual.toLocaleString('es-AR')}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </Card>
+          )}
+
+          {config.proximosVencer && (
+            <Card className={INICIO_SECTION_CARD}>
+              {sectionTitle(<Clock className="w-4 h-4 text-sleek-warning" />, 'Próximos a vencer')}
+              {proximosVencer.length === 0 ? (
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-2">Sin vencimientos próximos</p>
+              ) : (
+                <div className={INICIO_SCROLL_LIST}>
+                  {proximosVencer.map((item: any) => (
+                    <div
+                      key={item.lote.id}
+                      className={cn(
+                        "py-1.5 px-2.5 rounded-lg text-xs font-bold",
+                        item.dias === 0 ? "bg-red-50 text-red-800" : "bg-amber-50 text-amber-800"
+                      )}
+                    >
+                      <p className="uppercase tracking-wide truncate">{item.productoNombre}</p>
+                      <p className="opacity-80 text-[10px]">{diasLabel(item.dias)}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+          )}
+        </div>
+      )}
+
+      {(config.pedidosDelDia || config.comprasEsperadas) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 items-stretch">
+          {config.pedidosDelDia && (
+            <Card className={INICIO_SECTION_CARD}>
+              {sectionTitle(<ShoppingCart className="w-4 h-4 text-sleek-accent" />, 'Pedidos del día')}
+              {pedidosDelDia.length === 0 ? (
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-2">Sin pedidos hoy</p>
+              ) : (
+                <div className={INICIO_SCROLL_LIST}>
+                  {pedidosDelDia.map((venta: Venta) => {
+                    const cliente = clientes.find((c: any) => c.id === venta.clienteId);
+                    const cantProductos = venta.productos?.length ?? 0;
+                    return (
+                      <div
+                        key={venta.id}
+                        className="py-1.5 px-2.5 rounded-lg border border-slate-100 bg-slate-50/80 text-xs"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="font-black text-sleek-dark uppercase truncate">{cliente?.razonSocial || 'Cliente'}</p>
+                            <p className="text-[10px] font-bold text-slate-500">
+                              {cantProductos} {cantProductos === 1 ? 'producto' : 'productos'}
+                            </p>
+                          </div>
+                          <Badge variant={ventaBadgeVariant(venta.estado)} className="shrink-0">{venta.estado}</Badge>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </Card>
+          )}
+
+          {config.comprasEsperadas && (
+            <Card className={INICIO_SECTION_CARD}>
+              {sectionTitle(<Truck className="w-4 h-4 text-sky-600" />, 'Compras esperadas')}
+              {comprasEsperadas.length === 0 ? (
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-2">Sin compras esperadas hoy</p>
+              ) : (
+                <div className={INICIO_SCROLL_LIST}>
+                  {comprasEsperadas.map((eg: Egreso) => {
+                    const proveedor = proveedores.find((p: Proveedor) => p.id === eg.proveedorId);
+                    return (
+                      <div
+                        key={eg.id}
+                        className="py-1.5 px-2.5 rounded-lg border border-slate-100 bg-slate-50/80 text-xs"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="font-black text-sleek-dark uppercase truncate min-w-0">
+                            {proveedor?.razonSocial || 'S/P'}
+                          </p>
+                          <Badge variant={egresoBadgeVariant(eg.estado)} className="shrink-0">{eg.estado}</Badge>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </Card>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const SidebarItem = ({ icon: Icon, label, module, activeModule, activeSubSection, expandedModule, setExpandedModule, setActiveModule, setActiveSubSection, subItems, sidebarExpanded, currentUser }: any) => {
   const filteredSubItems = subItems.filter((sub: string) => hasPermission(currentUser, module, sub));
   
@@ -14816,13 +15316,14 @@ export default function App() {
     const stored = localStorage.getItem('alido_logged_user');
     return stored ? JSON.parse(stored) : null;
   });
-  const [activeModule, setActiveModule] = useState<'INVENTARIO' | 'PRODUCCIÓN' | 'VENTAS' | 'EGRESOS' | 'USUARIOS'>('INVENTARIO');
-  const [activeSubSection, setActiveSubSection] = useState<string>('Dashboard');
+  const [activeModule, setActiveModule] = useState<'INICIO' | 'INVENTARIO' | 'PRODUCCIÓN' | 'VENTAS' | 'EGRESOS' | 'USUARIOS'>('INICIO');
+  const [activeSubSection, setActiveSubSection] = useState<string>('Inicio');
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
-  const [expandedModule, setExpandedModule] = useState<string | null>('INVENTARIO');
+  const [expandedModule, setExpandedModule] = useState<string | null>(null);
 
   // Verify permissions on login / initialization
   useEffect(() => {
+    if (activeModule === 'INICIO') return;
     if (currentUser && !hasPermission(currentUser, activeModule, activeSubSection)) {
       const ms = ['INVENTARIO', 'PRODUCCIÓN', 'VENTAS', 'EGRESOS', 'USUARIOS'];
       const defaultSub = {
@@ -15279,6 +15780,9 @@ export default function App() {
     if (user) {
       setCurrentUser(user);
       localStorage.setItem('alido_logged_user', JSON.stringify(user));
+      setActiveModule('INICIO');
+      setActiveSubSection('Inicio');
+      setExpandedModule(null);
       showNotification('Bienvenido al sistema Alido - Gestión', 'success');
     } else {
       console.error('Login fallido. Usuarios disponibles:', users.map(u => u.username));
@@ -15385,6 +15889,13 @@ export default function App() {
         </div>
 
         <nav className="flex-1 py-4 overflow-y-auto">
+          <SidebarHomeItem
+            activeModule={activeModule}
+            setActiveModule={setActiveModule}
+            setActiveSubSection={setActiveSubSection}
+            setExpandedModule={setExpandedModule}
+            sidebarExpanded={sidebarExpanded}
+          />
           <SidebarItem 
             icon={Package} 
             label="INVENTARIO" 
@@ -15483,7 +15994,7 @@ export default function App() {
               <ChevronRight className={cn("w-5 h-5 transition-transform", sidebarExpanded && "rotate-180")} />
             </button>
             <div className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">
-              {activeModule} / {activeSubSection}
+              {activeModule === 'INICIO' ? 'INICIO' : `${activeModule} / ${activeSubSection}`}
             </div>
           </div>
           
@@ -15511,6 +16022,27 @@ export default function App() {
               </div>
             ) : (
               <>
+                {activeModule === 'INICIO' && (
+                  <InicioView
+                    currentUser={currentUser}
+                    productos={productos}
+                    lotesProduccion={lotesProduccion}
+                    lotesDespiece={lotesDespiece}
+                    movimientos={movimientos}
+                    almacenes={almacenes}
+                    unidades={unidades}
+                    lotesStock={lotesStock}
+                    stockSeguridad={stockSeguridad}
+                    ventas={ventas}
+                    clientes={clientes}
+                    egresos={egresos}
+                    proveedores={proveedores}
+                    tiposEgreso={tiposEgreso}
+                    setActiveModule={setActiveModule}
+                    setActiveSubSection={setActiveSubSection}
+                    setExpandedModule={setExpandedModule}
+                  />
+                )}
                 {activeModule === 'INVENTARIO' && activeSubSection === 'Dashboard' && (
                   <InventarioDashboard 
                     almacenes={almacenes}
@@ -15794,7 +16326,7 @@ export default function App() {
             )}
             
             {/* Placeholder for other views */}
-            {!['Dashboard', 'Almacenes', 'Productos', 'Movimientos', 'Etiquetas', 'Lotes de Producción', 'Lotes de Despiece', 'Recetas Estándar', 'Plantillas de Despiece', 'Gestión de Usuarios', 'Ventas y Pedidos', 'Clientes', 'Listas de Precios', 'Puntos de Venta', 'Egresos y Compras', 'Proveedores', 'Tipos de Egreso', 'Plan de Cuentas'].includes(activeSubSection) && (
+            {activeModule !== 'INICIO' && !['Dashboard', 'Almacenes', 'Productos', 'Movimientos', 'Etiquetas', 'Lotes de Producción', 'Lotes de Despiece', 'Recetas Estándar', 'Plantillas de Despiece', 'Gestión de Usuarios', 'Ventas y Pedidos', 'Clientes', 'Listas de Precios', 'Puntos de Venta', 'Egresos y Compras', 'Proveedores', 'Tipos de Egreso', 'Plan de Cuentas', 'Inicio'].includes(activeSubSection) && (
               <div className="flex flex-col items-center justify-center h-[60vh] text-slate-300">
                 <Settings className="w-16 h-16 mb-4 opacity-10" />
                 <p className="text-lg font-bold uppercase tracking-widest">Módulo en Desarrollo</p>
