@@ -66,7 +66,9 @@ import {
   TrendingDown,
   ShoppingBag,
   Home,
-  Flame
+  Flame,
+  ShoppingCart,
+  Truck
 } from 'lucide-react';
 import { 
   Chart as ChartJS, 
@@ -179,6 +181,8 @@ interface InicioConfig {
   stockCritico: boolean;
   proximosVencer: boolean;
   actividadReciente: boolean;
+  pedidosDelDia: boolean;
+  comprasEsperadas: boolean;
 }
 
 interface User {
@@ -197,7 +201,12 @@ const DEFAULT_INICIO_CONFIG: InicioConfig = {
   stockCritico: true,
   proximosVencer: true,
   actividadReciente: true,
+  pedidosDelDia: true,
+  comprasEsperadas: true,
 };
+
+const INICIO_SCROLL_LIST = 'max-h-[250px] overflow-y-auto custom-scrollbar pr-1 mt-2 space-y-1 min-h-0';
+const INICIO_SECTION_CARD = 'p-4 border border-slate-100 rounded-xl h-full flex flex-col min-h-0';
 
 const getInicioConfig = (user: User | null): InicioConfig => ({
   ...DEFAULT_INICIO_CONFIG,
@@ -7247,6 +7256,8 @@ const UserForm = ({ editingItem, loggedUser, onSave, onClose }: any) => {
               { key: 'stockCritico' as const, label: 'Stock crítico' },
               { key: 'proximosVencer' as const, label: 'Próximos a vencer' },
               { key: 'actividadReciente' as const, label: 'Actividad reciente' },
+              { key: 'pedidosDelDia' as const, label: 'Pedidos del día' },
+              { key: 'comprasEsperadas' as const, label: 'Compras esperadas' },
             ]).map(({ key, label }) => (
               <label key={key} className={cn("flex items-center gap-3 p-3 rounded-lg border border-slate-100 cursor-pointer hover:bg-slate-50", isSuperadmin && "opacity-60 cursor-not-allowed")}>
                 <input
@@ -14848,6 +14859,11 @@ const InicioView = ({
   unidades,
   lotesStock,
   stockSeguridad,
+  ventas,
+  clientes,
+  egresos,
+  proveedores,
+  tiposEgreso,
   setActiveModule,
   setActiveSubSection,
   setExpandedModule,
@@ -14946,6 +14962,24 @@ const InicioView = ({
       .slice(0, 5);
   }, [movimientos]);
 
+  const pedidosDelDia = useMemo(() => {
+    return [...ventas]
+      .filter((v: Venta) => v.fecha === today && v.estado !== 'Anulado')
+      .sort((a: Venta, b: Venta) => b.fechaCreacion.localeCompare(a.fechaCreacion))
+      .slice(0, 5);
+  }, [ventas, today]);
+
+  const comprasEsperadas = useMemo(() => {
+    return [...egresos]
+      .filter((e: Egreso) => {
+        if (e.fecha !== today) return false;
+        const tipo = tiposEgreso.find((t: TipoEgreso) => t.id === e.tipoEgresoId);
+        return tipo?.impactaInventario === true;
+      })
+      .sort((a: Egreso, b: Egreso) => b.fechaCreacion.localeCompare(a.fechaCreacion))
+      .slice(0, 5);
+  }, [egresos, tiposEgreso, today]);
+
   const lotesVisibles = misLotes.slice(0, 5);
   const lotesRestantes = misLotes.length - lotesVisibles.length;
 
@@ -14969,13 +15003,33 @@ const InicioView = ({
     return 'default';
   };
 
+  const ventaBadgeVariant = (estado: string): 'default' | 'success' | 'warning' | 'danger' | 'info' => {
+    if (estado === 'Finalizado') return 'success';
+    if (estado === 'Anulado') return 'danger';
+    return 'info';
+  };
+
+  const egresoBadgeVariant = (estado: string): 'default' | 'success' | 'warning' | 'danger' | 'info' => {
+    if (estado === 'Confirmado') return 'success';
+    if (estado === 'Anulado') return 'danger';
+    return 'warning';
+  };
+
   const diasLabel = (dias: number) => {
     if (dias === 0) return 'Hoy';
     if (dias === 1) return '1 día';
     return `${dias} días`;
   };
 
-  const hasAnyBlock = config.misLotes || config.stockCritico || config.proximosVencer || config.actividadReciente;
+  const hasAnyBlock = config.misLotes || config.stockCritico || config.proximosVencer || config.actividadReciente
+    || config.pedidosDelDia || config.comprasEsperadas;
+
+  const sectionTitle = (icon: React.ReactNode, title: string) => (
+    <h2 className="text-xs font-black text-sleek-dark uppercase tracking-widest flex items-center gap-2 shrink-0">
+      {icon}
+      {title}
+    </h2>
+  );
 
   return (
     <div className="space-y-3 animate-in fade-in duration-500">
@@ -14997,16 +15051,15 @@ const InicioView = ({
         </Card>
       )}
 
-      {config.misLotes && (
-        <Card className="p-4 border border-slate-100 rounded-xl">
-          <div className="flex items-center gap-2 mb-2">
-            <Flame className="w-4 h-4 text-orange-500" />
-            <h2 className="text-xs font-black text-sleek-dark uppercase tracking-widest">Mis lotes del día</h2>
-          </div>
-          {misLotes.length === 0 ? (
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">No hay lotes activos ni finalizados hoy</p>
-          ) : (
-            <div className="space-y-1">
+      {(config.misLotes || config.actividadReciente) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 items-stretch">
+          {config.misLotes && (
+            <Card className={INICIO_SECTION_CARD}>
+              {sectionTitle(<Flame className="w-4 h-4 text-orange-500" />, 'Mis lotes del día')}
+              {misLotes.length === 0 ? (
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-2">No hay lotes activos ni finalizados hoy</p>
+              ) : (
+                <div className={INICIO_SCROLL_LIST}>
               {lotesVisibles.map((lote) => (
                 <button
                   key={`${lote.tipo}-${lote.id}`}
@@ -15031,23 +15084,55 @@ const InicioView = ({
                   y {lotesRestantes} más...
                 </p>
               )}
-            </div>
+                </div>
+              )}
+            </Card>
           )}
-        </Card>
+
+          {config.actividadReciente && (
+            <Card className={INICIO_SECTION_CARD}>
+              {sectionTitle(<History className="w-4 h-4 text-sleek-accent" />, 'Actividad reciente')}
+              {actividadReciente.length === 0 ? (
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-2">Sin movimientos recientes</p>
+              ) : (
+                <ul className={cn(INICIO_SCROLL_LIST, 'divide-y divide-slate-50')}>
+                  {actividadReciente.map((m: Movimiento) => {
+                    const prod = productos.find((p: Producto) => p.id === m.productoId);
+                    const alm = almacenes.find((a: Almacen) => a.id === m.almacenId);
+                    const dotClass =
+                      m.tipo === 'entrada' ? 'bg-emerald-500' :
+                      m.tipo === 'salida' ? 'bg-rose-500' : 'bg-sky-500';
+                    const tipoLabel = m.tipo.charAt(0).toUpperCase() + m.tipo.slice(1);
+                    return (
+                      <li key={m.id} className="flex gap-2 items-start py-1.5">
+                        <span className={cn('w-1.5 h-1.5 rounded-full mt-1 shrink-0', dotClass)} />
+                        <div className="flex-1 min-w-0">
+                          <p className="font-bold text-sleek-dark leading-tight text-[11px] truncate">
+                            {tipoLabel} · {prod?.nombre || 'Producto'} · {m.cantidad} {m.unidad} · {alm?.nombre || 'Almacén'}
+                          </p>
+                          <p className="text-slate-400 font-bold text-[10px]">
+                            {m.usuario} · {formatRelativeTime(m.fechaHora)}
+                          </p>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </Card>
+          )}
+        </div>
       )}
 
       {(config.stockCritico || config.proximosVencer) && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 items-stretch">
           {config.stockCritico && (
-            <Card className="p-4 border border-slate-100 rounded-xl">
-              <h2 className="text-xs font-black text-sleek-dark uppercase tracking-widest mb-2 flex items-center gap-2">
-                <AlertTriangle className="w-3.5 h-3.5 text-sleek-danger" />
-                Stock crítico
-              </h2>
+            <Card className={INICIO_SECTION_CARD}>
+              {sectionTitle(<AlertTriangle className="w-4 h-4 text-sleek-danger" />, 'Stock crítico')}
               {stockCritico.length === 0 ? (
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Sin alertas de stock</p>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-2">Sin alertas de stock</p>
               ) : (
-                <div className="space-y-1">
+                <div className={INICIO_SCROLL_LIST}>
                   {stockCritico.map((item) => {
                     const prod = productos.find((p: Producto) => p.id === item.productoId);
                     const critico = item.actual <= 0;
@@ -15070,15 +15155,12 @@ const InicioView = ({
           )}
 
           {config.proximosVencer && (
-            <Card className="p-4 border border-slate-100 rounded-xl">
-              <h2 className="text-xs font-black text-sleek-dark uppercase tracking-widest mb-2 flex items-center gap-2">
-                <Clock className="w-3.5 h-3.5 text-sleek-warning" />
-                Próximos a vencer
-              </h2>
+            <Card className={INICIO_SECTION_CARD}>
+              {sectionTitle(<Clock className="w-4 h-4 text-sleek-warning" />, 'Próximos a vencer')}
               {proximosVencer.length === 0 ? (
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Sin vencimientos próximos</p>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-2">Sin vencimientos próximos</p>
               ) : (
-                <div className="space-y-1">
+                <div className={INICIO_SCROLL_LIST}>
                   {proximosVencer.map((item: any) => (
                     <div
                       key={item.lote.id}
@@ -15098,40 +15180,68 @@ const InicioView = ({
         </div>
       )}
 
-      {config.actividadReciente && (
-        <Card className="p-4 border border-slate-100 rounded-xl">
-          <h2 className="text-xs font-black text-sleek-dark uppercase tracking-widest mb-2 flex items-center gap-2">
-            <History className="w-3.5 h-3.5 text-sleek-accent" />
-            Actividad reciente
-          </h2>
-          {actividadReciente.length === 0 ? (
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Sin movimientos recientes</p>
-          ) : (
-            <ul className="divide-y divide-slate-50">
-              {actividadReciente.map((m: Movimiento) => {
-                const prod = productos.find((p: Producto) => p.id === m.productoId);
-                const alm = almacenes.find((a: Almacen) => a.id === m.almacenId);
-                const dotClass =
-                  m.tipo === 'entrada' ? 'bg-emerald-500' :
-                  m.tipo === 'salida' ? 'bg-rose-500' : 'bg-sky-500';
-                const tipoLabel = m.tipo.charAt(0).toUpperCase() + m.tipo.slice(1);
-                return (
-                  <li key={m.id} className="flex gap-2 items-start py-1.5">
-                    <span className={cn("w-1.5 h-1.5 rounded-full mt-1 shrink-0", dotClass)} />
-                    <div className="flex-1 min-w-0">
-                      <p className="font-bold text-sleek-dark leading-tight text-[11px] truncate">
-                        {tipoLabel} · {prod?.nombre || 'Producto'} · {m.cantidad} {m.unidad} · {alm?.nombre || 'Almacén'}
-                      </p>
-                      <p className="text-slate-400 font-bold text-[10px]">
-                        {m.usuario} · {formatRelativeTime(m.fechaHora)}
-                      </p>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
+      {(config.pedidosDelDia || config.comprasEsperadas) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 items-stretch">
+          {config.pedidosDelDia && (
+            <Card className={INICIO_SECTION_CARD}>
+              {sectionTitle(<ShoppingCart className="w-4 h-4 text-sleek-accent" />, 'Pedidos del día')}
+              {pedidosDelDia.length === 0 ? (
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-2">Sin pedidos hoy</p>
+              ) : (
+                <div className={INICIO_SCROLL_LIST}>
+                  {pedidosDelDia.map((venta: Venta) => {
+                    const cliente = clientes.find((c: any) => c.id === venta.clienteId);
+                    const cantProductos = venta.productos?.length ?? 0;
+                    return (
+                      <div
+                        key={venta.id}
+                        className="py-1.5 px-2.5 rounded-lg border border-slate-100 bg-slate-50/80 text-xs"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="font-black text-sleek-dark uppercase truncate">{cliente?.razonSocial || 'Cliente'}</p>
+                            <p className="text-[10px] font-bold text-slate-500">
+                              {cantProductos} {cantProductos === 1 ? 'producto' : 'productos'}
+                            </p>
+                          </div>
+                          <Badge variant={ventaBadgeVariant(venta.estado)} className="shrink-0">{venta.estado}</Badge>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </Card>
           )}
-        </Card>
+
+          {config.comprasEsperadas && (
+            <Card className={INICIO_SECTION_CARD}>
+              {sectionTitle(<Truck className="w-4 h-4 text-sky-600" />, 'Compras esperadas')}
+              {comprasEsperadas.length === 0 ? (
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-2">Sin compras esperadas hoy</p>
+              ) : (
+                <div className={INICIO_SCROLL_LIST}>
+                  {comprasEsperadas.map((eg: Egreso) => {
+                    const proveedor = proveedores.find((p: Proveedor) => p.id === eg.proveedorId);
+                    return (
+                      <div
+                        key={eg.id}
+                        className="py-1.5 px-2.5 rounded-lg border border-slate-100 bg-slate-50/80 text-xs"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="font-black text-sleek-dark uppercase truncate min-w-0">
+                            {proveedor?.razonSocial || 'S/P'}
+                          </p>
+                          <Badge variant={egresoBadgeVariant(eg.estado)} className="shrink-0">{eg.estado}</Badge>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </Card>
+          )}
+        </div>
       )}
     </div>
   );
@@ -15918,13 +16028,16 @@ export default function App() {
                     productos={productos}
                     lotesProduccion={lotesProduccion}
                     lotesDespiece={lotesDespiece}
-                    lotesEtiquetados={lotesEtiquetados}
                     movimientos={movimientos}
                     almacenes={almacenes}
                     unidades={unidades}
                     lotesStock={lotesStock}
-                    users={users}
                     stockSeguridad={stockSeguridad}
+                    ventas={ventas}
+                    clientes={clientes}
+                    egresos={egresos}
+                    proveedores={proveedores}
+                    tiposEgreso={tiposEgreso}
                     setActiveModule={setActiveModule}
                     setActiveSubSection={setActiveSubSection}
                     setExpandedModule={setExpandedModule}
