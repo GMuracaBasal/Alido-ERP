@@ -9421,7 +9421,7 @@ const VentasPedidosView = ({
       const matchSearch = v.comprobante.toLowerCase().includes(searchTerm.toLowerCase()) || 
                           (cliente?.razonSocial || '').toLowerCase().includes(searchTerm.toLowerCase());
       return matchDate && matchCliente && matchEstado && matchSearch;
-    }).sort((a: any, b: any) => b.fechaCreacion.localeCompare(a.fechaCreacion));
+    }).sort((a: any, b: any) => b.fecha.localeCompare(a.fecha));
   }, [ventas, dateRange, filterCliente, filterEstado, searchTerm, clientes]);
 
   const handleCreateNew = () => {
@@ -9761,8 +9761,8 @@ const VentasPedidosView = ({
           <table className="w-full">
             <thead>
               <tr className="bg-slate-50/50">
-                <th className="px-8 py-5 text-left text-[10px] font-black uppercase text-slate-400 tracking-widest">Nº Comprobante</th>
                 <th className="px-8 py-5 text-left text-[10px] font-black uppercase text-slate-400 tracking-widest">Fecha</th>
+                <th className="px-8 py-5 text-left text-[10px] font-black uppercase text-slate-400 tracking-widest">Nº Comprobante</th>
                 <th className="px-8 py-5 text-left text-[10px] font-black uppercase text-slate-400 tracking-widest">Cliente</th>
                 <th className="px-8 py-5 text-left text-[10px] font-black uppercase text-slate-400 tracking-widest text-center">Items</th>
                 <th className="px-8 py-5 text-right text-[10px] font-black uppercase text-slate-400 tracking-widest">Total</th>
@@ -9782,10 +9782,10 @@ const VentasPedidosView = ({
                     venta.estado === 'Anulado' && "opacity-40 grayscale-[0.5]"
                   )}>
                     <td className="px-8 py-5">
-                      <p className="text-[11px] font-black text-sleek-dark uppercase">{venta.comprobante}</p>
+                      <p className="text-[11px] font-bold text-slate-500">{safeFormat(venta.fecha, 'dd/MM/yyyy')}</p>
                     </td>
                     <td className="px-8 py-5">
-                      <p className="text-[11px] font-bold text-slate-500">{safeFormat(venta.fecha, 'dd/MM/yyyy')}</p>
+                      <p className="text-[11px] font-black text-sleek-dark uppercase">{venta.comprobante}</p>
                     </td>
                     <td className="px-8 py-5">
                       <p className="text-[11px] font-black text-sleek-dark uppercase">{cliente?.razonSocial || 'Desconocido'}</p>
@@ -13773,7 +13773,7 @@ const EgresosView = ({
     const matchesType = filterType === 'Todos' || e.tipoEgresoId === filterType;
     const matchesStatus = filterStatus === 'Todos' || e.estado === filterStatus;
     return matchesSearch && matchesType && matchesStatus;
-  });
+  }).sort((a: any, b: any) => b.fecha.localeCompare(a.fecha));
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
@@ -14017,8 +14017,8 @@ const EgresosView = ({
            <table className="w-full text-left">
               <thead>
                 <tr className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] border-b border-slate-100">
+                  <th className="pb-4 px-2">Fecha</th>
                   <th className="pb-4 px-2">Comprobante</th>
-                  <th className="pb-4 px-2">Concepto / Tipo</th>
                   <th className="pb-4 px-2">Proveedor</th>
                   <th className="pb-4 px-2">Estado</th>
                   <th className="pb-4 px-2 text-right">Total</th>
@@ -14029,12 +14029,10 @@ const EgresosView = ({
                 {filtered.map((eg: any) => (
                   <tr key={eg.id} className="group hover:bg-slate-50/50 transition-colors">
                     <td className="py-5 px-2">
-                       <p className="text-[11px] font-black text-sleek-dark uppercase">{eg.comprobante}</p>
-                       <p className="text-[9px] font-bold text-slate-400 mt-1">{format(parseISO(eg.fecha), 'dd/MM/yyyy')}</p>
+                       <p className="text-[11px] font-bold text-slate-500">{format(parseISO(eg.fecha), 'dd/MM/yyyy')}</p>
                     </td>
                     <td className="py-5 px-2">
-                       <p className="text-xs font-bold text-slate-600">{tiposEgreso.find((t: any) => t.id === eg.tipoEgresoId)?.nombre}</p>
-                       <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">{planCuentas.find((pc: any) => pc.id === eg.cuentaContableId)?.nombre}</p>
+                       <p className="text-[11px] font-black text-sleek-dark uppercase">{eg.comprobante}</p>
                     </td>
                     <td className="py-5 px-2">
                        <p className="text-xs font-bold text-slate-600 uppercase">{eg.proveedorId ? proveedores.find((p: any) => p.id === eg.proveedorId)?.razonSocial : 'S/P'}</p>
