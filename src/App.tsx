@@ -3260,9 +3260,10 @@ const LotesProduccionView = ({
     let insumos = [];
     if (receta) {
       insumos = receta.insumos.map((ins: any) => ({
-        ...ins,
+        materiaPrimaId: ins.materiaPrimaId,
         cantidadTeorica: (ins.cantidad / receta.cantidadBase) * formData.cantidadEstimada,
-        cantidadReal: (ins.cantidad / receta.cantidadBase) * formData.cantidadEstimada
+        cantidadReal: (ins.cantidad / receta.cantidadBase) * formData.cantidadEstimada,
+        fromReceta: true,
       }));
     }
 
@@ -3276,11 +3277,16 @@ const LotesProduccionView = ({
 
   const handleCantidadEstimadaChange = (val: number) => {
     const receta = recetas.find((r: any) => r.productoTerminadoId === formData.productoId);
-    const newInsumos = formData.insumos.map((ins: any) => ({
-      ...ins,
-      cantidadTeorica: receta ? (ins.cantidad / receta.cantidadBase) * val : 0,
-      cantidadReal: receta ? (ins.cantidad / receta.cantidadBase) * val : 0
-    }));
+    const newInsumos = formData.insumos.map((ins: any) => {
+      if (ins.fromReceta && receta) {
+        const recetaInsumo = receta.insumos.find((ri: any) => ri.materiaPrimaId === ins.materiaPrimaId);
+        if (recetaInsumo) {
+          const newTeorica = (recetaInsumo.cantidad / receta.cantidadBase) * val;
+          return { ...ins, cantidadTeorica: newTeorica, cantidadReal: newTeorica };
+        }
+      }
+      return ins;
+    });
     setFormData({ ...formData, cantidadEstimada: val, insumos: newInsumos });
   };
 
@@ -3637,12 +3643,36 @@ const LotesProduccionView = ({
             </Card>
 
             <Card className="p-0 overflow-hidden">
-              <div className="p-8 border-b border-slate-100 flex justify-between items-center">
-                <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                  <Layers className="w-4 h-4" /> Materias Primas / Insumos
-                </h3>
-                {!recetas.some(r => r.productoTerminadoId === formData.productoId) && formData.productoId && (
-                  <p className="text-[10px] text-sleek-danger font-bold uppercase tracking-widest animate-pulse">Este producto no tiene receta estándar</p>
+              <div className="p-8 border-b border-slate-100 flex justify-between items-start gap-4">
+                <div>
+                  <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                    <Layers className="w-4 h-4" /> Materias Primas / Insumos
+                  </h3>
+                  {formData.productoId && (
+                    recetas.some((r: any) => r.productoTerminadoId === formData.productoId) ? (
+                      <p className="text-[10px] text-slate-400 mt-1">
+                        Insumos cargados desde receta estándar. Puede modificar, agregar o eliminar según necesidad.
+                      </p>
+                    ) : (
+                      <p className="text-[10px] text-slate-400 mt-1">
+                        Sin receta estándar. Agregue los insumos manualmente.
+                      </p>
+                    )
+                  )}
+                </div>
+                {selectedLote?.estado !== 'Finalizado' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFormData({
+                        ...formData,
+                        insumos: [...formData.insumos, { materiaPrimaId: '', cantidadTeorica: 0, cantidadReal: 0 }],
+                      });
+                    }}
+                    className="shrink-0 px-4 py-2 bg-sleek-dark text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-slate-800 transition-all flex items-center gap-2"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Agregar Insumo
+                  </button>
                 )}
               </div>
               <div className="overflow-x-auto">
@@ -3654,6 +3684,7 @@ const LotesProduccionView = ({
                       <th className="px-8 py-4 text-[9px] font-bold text-slate-400 uppercase tracking-widest">Real Usado</th>
                       <th className="px-8 py-4 text-[9px] font-bold text-slate-400 uppercase tracking-widest">U.M.</th>
                       <th className="px-8 py-4 text-[9px] font-bold text-slate-400 uppercase tracking-widest">Stock Disp.</th>
+                      <th className="px-4 py-4" />
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
@@ -3661,12 +3692,26 @@ const LotesProduccionView = ({
                       const mp = productos.find((p: any) => p.id === ins.materiaPrimaId);
                       const unit = unidades.find((u: any) => u.id === mp?.unidadMedidaId);
                       const stock = lotesStock.filter((ls: any) => ls.productoId === ins.materiaPrimaId).reduce((sum: number, ls: any) => sum + ls.cantidad, 0);
+                      const isFinalizado = selectedLote?.estado === 'Finalizado';
                       
                       return (
                         <tr key={idx}>
                           <td className="px-8 py-4">
-                            <p className="text-sm font-bold text-sleek-dark">{mp?.nombre}</p>
-                            <p className="text-[10px] text-slate-400 uppercase font-bold">{mp?.codigo}</p>
+                            <select
+                              value={ins.materiaPrimaId || ''}
+                              disabled={isFinalizado}
+                              onChange={e => {
+                                const newInsumos = [...formData.insumos];
+                                newInsumos[idx] = { ...newInsumos[idx], materiaPrimaId: e.target.value };
+                                setFormData({ ...formData, insumos: newInsumos });
+                              }}
+                              className="w-full bg-transparent text-sm font-bold text-sleek-dark focus:outline-none focus:border-sleek-accent border-b border-transparent hover:border-slate-200 py-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              <option value="">Seleccionar insumo...</option>
+                              {productos.filter((p: any) => p.tipo === 'Materia Prima' || p.usoCruzado).map((p: any) => (
+                                <option key={p.id} value={p.id}>{p.nombre} ({p.codigo})</option>
+                              ))}
+                            </select>
                           </td>
                           <td className="px-8 py-4 text-sm text-slate-400 font-mono">{formatNum(ins.cantidadTeorica)}</td>
                           <td className="px-8 py-4">
@@ -3674,7 +3719,7 @@ const LotesProduccionView = ({
                               type="number" 
                               step="0.001"
                               value={ins.cantidadReal || 0}
-                              disabled={selectedLote?.estado === 'Finalizado'}
+                              disabled={isFinalizado}
                               onChange={e => {
                                 const newInsumos = [...formData.insumos];
                                 newInsumos[idx].cantidadReal = formatNum(parseFloat(e.target.value) || 0);
@@ -3692,13 +3737,28 @@ const LotesProduccionView = ({
                               {formatNum(stock, 2)}
                             </span>
                           </td>
+                          <td className="px-4 py-4">
+                            {!isFinalizado && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const newInsumos = formData.insumos.filter((_: any, i: number) => i !== idx);
+                                  setFormData({ ...formData, insumos: newInsumos });
+                                }}
+                                className="p-1 text-slate-300 hover:text-sleek-danger transition-colors"
+                                title="Eliminar insumo"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
+                          </td>
                         </tr>
                       );
                     })}
                     {formData.insumos.length === 0 && (
                       <tr>
-                        <td colSpan={5} className="px-8 py-12 text-center text-slate-300 italic text-sm">
-                          Seleccione un producto con receta para cargar insumos automáticamente
+                        <td colSpan={6} className="px-8 py-12 text-center text-slate-300 italic text-sm">
+                          Seleccione un producto con receta o agregue insumos manualmente
                         </td>
                       </tr>
                     )}
