@@ -23,6 +23,7 @@ import {
   Plus, 
   Edit2, 
   Edit3,
+  Pencil,
   Lock,
   Trash2, 
   ArrowRightLeft, 
@@ -105,6 +106,53 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+// Formato numérico argentino: 1234567.89 → "1.234.567,89"
+const formatNumber = (value: number, decimals?: number): string => {
+  if (value === null || value === undefined || isNaN(value)) return '0';
+  const fixed = decimals !== undefined ? value.toFixed(decimals) : value.toString();
+  const [intPart, decPart] = fixed.split('.');
+  const intFormatted = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  if (decPart !== undefined) {
+    return `${intFormatted},${decPart}`;
+  }
+  return intFormatted;
+};
+
+// Redondeo seguro para evitar errores de punto flotante (ej: 553183.1000000001 → 553183.10)
+const safeRound = (value: number, decimals: number = 2): number => {
+  return Math.round(value * Math.pow(10, decimals)) / Math.pow(10, decimals);
+};
+
+const formatCurrency = (value: number): string => {
+  return formatNumber(safeRound(value, 2), 2);
+};
+
+/** Parsea monto desde input de texto; null si está vacío o solo "-" (escribiendo negativo). */
+const parseMontoInput = (value: string, allowNegative = true): number | null => {
+  const v = value.trim().replace(/\s/g, '').replace(',', '.');
+  if (v === '' || v === '-') return null;
+  const n = parseFloat(v);
+  if (isNaN(n)) return null;
+  return allowNegative ? n : Math.abs(n);
+};
+
+const isValidMontoInput = (value: string): boolean => {
+  const v = value.trim();
+  return v === '' || v === '-' || /^-?\d*([.,]\d*)?$/.test(v);
+};
+
+/** Debe/Haber para CC: montos siempre positivos en columna; el sentido lo da la columna. */
+const getCcDebeHaberFromMonto = (
+  montoSigned: number,
+  kind: 'cargo' | 'haber' | 'ajuste'
+): { debe: number; haber: number } => {
+  const abs = Math.abs(montoSigned);
+  if (kind === 'cargo') return { debe: abs, haber: 0 };
+  if (kind === 'haber') return { debe: 0, haber: abs };
+  if (montoSigned < 0) return { debe: abs, haber: 0 };
+  return { debe: 0, haber: abs };
+};
+
 let globalConfirmAction: (msg: string, onConfirm: () => void) => void = () => {};
 let globalShowNotification: (msg: string, type: 'success' | 'error' | 'warning' | 'info') => void = () => {};
 
@@ -116,12 +164,103 @@ export const globalAlert = (msg: string, type: 'success' | 'error' | 'warning' |
   globalShowNotification(msg, type);
 };
 
+/** yyyy-MM-dd → dd/MM/yyyy para mostrar en inputs */
+const isoToDisplayDate = (iso: string): string => {
+  if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return '';
+  const [y, m, d] = iso.split('-');
+  return `${d}/${m}/${y}`;
+};
+
+const formatDateTyping = (raw: string): string => {
+  const digits = raw.replace(/\D/g, '').slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+};
+
+/** dd/MM/yyyy → yyyy-MM-dd; null si incompleto o inválido */
+const displayToIsoDate = (display: string): string | null => {
+  const m = display.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!m) return null;
+  const [, dd, mm, yyyy] = m;
+  const iso = `${yyyy}-${mm}-${dd}`;
+  const d = parseISO(iso);
+  if (!isValid(d) || format(d, 'yyyy-MM-dd') !== iso) return null;
+  return iso;
+};
+
+/** Input de fecha: muestra dd/mm/aaaa; valor interno yyyy-MM-dd */
+const DateInput: React.FC<{
+  value: string;
+  onChange: (isoDate: string) => void;
+} & Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'type'>> = ({
+  value,
+  onChange,
+  className,
+  onBlur,
+  ...props
+}) => {
+  const [display, setDisplay] = useState(() => isoToDisplayDate(value));
+
+  useEffect(() => {
+    setDisplay(isoToDisplayDate(value));
+  }, [value]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const formatted = formatDateTyping(e.target.value);
+    setDisplay(formatted);
+    if (formatted === '') {
+      onChange('');
+      return;
+    }
+    const iso = displayToIsoDate(formatted);
+    if (iso) onChange(iso);
+  };
+
+  const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+    if (display === '') {
+      onChange('');
+    } else {
+      const iso = displayToIsoDate(display);
+      if (iso) {
+        setDisplay(isoToDisplayDate(iso));
+        onChange(iso);
+      } else {
+        setDisplay(isoToDisplayDate(value));
+      }
+    }
+    onBlur?.(e);
+  };
+
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      placeholder="dd/mm/aaaa"
+      autoComplete="off"
+      value={display}
+      onChange={handleChange}
+      onBlur={handleBlur}
+      className={className}
+      {...props}
+    />
+  );
+};
+
 const safeFormat = (date: any, formatStr: string, fallback: string = '-') => {
   if (!date) return fallback;
   try {
-    const d = (typeof date === 'string' && date.includes('-')) ? parseISO(date) : new Date(date);
+    let d: Date;
+    if (typeof date === 'string') {
+      d = /^\d{4}-\d{2}-\d{2}/.test(date) ? parseISO(date) : new Date(date);
+    } else if (date instanceof Date) {
+      d = date;
+    } else {
+      d = new Date(date);
+    }
     if (!isValid(d)) return fallback;
-    return format(d, formatStr);
+    const useEsLocale = /dd\/MM|EEEE|MMMM/.test(formatStr);
+    return format(d, formatStr, useEsLocale ? { locale: es } : undefined);
   } catch (e) {
     return fallback;
   }
@@ -633,8 +772,9 @@ interface PagoProveedor {
   monto: number;
   metodo: 'Efectivo' | 'Transferencia' | 'Cheque' | 'Otro';
   referencia?: string;
-  comprobante: string; // OP-YYYYMMDD-NNN
+  comprobante: string; // OP-YYYYMMDD-NNN | AJ-YYYYMMDD-NNN
   observaciones?: string;
+  tipoMovimiento?: 'Pago' | 'Ajuste';
 }
 
 interface EgresoItem {
@@ -1287,10 +1427,7 @@ function formatNum(valor: any, decimales: number = 3) {
 
 function displayNum(valor: any, decimales: number = 3) {
   const num = formatNum(valor, decimales);
-  return num.toLocaleString('es-AR', {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: decimales
-  });
+  return formatNumber(num, decimales);
 }
 
 const Modal = ({ isOpen, onClose, title, children, className }: { isOpen: boolean, onClose: () => void, title: string, children: React.ReactNode, className?: string }) => {
@@ -3727,19 +3864,17 @@ const LotesProduccionView = ({
                 </div>
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Fecha Elaboración</label>
-                  <input 
-                    type="date" 
-                    value={formData.fechaElaboracion || ''} 
-                    onChange={e => setFormData({ ...formData, fechaElaboracion: e.target.value })}
+                  <DateInput
+                    value={formData.fechaElaboracion || ''}
+                    onChange={(iso) => setFormData({ ...formData, fechaElaboracion: iso })}
                     className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded text-sm focus:outline-none focus:border-sleek-accent"
                   />
                 </div>
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Fecha Vencimiento</label>
-                  <input 
-                    type="date" 
-                    value={formData.fechaVencimiento || ''} 
-                    onChange={e => setFormData({ ...formData, fechaVencimiento: e.target.value })}
+                  <DateInput
+                    value={formData.fechaVencimiento || ''}
+                    onChange={(iso) => setFormData({ ...formData, fechaVencimiento: iso })}
                     className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded text-sm focus:outline-none focus:border-sleek-accent"
                   />
                 </div>
@@ -7928,19 +8063,17 @@ const MovimientosView = ({
             <option value="Despiece">Despiece</option>
           </select>
           <div className="xl:col-span-2 grid grid-cols-2 gap-2">
-            <input 
-              type="date"
+            <DateInput
               value={filterFechaDesde}
-              onChange={e => setFilterFechaDesde(e.target.value)}
-              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-[10px] font-bold uppercase text-slate-500 outline-none"
-              placeholder="Desde"
+              onChange={setFilterFechaDesde}
+              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-[10px] font-bold text-slate-500 outline-none"
+              placeholder="dd/mm/aaaa"
             />
-            <input 
-              type="date"
+            <DateInput
               value={filterFechaHasta}
-              onChange={e => setFilterFechaHasta(e.target.value)}
-              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-[10px] font-bold uppercase text-slate-500 outline-none"
-              placeholder="Hasta"
+              onChange={setFilterFechaHasta}
+              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-[10px] font-bold text-slate-500 outline-none"
+              placeholder="dd/mm/aaaa"
             />
           </div>
         </div>
@@ -8466,20 +8599,19 @@ const EntradaForm = ({ productos, almacenes, unidades, getPesoEquivalente, curre
 
         <div>
           <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Fecha de Ingreso</label>
-          <input 
-            type="date"
+          <DateInput
             value={formData.fechaIngreso || ''}
-            onChange={e => setFormData({ ...formData, fechaIngreso: e.target.value })}
+            onChange={(iso) => setFormData({ ...formData, fechaIngreso: iso })}
             className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none"
           />
         </div>
 
         <div>
           <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Fecha de Vencimiento *</label>
-          <input 
-            type="date" required
+          <DateInput
+            required
             value={formData.fechaVencimiento || ''}
-            onChange={e => setFormData({ ...formData, fechaVencimiento: e.target.value })}
+            onChange={(iso) => setFormData({ ...formData, fechaVencimiento: iso })}
             className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none"
           />
         </div>
@@ -8669,7 +8801,7 @@ const SalidaForm = ({ productos, almacenes, unidades, lotesStock, getPesoEquival
             {almacenes.map((a: any) => {
               const stockInA = lotesStock.filter((l: any) => l.productoId === formData.productoId && l.almacenId === a.id).reduce((sum: number, l: any) => sum + l.cantidad, 0);
               if (stockInA <= 0) return null;
-              return <option key={a.id} value={a.id}>{a.nombre} (Dispo: {stockInA.toLocaleString()})</option>
+              return <option key={a.id} value={a.id}>{a.nombre} (Dispo: {formatNumber(stockInA)})</option>
             })}
           </select>
         </div>
@@ -8685,7 +8817,7 @@ const SalidaForm = ({ productos, almacenes, unidades, lotesStock, getPesoEquival
             onChange={e => setFormData({ ...formData, cantidad: parseFloat(e.target.value) || 0 })}
             className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none"
           />
-          <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase">Stock Disponible: {stockEnAlmacen.toLocaleString()} {selectedProd ? unidades.find((u: any) => u.id === selectedProd.unidadMedidaId)?.abreviatura : 'un'}</p>
+          <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase">Stock Disponible: {formatNumber(stockEnAlmacen)} {selectedProd ? unidades.find((u: any) => u.id === selectedProd.unidadMedidaId)?.abreviatura : 'un'}</p>
         </div>
 
         {availableLotes.length > 0 && (
@@ -8708,7 +8840,7 @@ const SalidaForm = ({ productos, almacenes, unidades, lotesStock, getPesoEquival
                     return (
                       <tr key={l.id} className={cn(isVencido && "bg-rose-50/50", l.descontar > 0 && "bg-amber-50/30")}>
                         <td className="px-4 py-3 font-mono font-bold text-sleek-dark">{l.numeroLote}</td>
-                        <td className="px-4 py-3 text-right font-bold text-slate-500">{l.cantidad.toLocaleString()}</td>
+                        <td className="px-4 py-3 text-right font-bold text-slate-500">{formatNumber(l.cantidad)}</td>
                         <td className="px-4 py-3 text-center">
                           <span className={cn(
                             "px-2 py-0.5 rounded font-bold",
@@ -8908,7 +9040,7 @@ const TransferenciaForm = ({ productos, almacenes, unidades, lotesStock, getPeso
             {almacenes.map((a: any) => {
               const stockInA = lotesStock.filter((l: any) => l.productoId === formData.productoId && l.almacenId === a.id).reduce((sum: number, l: any) => sum + l.cantidad, 0);
               if (stockInA <= 0) return null;
-              return <option key={a.id} value={a.id}>{a.nombre} ({stockInA.toLocaleString()})</option>
+              return <option key={a.id} value={a.id}>{a.nombre} ({formatNumber(stockInA)})</option>
             })}
           </select>
         </div>
@@ -9171,7 +9303,7 @@ const AlmacenesView = ({
             <div className="flex justify-between items-end mb-3">
               <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">Ocupación Total</p>
               <p className="text-sm font-black text-sleek-dark">
-                {(ocupacion || 0).toLocaleString()} {unidadCapacidad} / {(capacidad || 0).toLocaleString()} {unidadCapacidad} ({porcentaje}%)
+                {formatNumber(ocupacion || 0)} {unidadCapacidad} / {formatNumber(capacidad || 0)} {unidadCapacidad} ({porcentaje}%)
               </p>
             </div>
             <div className="w-full bg-slate-200 rounded-full h-4 overflow-hidden border border-slate-300">
@@ -9564,7 +9696,7 @@ const AlmacenesView = ({
                     <div className="mb-6">
                       <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest mb-2">
                         <span className="text-slate-400">Ocupación</span>
-                        <span className="text-sleek-dark">{(ocupacion || 0).toLocaleString()} / {(almacen.capacidadMax || 0).toLocaleString()} {unidadCapacidad}</span>
+                        <span className="text-sleek-dark">{formatNumber(ocupacion || 0)} / {formatNumber(almacen.capacidadMax || 0)} {unidadCapacidad}</span>
                       </div>
                       <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden border border-slate-200">
                         <div 
@@ -9932,19 +10064,17 @@ const VentasPedidosView = ({
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="space-y-1">
              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Desde</label>
-             <input 
-               type="date" 
+             <DateInput
                value={dateRange.from}
-               onChange={(e) => setDateRange({ ...dateRange, from: e.target.value })}
+               onChange={(iso) => setDateRange({ ...dateRange, from: iso })}
                className="w-full px-4 py-3 bg-white border border-slate-100 rounded-xl focus:ring-2 focus:ring-sleek-accent outline-none text-xs font-bold"
              />
           </div>
           <div className="space-y-1">
              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Hasta</label>
-             <input 
-               type="date" 
+             <DateInput
                value={dateRange.to}
-               onChange={(e) => setDateRange({ ...dateRange, to: e.target.value })}
+               onChange={(iso) => setDateRange({ ...dateRange, to: iso })}
                className="w-full px-4 py-3 bg-white border border-slate-100 rounded-xl focus:ring-2 focus:ring-sleek-accent outline-none text-xs font-bold"
              />
           </div>
@@ -10024,7 +10154,7 @@ const VentasPedidosView = ({
                       <Badge variant="default">{venta.productos.length} productos</Badge>
                     </td>
                     <td className="px-8 py-5 text-right font-black text-sleek-dark text-[11px]">
-                      $ {venta.total.toLocaleString()}
+                      $ {formatCurrency(venta.total)}
                     </td>
                     <td className="px-8 py-5 text-center">
                       <Badge variant={venta.estado === 'Finalizado' ? 'success' : venta.estado === 'Anulado' ? 'danger' : 'info'}>
@@ -10113,7 +10243,7 @@ const VentasPedidosView = ({
               </div>
               <h3 className="text-sm font-black uppercase tracking-[0.2em] mb-4 text-center text-sleek-dark">Confirmar Anulación</h3>
               <p className="text-[10px] text-slate-500 font-bold text-center leading-relaxed mb-8 uppercase tracking-widest leading-loose">
-                ¿Estás seguro de anular la venta <span className="text-sleek-dark font-black tracking-normal text-xs">{ventaToAnnul.comprobante}</span> por <span className="text-sleek-dark text-lg font-black block mt-2 mb-2 tracking-normal">$ {ventaToAnnul.total.toLocaleString()}</span> al cliente <span className="text-sleek-dark font-black tracking-normal">{clientes.find((c: any) => c.id === ventaToAnnul.clienteId)?.razonSocial}</span>?<br/><br/>
+                ¿Estás seguro de anular la venta <span className="text-sleek-dark font-black tracking-normal text-xs">{ventaToAnnul.comprobante}</span> por <span className="text-sleek-dark text-lg font-black block mt-2 mb-2 tracking-normal">$ {formatCurrency(ventaToAnnul.total)}</span> al cliente <span className="text-sleek-dark font-black tracking-normal">{clientes.find((c: any) => c.id === ventaToAnnul.clienteId)?.razonSocial}</span>?<br/><br/>
                 El stock se revertirá y los envases volverán a estar disponibles. Los cobros de esta venta serán anulados.
               </p>
               <div className="flex gap-4 self-stretch">
@@ -10176,15 +10306,21 @@ const VentaForm = ({
 
   const saldoPendienteGlobal = useMemo(() => {
     if (!selectedCliente) return 0;
-    return ventas
-      .filter((v: any) => v.clienteId === selectedCliente.id && v.estado === 'Finalizado' && v.id !== form.id)
-      .reduce((sum: number, v: any) => sum + v.saldoPendiente, 0);
+    return safeRound(
+      ventas
+        .filter((v: any) => v.clienteId === selectedCliente.id && v.estado === 'Finalizado' && v.id !== form.id)
+        .reduce((sum: number, v: any) => sum + v.saldoPendiente, 0),
+      2
+    );
   }, [selectedCliente, ventas, form.id]);
 
   const totalActual = useMemo(() => {
-    const sub = form.productos.reduce((sum: number, p: any) => sum + p.subtotal, 0);
-    const desc = form.tipoDescuentoGeneral === '%' ? (sub * (form.descuentoGeneral / 100)) : form.descuentoGeneral;
-    return Math.max(0, sub - desc);
+    const sub = safeRound(form.productos.reduce((sum: number, p: any) => sum + p.subtotal, 0), 2);
+    const desc = safeRound(
+      form.tipoDescuentoGeneral === '%' ? (sub * (form.descuentoGeneral / 100)) : form.descuentoGeneral,
+      2
+    );
+    return safeRound(Math.max(0, sub - desc), 2);
   }, [form.productos, form.descuentoGeneral, form.tipoDescuentoGeneral]);
 
   const getPriceForQuantity = (productoId: string, quantity: number, allItems: any[]) => {
@@ -10215,23 +10351,26 @@ const VentaForm = ({
       // Si el precio NO es manual, recalculamos basado en la escala actual (volumen total del carrito)
       if (!item.manualPrice) {
         const autoPrice = getPriceForQuantity(item.productoId, item.cantidad, newItems);
-        const sub = (item.cantidad * autoPrice) * (1 - item.descuento / 100);
+        const sub = safeRound((item.cantidad * autoPrice) * (1 - item.descuento / 100), 2);
         return { ...item, precioUnitario: autoPrice, subtotal: sub };
       }
       return item;
     });
 
-    const sub = syncedItems.reduce((sum: number, p: any) => sum + p.subtotal, 0);
-    const desc = form.tipoDescuentoGeneral === '%' ? (sub * (form.descuentoGeneral / 100)) : form.descuentoGeneral;
-    const tot = Math.max(0, sub - desc);
-    const pendingCharge = tot - form.totalCobrado || 0;
+    const sub = safeRound(syncedItems.reduce((sum: number, p: any) => sum + p.subtotal, 0), 2);
+    const desc = safeRound(
+      form.tipoDescuentoGeneral === '%' ? (sub * (form.descuentoGeneral / 100)) : form.descuentoGeneral,
+      2
+    );
+    const tot = safeRound(Math.max(0, sub - desc), 2);
+    const pendingCharge = safeRound(tot - (form.totalCobrado || 0), 2);
     
     setForm({
       ...form,
       productos: syncedItems,
       subtotal: sub,
       total: tot,
-      saldoPendiente: Math.max(0, pendingCharge),
+      saldoPendiente: safeRound(Math.max(0, pendingCharge), 2),
       estadoCobro: form.totalCobrado === 0 ? 'Pendiente' : (pendingCharge <= 0 ? 'Cobrado' : 'Parcial')
     });
   };
@@ -10266,7 +10405,7 @@ const VentaForm = ({
         const discountObj = selectedCliente?.descuentosEspeciales.find((d: any) => d.productoId === prod?.id);
         const discount = discountObj ? discountObj.porcentaje : 0;
         
-        const sub = (cantidadVenta * price) * (1 - discount / 100);
+        const sub = safeRound((cantidadVenta * price) * (1 - discount / 100), 2);
         const newItem: VentaProducto = {
           productoId: prod?.id || '',
           codigoBarras: barcodeInput,
@@ -10381,14 +10520,17 @@ const VentaForm = ({
     
     news[idx] = { ...news[idx], [field]: value, manualPrice };
     // Recalculate subtotal
-    news[idx].subtotal = (news[idx].cantidad * news[idx].precioUnitario) * (1 - news[idx].descuento / 100);
+    news[idx].subtotal = safeRound(
+      (news[idx].cantidad * news[idx].precioUnitario) * (1 - news[idx].descuento / 100),
+      2
+    );
     updateTotals(news);
   };
 
   const handleAddCobro = () => {
     if (newCobro.monto <= 0) return;
-    const totalCob = form.totalCobrado + newCobro.monto;
-    const pending = Math.max(0, form.total - totalCob);
+    const totalCob = safeRound(form.totalCobrado + newCobro.monto, 2);
+    const pending = safeRound(Math.max(0, form.total - totalCob), 2);
     const updatedForm = {
       ...form,
       cobros: [...form.cobros, newCobro],
@@ -10403,8 +10545,8 @@ const VentaForm = ({
 
   const removeCobro = (idx: number) => {
     const cob = form.cobros[idx];
-    const totalCob = form.totalCobrado - cob.monto;
-    const pending = form.total - totalCob;
+    const totalCob = safeRound(form.totalCobrado - cob.monto, 2);
+    const pending = safeRound(form.total - totalCob, 2);
     const updatedForm = {
       ...form,
       cobros: form.cobros.filter((_: any, i: number) => i !== idx),
@@ -10524,7 +10666,7 @@ const VentaForm = ({
                        </div>
                        <div className="space-y-2">
                           <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Fecha</label>
-                          <input type="date" value={form.fecha} onChange={(e) => setForm({ ...form, fecha: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg outline-none font-bold text-slate-600" />
+                          <DateInput value={form.fecha} onChange={(iso) => setForm({ ...form, fecha: iso })} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg outline-none font-bold text-slate-600" />
                        </div>
                        <div className="flex items-center gap-4">
                           <div className="p-3 bg-slate-100 rounded-xl flex-1">
@@ -10691,7 +10833,7 @@ const VentaForm = ({
                                      />
                                   </td>
                                   <td className="py-4 text-right font-black text-xs text-sleek-dark">
-                                     $ {item.subtotal.toLocaleString()}
+                                     $ {formatCurrency(item.subtotal)}
                                   </td>
                                   <td className="py-4 text-right">
                                      <button onClick={() => removeLine(idx)} className="p-2 text-slate-300 hover:text-sleek-danger transition-all opacity-0 group-hover:opacity-100"><Trash2 className="w-4 h-4" /></button>
@@ -10715,7 +10857,7 @@ const VentaForm = ({
                     <div className="space-y-4 mb-8">
                        <div className="flex justify-between text-xs font-bold uppercase tracking-widest text-white/60">
                           <span>Subtotal</span>
-                          <span>$ {form.subtotal.toLocaleString()}</span>
+                          <span>$ {formatCurrency(form.subtotal)}</span>
                        </div>
                        <div className="flex justify-between items-center gap-4">
                           <span className="text-xs font-bold uppercase tracking-widest text-white/60">Descuento Gral.</span>
@@ -10732,9 +10874,14 @@ const VentaForm = ({
                                  setForm({ ...form, descuentoGeneral: val });
                                  // Recalculate total immediately for display
                                  const sub = form.subtotal;
-                                 const desc = form.tipoDescuentoGeneral === '%' ? (sub * (val / 100)) : val;
-                                 const tot = Math.max(0, sub - desc);
-                                 setForm(f => ({ ...f, descuentoGeneral: val, total: tot, saldoPendiente: Math.max(0, tot - f.totalCobrado) }));
+                                 const desc = safeRound(form.tipoDescuentoGeneral === '%' ? (sub * (val / 100)) : val, 2);
+                                 const tot = safeRound(Math.max(0, sub - desc), 2);
+                                 setForm(f => ({
+                                   ...f,
+                                   descuentoGeneral: val,
+                                   total: tot,
+                                   saldoPendiente: safeRound(Math.max(0, tot - f.totalCobrado), 2),
+                                 }));
                                }}
                                className="bg-white/10 w-20 px-2 py-1 rounded text-right font-black outline-none text-xs" 
                              />
@@ -10742,13 +10889,13 @@ const VentaForm = ({
                        </div>
                        <div className="pt-6 border-t border-white/10 flex justify-between items-baseline">
                           <span className="text-xs font-black uppercase tracking-[.3em] text-sleek-accent">TOTAL A PAGAR</span>
-                          <span className="text-3xl font-black text-white leading-none tracking-tight">$ {form.total.toLocaleString()}</span>
+                          <span className="text-3xl font-black text-white leading-none tracking-tight">$ {formatCurrency(form.total)}</span>
                        </div>
                     </div>
 
                     {saldoExcedido && (
                        <div className="p-4 bg-amber-500/20 border-l-4 border-amber-500 rounded-lg text-amber-500 mb-8 animate-pulse text-[10px] font-bold leading-relaxed uppercase tracking-widest">
-                          ⚠️ Excede tope de crédito ({selectedCliente?.topeCredito.toLocaleString()}). Saldo hoy: {saldoPendienteGlobal.toLocaleString()}.
+                          ⚠️ Excede tope de crédito ({formatCurrency(selectedCliente?.topeCredito || 0)}). Saldo hoy: {formatCurrency(saldoPendienteGlobal)}.
                        </div>
                     )}
 
@@ -10765,7 +10912,7 @@ const VentaForm = ({
                                    <p className="text-[8px] font-bold text-white/30 italic">{safeFormat(cob.fecha, 'dd/MM/yyyy')}</p>
                                 </div>
                                 <div className="flex items-center gap-3">
-                                   <span className="text-xs font-black">$ {cob.monto.toLocaleString()}</span>
+                                   <span className="text-xs font-black">$ {formatCurrency(cob.monto)}</span>
                                    <button onClick={() => removeCobro(idx)} className="text-white/20 hover:text-rose-500 p-1"><X className="w-3 h-3" /></button>
                                 </div>
                              </div>
@@ -10858,7 +11005,7 @@ const VentaForm = ({
                    </div>
                    <div className="space-y-1">
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Fecha</label>
-                      <input type="date" value={newCobro.fecha} onChange={(e) => setNewCobro({ ...newCobro, fecha: e.target.value })} className="w-full px-4 py-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none font-bold text-slate-700" />
+                      <DateInput value={newCobro.fecha} onChange={(iso) => setNewCobro({ ...newCobro, fecha: iso })} className="w-full px-4 py-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none font-bold text-slate-700" />
                    </div>
                 </div>
                 <div className="flex gap-4">
@@ -11238,10 +11385,10 @@ const RemitoView = ({ venta, cliente, productos, onBack }: any) => {
                                {isKg ? '-' : `${formatNum(item.pesoKg || (item.cantidad * (p?.pesoNetoUnidad || 0)), 2)} kg`}
                             </td>
                             <td className="py-6 text-right font-bold text-xs text-slate-500">
-                               $ {item.precioUnitario.toLocaleString()}
+                               $ {formatCurrency(item.precioUnitario)}
                             </td>
                             <td className="py-6 text-right font-black text-xs text-sleek-dark">
-                               $ {item.subtotal.toLocaleString()}
+                               $ {formatCurrency(item.subtotal)}
                             </td>
                          </tr>
                        );
@@ -11253,17 +11400,17 @@ const RemitoView = ({ venta, cliente, productos, onBack }: any) => {
                  <div className="w-80 space-y-4">
                     <div className="flex justify-between items-center text-xs font-bold uppercase tracking-widest text-slate-400">
                        <span>Subtotal</span>
-                       <span>$ {venta.subtotal.toLocaleString()}</span>
+                       <span>$ {formatCurrency(venta.subtotal)}</span>
                     </div>
                     {venta.descuentoGeneral > 0 && (
                       <div className="flex justify-between items-center text-xs font-bold uppercase tracking-widest text-slate-400">
                          <span>Descuentos Aplicados</span>
-                         <span>- $ {venta.descuentoGeneral.toLocaleString()}</span>
+                         <span>- $ {formatCurrency(venta.descuentoGeneral)}</span>
                       </div>
                     )}
                     <div className="flex justify-between items-center pt-4 border-t border-slate-100">
                        <span className="text-xs font-black uppercase tracking-widest text-sleek-dark">Monto Total</span>
-                       <span className="text-2xl font-black text-sleek-dark leading-none">$ {venta.total.toLocaleString()}</span>
+                       <span className="text-2xl font-black text-sleek-dark leading-none">$ {formatCurrency(venta.total)}</span>
                     </div>
                  </div>
               </div>
@@ -11300,6 +11447,8 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
 
   // Registrar Cobro State
   const [isCobroModalOpen, setIsCobroModalOpen] = useState(false);
+  const [editingCobroId, setEditingCobroId] = useState<string | null>(null);
+  const [cobroMontoInput, setCobroMontoInput] = useState('0');
   const [selectedVoucher, setSelectedVoucher] = useState<any>(null);
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
   const [cobroFormData, setCobroFormData] = useState({
@@ -11308,7 +11457,8 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
     metodo: 'Efectivo',
     referencia: '',
     observaciones: '',
-    comprobante: `REC-${Date.now()}`
+    comprobante: `REC-${Date.now()}`,
+    tipoMovimiento: 'Cobro' as 'Cobro' | 'Ajuste',
   });
 
   // Form State
@@ -11336,7 +11486,7 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
       .filter((c: any) => c.clienteId === clienteId && c.estado !== 'Anulado')
       .reduce((sum: number, c: any) => sum + (parseFloat(c.monto) || 0), 0);
       
-    return totalVentas - cobrosVentas - cobrosInd;
+    return safeRound(totalVentas - cobrosVentas - cobrosInd, 2);
   };
 
   const handleCreateNew = () => {
@@ -11363,98 +11513,152 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
     return (
       <>
         {/* Modals for Clientes Detail */}
-        <Modal isOpen={isCobroModalOpen} onClose={() => setIsCobroModalOpen(false)} title="➕ Registrar Cobro Independiente">
-          <div className="space-y-6">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Fecha</label>
-                <input 
-                  type="date" 
-                  value={cobroFormData.fecha}
-                  onChange={(e) => setCobroFormData({ ...cobroFormData, fecha: e.target.value })}
-                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded focus:ring-1 focus:ring-emerald-500 outline-none text-sm font-bold"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Comprobante</label>
-                <input 
-                  type="text" 
-                  value={cobroFormData.comprobante}
-                  onChange={(e) => setCobroFormData({ ...cobroFormData, comprobante: e.target.value })}
-                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded outline-none text-sm font-bold text-slate-400"
-                  readOnly
-                />
-              </div>
-            </div>
-
+        <Modal
+          isOpen={isCobroModalOpen}
+          onClose={() => { setIsCobroModalOpen(false); setEditingCobroId(null); setCobroMontoInput('0'); }}
+          title={`${editingCobroId ? 'Editar' : 'Registrar'} Movimiento a ${selectedCliente.razonSocial}`}
+        >
+          <form onSubmit={saveCobro} className="space-y-6">
             <div className="space-y-2">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex justify-between">
-                Monto a Cobrar ($)
-                <button 
-                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); setCobroFormData({ ...cobroFormData, monto: getSaldoPendiente(selectedCliente.id) }); }}
-                  className="text-[9px] text-emerald-600 hover:underline"
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Tipo de Movimiento</label>
+              <select
+                value={cobroFormData.tipoMovimiento}
+                onChange={(e) => {
+                  const tipoMovimiento = e.target.value as 'Cobro' | 'Ajuste';
+                  const monto = tipoMovimiento === 'Cobro'
+                    ? safeRound(Math.abs(cobroFormData.monto), 2)
+                    : cobroFormData.monto;
+                  setCobroFormData({ ...cobroFormData, tipoMovimiento, monto });
+                  setCobroMontoInput(String(monto));
+                }}
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
+              >
+                <option value="Cobro">Cobro</option>
+                <option value="Ajuste">Ajuste</option>
+              </select>
+            </div>
+            <div className="p-6 bg-sleek-dark text-white rounded-2xl shadow-xl flex flex-col items-center">
+              <p className="text-[10px] font-black text-white/40 uppercase tracking-[0.3em] mb-3">Importe del movimiento</p>
+              <p className="text-5xl font-black tracking-tighter text-white mb-4">
+                {formatCurrency(
+                  cobroFormData.tipoMovimiento === 'Ajuste'
+                    ? (parseMontoInput(cobroMontoInput, true) ?? cobroFormData.monto ?? 0)
+                    : (cobroFormData.monto || 0)
+                )}
+              </p>
+              <div className="flex flex-col items-center gap-2 w-full max-w-xs">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    const m = safeRound(Math.abs(getSaldoPendiente(selectedCliente.id)), 2);
+                    setCobroFormData({ ...cobroFormData, monto: m });
+                    setCobroMontoInput(String(m));
+                  }}
+                  className="text-[9px] text-emerald-400 hover:underline self-end"
                 >
                   Cobrar Saldo Total
                 </button>
-              </label>
-              <div className="relative">
-                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold">$</span>
-                <input 
-                  type="number" 
-                  value={cobroFormData.monto}
-                  onChange={(e) => setCobroFormData({ ...cobroFormData, monto: parseFloat(e.target.value) || 0 })}
-                  className="w-full pl-8 pr-4 py-3 bg-emerald-50/50 border border-emerald-100 rounded text-xl font-black text-emerald-700 focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
-                />
+                <div className="flex items-center gap-3 w-full">
+                  <span className="text-lg font-black text-sleek-accent">$</span>
+                  {cobroFormData.tipoMovimiento === 'Ajuste' ? (
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      required
+                      autoFocus
+                      value={cobroMontoInput}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (!isValidMontoInput(v)) return;
+                        setCobroMontoInput(v);
+                        const parsed = parseMontoInput(v, true);
+                        if (parsed !== null) {
+                          setCobroFormData({ ...cobroFormData, monto: safeRound(parsed, 2) });
+                        }
+                      }}
+                      onBlur={() => {
+                        const parsed = parseMontoInput(cobroMontoInput, true);
+                        const monto = parsed !== null ? safeRound(parsed, 2) : 0;
+                        setCobroFormData({ ...cobroFormData, monto });
+                        setCobroMontoInput(String(monto));
+                      }}
+                      className="flex-1 bg-white/10 border border-white/20 rounded-lg px-4 py-2 text-sm font-bold text-white outline-none focus:border-sleek-accent"
+                      placeholder="-0,00"
+                    />
+                  ) : (
+                    <input
+                      type="number"
+                      step="0.01"
+                      min={0}
+                      required
+                      autoFocus
+                      value={cobroFormData.monto}
+                      onChange={(e) => {
+                        const raw = parseFloat(e.target.value);
+                        const monto = isNaN(raw) ? 0 : Math.abs(raw);
+                        setCobroFormData({ ...cobroFormData, monto: safeRound(monto, 2) });
+                        setCobroMontoInput(String(safeRound(monto, 2)));
+                      }}
+                      onBlur={(e) => {
+                        const raw = parseFloat(e.target.value);
+                        const monto = isNaN(raw) ? 0 : safeRound(Math.abs(raw), 2);
+                        setCobroFormData({ ...cobroFormData, monto });
+                        setCobroMontoInput(String(monto));
+                      }}
+                      className="flex-1 bg-white/10 border border-white/20 rounded-lg px-4 py-2 text-sm font-bold text-white outline-none focus:border-sleek-accent"
+                      placeholder="0.00"
+                    />
+                  )}
+                </div>
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-2">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Método</label>
-                <select 
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Método de Pago</label>
+                <select
                   value={cobroFormData.metodo}
                   onChange={(e) => setCobroFormData({ ...cobroFormData, metodo: e.target.value })}
-                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded outline-none text-sm font-bold"
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
                 >
-                  <option value="Efectivo">Efectivo 💵</option>
-                  <option value="Transferencia">Transferencia 🏦</option>
-                  <option value="Cheque">Cheque 🎫</option>
-                  <option value="Otro">Otro 💳</option>
+                  <option value="Transferencia">Transferencia</option>
+                  <option value="Efectivo">Efectivo</option>
+                  <option value="Cheque">Cheque</option>
+                  <option value="Mercado Pago">Mercado Pago</option>
+                  <option value="Otro">Otro</option>
                 </select>
               </div>
               <div className="space-y-2">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Referencia / Nº Transf.</label>
-                <input 
-                  type="text" 
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Nro de Referencia / Operación</label>
+                <input
+                  type="text"
+                  placeholder="Ej: Nro de Transf."
                   value={cobroFormData.referencia}
                   onChange={(e) => setCobroFormData({ ...cobroFormData, referencia: e.target.value })}
-                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded outline-none text-sm font-bold"
-                  placeholder="Ej: 98234..."
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
                 />
               </div>
             </div>
 
             <div className="space-y-2">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Observaciones</label>
-              <textarea 
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Observaciones Internas</label>
+              <textarea
+                rows={3}
                 value={cobroFormData.observaciones}
                 onChange={(e) => setCobroFormData({ ...cobroFormData, observaciones: e.target.value })}
-                className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded outline-none text-sm font-bold h-20"
-                placeholder="Notas opcionales..."
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700 resize-none"
+                placeholder="Detalla el movimiento si es necesario..."
               />
             </div>
 
-            <div className="flex justify-end gap-3 pt-6 border-t border-slate-100">
-              <button onClick={() => setIsCobroModalOpen(false)} className="px-6 py-2 text-xs font-bold uppercase tracking-widest text-slate-400">Cancelar</button>
-              <button 
-                id="btn-confirmar-cobro" 
-                onClick={(e) => { e.preventDefault(); e.stopPropagation(); saveCobro(); }} 
-                className="px-10 py-3 bg-emerald-500 text-white text-xs font-black uppercase tracking-[0.2em] rounded shadow-lg shadow-emerald-200"
-              >
-                Confirmar Cobro
+            <div className="flex gap-4 pt-4">
+              <button type="button" onClick={() => { setIsCobroModalOpen(false); setEditingCobroId(null); setCobroMontoInput('0'); }} className="flex-1 py-4 bg-slate-100 text-slate-600 font-black rounded-xl uppercase tracking-widest text-[10px]">Cancelar</button>
+              <button type="submit" className="flex-[2] py-4 bg-emerald-500 hover:bg-emerald-600 text-white font-black rounded-xl shadow-xl uppercase tracking-widest text-[10px]">
+                Confirmar Movimiento
               </button>
             </div>
-          </div>
+          </form>
         </Modal>
 
         {/* Recibo / Venta View Modal */}
@@ -11507,7 +11711,7 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
                             <tr key={i}>
                               <td className="py-3 text-[11px] font-bold text-slate-600">{prod?.nombre}</td>
                               <td className="py-3 text-[11px] font-bold text-slate-400 text-right">{p.cantidad} {p.unidad}</td>
-                              <td className="py-3 text-[11px] font-black text-sleek-dark text-right">$ {(p.cantidad * (parseFloat(p.precioUnitario) || 0)).toLocaleString()}</td>
+                              <td className="py-3 text-[11px] font-black text-sleek-dark text-right">$ {formatCurrency(p.cantidad * (parseFloat(p.precioUnitario) || 0))}</td>
                             </tr>
                           );
                         })}
@@ -11516,13 +11720,13 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
                   </div>
                   <div className="pt-4 border-t border-sleek-dark flex justify-between items-center text-sleek-dark">
                     <span className="text-[10px] font-black uppercase tracking-widest">Total Comprobante</span>
-                    <span className="text-xl font-black italic">$ {(parseFloat(selectedVoucher.total) || 0).toLocaleString()}</span>
+                    <span className="text-xl font-black italic">$ {formatCurrency(parseFloat(selectedVoucher.total) || 0)}</span>
                   </div>
                 </div>
               ) : (
                 <Card className="p-8 bg-slate-50 border-none flex flex-col items-center">
                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-[.3em] mb-4">Monto Recibido</p>
-                  <h3 className="text-4xl font-black text-sleek-dark">$ {(parseFloat(selectedVoucher.monto || selectedVoucher.haber || 0) || 0).toLocaleString()}</h3>
+                  <h3 className="text-4xl font-black text-sleek-dark">$ {formatCurrency(parseFloat(selectedVoucher.monto || selectedVoucher.haber || 0) || 0)}</h3>
                   <p className="text-xs font-bold text-emerald-600 uppercase tracking-widest mt-4">Metodo: {selectedVoucher.metodo}</p>
                 </Card>
               )}
@@ -11571,7 +11775,7 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
                               </div>
                               <div style="text-align: right">
                                 <p style="margin:0; font-weight: bold;">Nº ${selectedVoucher.comprobante}</p>
-                                <p style="margin:5px 0 0 0; font-size: 12px; color: #64748b;">Fecha: ${new Date(selectedVoucher.fechaHora || selectedVoucher.fecha).toLocaleDateString()}</p>
+                                <p style="margin:5px 0 0 0; font-size: 12px; color: #64748b;">Fecha: ${safeFormat(selectedVoucher.fechaHora || selectedVoucher.fecha, 'dd/MM/yyyy')}</p>
                               </div>
                             </div>
                             <div class="content">
@@ -11588,19 +11792,19 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
                                       <tr>
                                         <td>${productos.find((item: any) => item.id === p.productoId)?.nombre || 'S/N'}</td>
                                         <td>${p.cantidad}</td>
-                                        <td style="text-align: right">$ ${(parseFloat(p.precioUnitario) || 0).toLocaleString()}</td>
-                                        <td style="text-align: right">$ ${(p.cantidad * (parseFloat(p.precioUnitario) || 0)).toLocaleString()}</td>
+                                        <td style="text-align: right">$ ${formatCurrency(parseFloat(p.precioUnitario) || 0)}</td>
+                                        <td style="text-align: right">$ ${formatCurrency(p.cantidad * (parseFloat(p.precioUnitario) || 0))}</td>
                                       </tr>
                                     `).join('')}
                                   </tbody>
                                 </table>
                                 <div style="text-align: right; margin-top: 30px; font-weight: 900; font-size: 24px;">
-                                  TOTAL: $ ${(parseFloat(selectedVoucher.total) || 0).toLocaleString()}
+                                  TOTAL: $ ${formatCurrency(parseFloat(selectedVoucher.total) || 0)}
                                 </div>
                               ` : `
                                 <div class="amount-box">
                                   <p style="font-size: 10px; font-weight: bold; color: #64748b; margin-bottom: 10px; letter-spacing: 2px;">MONTO RECIBIDO</p>
-                                  <h2 style="font-size: 40px; margin: 0;">$ ${(parseFloat(selectedVoucher.monto || selectedVoucher.haber || 0) || 0).toLocaleString()}</h2>
+                                  <h2 style="font-size: 40px; margin: 0;">$ ${formatCurrency(parseFloat(selectedVoucher.monto || selectedVoucher.haber || 0) || 0)}</h2>
                                   <p style="margin-top: 15px; font-size: 12px; font-weight: bold;">METODO: ${selectedVoucher.metodo}</p>
                                 </div>
                               `}
@@ -11633,32 +11837,90 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
 
   const handleRegistrarCobro = () => {
     if (!selectedCliente) return;
-    const pending = getSaldoPendiente(selectedCliente.id);
+    setEditingCobroId(null);
+    const recCount = (cobrosClientes || []).filter((c: any) => String(c.comprobante || '').startsWith('REC-')).length;
+    const monto = safeRound(Math.abs(getSaldoPendiente(selectedCliente.id)), 2);
     setCobroFormData({
-      ...cobroFormData,
-      monto: pending > 0 ? pending : 0,
-      comprobante: `REC-${Date.now()}`
+      fecha: new Date().toISOString().split('T')[0],
+      monto,
+      metodo: 'Efectivo',
+      referencia: '',
+      observaciones: '',
+      comprobante: `REC-${format(new Date(), 'yyyyMMdd')}-${(recCount + 1).toString().padStart(3, '0')}`,
+      tipoMovimiento: 'Cobro',
     });
+    setCobroMontoInput(String(monto));
     setIsCobroModalOpen(true);
   };
 
-  const saveCobro = () => {
+  const openEditarCobro = (cobro: any) => {
+    setEditingCobroId(cobro.id);
+    const tipoMov = cobro.tipoMovimiento || (String(cobro.comprobante || '').startsWith('AJC-') ? 'Ajuste' : 'Cobro');
+    const monto = safeRound(cobro.monto, 2);
+    setCobroFormData({
+      fecha: cobro.fecha,
+      monto,
+      metodo: cobro.metodo,
+      referencia: cobro.referencia || '',
+      observaciones: cobro.observaciones || '',
+      comprobante: cobro.comprobante,
+      tipoMovimiento: tipoMov,
+    });
+    setCobroMontoInput(String(monto));
+    setIsCobroModalOpen(true);
+  };
+
+  const handleDeleteCobro = (cobro: any) => {
+    confirmDialog('¿Estás seguro de eliminar este cobro?', () => {
+      setCobrosClientes((cobrosClientes || []).filter((c: any) => c.id !== cobro.id));
+      showNotification('Cobro eliminado', 'success');
+    });
+  };
+
+  const saveCobro = (e?: React.FormEvent) => {
+    e?.preventDefault();
     if (!selectedCliente) return;
-    if (cobroFormData.monto <= 0) {
-      showNotification('El monto debe ser mayor a 0', 'error');
-      return;
+    const esAjuste = cobroFormData.tipoMovimiento === 'Ajuste';
+    const parsedAjuste = esAjuste ? parseMontoInput(cobroMontoInput, true) : null;
+    const monto = safeRound(
+      esAjuste ? (parsedAjuste ?? cobroFormData.monto) : Math.abs(cobroFormData.monto),
+      2
+    );
+    if (editingCobroId) {
+      setCobrosClientes((cobrosClientes || []).map((c: any) =>
+        c.id === editingCobroId
+          ? {
+              ...c,
+              fecha: cobroFormData.fecha,
+              monto,
+              metodo: cobroFormData.metodo,
+              referencia: cobroFormData.referencia,
+              observaciones: cobroFormData.observaciones,
+              tipoMovimiento: cobroFormData.tipoMovimiento,
+            }
+          : c
+      ));
+      showNotification('Cobro actualizado', 'success');
+    } else {
+      const prefix = esAjuste ? 'AJC' : 'REC';
+      const count = (cobrosClientes || []).filter((c: any) => String(c.comprobante || '').startsWith(`${prefix}-`)).length;
+      const nuevoCobro = {
+        ...cobroFormData,
+        monto,
+        tipoMovimiento: cobroFormData.tipoMovimiento,
+        comprobante: `${prefix}-${format(new Date(), 'yyyyMMdd')}-${(count + 1).toString().padStart(3, '0')}`,
+        id: `cbr-${Date.now()}`,
+        clienteId: selectedCliente.id,
+        estado: 'Activo',
+        usuarioId: currentUser.id,
+        fechaCreacion: new Date().toISOString(),
+      };
+      setCobrosClientes([...(cobrosClientes || []), nuevoCobro]);
+      showNotification(esAjuste ? 'Ajuste registrado con éxito' : 'Cobro registrado con éxito', 'success');
     }
-    const nuevoCobro = {
-      ...cobroFormData,
-      id: `cbr-${Date.now()}`,
-      clienteId: selectedCliente.id,
-      estado: 'Activo',
-      usuarioId: currentUser.id,
-      fechaCreacion: new Date().toISOString()
-    };
-    setCobrosClientes([...(cobrosClientes || []), nuevoCobro]);
-    showNotification('Cobro registrado con éxito', 'success');
     setIsCobroModalOpen(false);
+    setEditingCobroId(null);
+    setCobroMontoInput('0');
   };
 
   useEffect(() => {
@@ -12016,19 +12278,28 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
 
   if (view === 'detail' && selectedCliente) {
     const saldo = getSaldoPendiente(selectedCliente.id);
-    const facturado = ventas
-      .filter((v: any) => v.clienteId === selectedCliente.id && v.estado === 'Finalizado')
-      .reduce((s: number, v: any) => s + (parseFloat(v.total) || 0), 0);
+    const facturado = safeRound(
+      ventas
+        .filter((v: any) => v.clienteId === selectedCliente.id && v.estado === 'Finalizado')
+        .reduce((s: number, v: any) => s + (parseFloat(v.total) || 0), 0),
+      2
+    );
       
-    const cobradoEnVentas = ventas
-      .filter((v: any) => v.clienteId === selectedCliente.id && v.estado === 'Finalizado')
-      .reduce((s: number, v: any) => s + (parseFloat(v.totalCobrado) || 0), 0);
+    const cobradoEnVentas = safeRound(
+      ventas
+        .filter((v: any) => v.clienteId === selectedCliente.id && v.estado === 'Finalizado')
+        .reduce((s: number, v: any) => s + (parseFloat(v.totalCobrado) || 0), 0),
+      2
+    );
       
-    const cobradoIndependiente = (cobrosClientes || [])
-      .filter((c: any) => c.clienteId === selectedCliente.id && c.estado !== 'Anulado')
-      .reduce((s: number, c: any) => s + (parseFloat(c.monto) || 0), 0);
+    const cobradoIndependiente = safeRound(
+      (cobrosClientes || [])
+        .filter((c: any) => c.clienteId === selectedCliente.id && c.estado !== 'Anulado')
+        .reduce((s: number, c: any) => s + (parseFloat(c.monto) || 0), 0),
+      2
+    );
       
-    const totalCobrado = cobradoEnVentas + cobradoIndependiente;
+    const totalCobrado = safeRound(cobradoEnVentas + cobradoIndependiente, 2);
     const listaPrecio = listasPrecios.find((lp: any) => lp.id === selectedCliente.listaPrecioId);
 
     // Cuenta Corriente Logic
@@ -12061,17 +12332,24 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
         }))),
       ...(cobrosClientes || [])
         .filter((c: any) => c.clienteId === selectedCliente.id && c.estado !== 'Anulado')
-        .map((c: any) => ({
-          id: c.id,
-          fecha: c.fecha,
-          tipo: 'Pago Recibido',
-          detalle: `Cobro independiente - ${c.metodo} ${c.referencia ? `(${c.referencia})` : ''}`,
-          comprobante: c.comprobante,
-          sucursalId: null,
-          debe: 0,
-          haber: parseFloat(c.monto) || 0,
-          raw: c
-        }))
+        .map((c: any) => {
+          const esAjuste = c.tipoMovimiento === 'Ajuste' || String(c.comprobante || '').startsWith('AJC-');
+          const montoSigned = parseFloat(c.monto) || 0;
+          const { debe, haber } = esAjuste
+            ? getCcDebeHaberFromMonto(montoSigned, 'ajuste')
+            : getCcDebeHaberFromMonto(montoSigned, 'haber');
+          return {
+            id: c.id,
+            fecha: c.fecha,
+            tipo: esAjuste ? 'AJUSTE' : 'Pago Recibido',
+            detalle: `${esAjuste ? 'Ajuste' : 'Cobro independiente'} - ${c.metodo} ${c.referencia ? `(${c.referencia})` : ''}`,
+            comprobante: c.comprobante,
+            sucursalId: null,
+            debe,
+            haber,
+            raw: c
+          };
+        })
     ].sort((a, b) => new Date(a.fecha).getTime() - new Date(b.fecha).getTime());
 
     const filteredTransacciones = rawTransacciones.filter(t => {
@@ -12080,7 +12358,8 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
       const matchesHasta = !filterCtaHasta || tDate <= filterCtaHasta;
       const matchesTipo = filterCtaTipo === 'Todos' || 
                          (filterCtaTipo === 'Solo Cargos (Ventas)' && t.tipo === 'Cargo') ||
-                         (filterCtaTipo === 'Solo Pagos (Cobros)' && (t.tipo === 'Cobro (Venta)' || t.tipo === 'Pago Recibido'));
+                         (filterCtaTipo === 'Solo Pagos (Cobros)' && (t.tipo === 'Cobro (Venta)' || t.tipo === 'Pago Recibido')) ||
+                         (filterCtaTipo === 'Solo Ajustes' && t.tipo === 'AJUSTE');
       const matchesSearch = !filterCtaSearch || t.comprobante.toLowerCase().includes(filterCtaSearch.toLowerCase());
       return matchesDesde && matchesHasta && matchesTipo && matchesSearch;
     });
@@ -12118,36 +12397,55 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
           </button>
         </div>
 
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          <Card className="p-6 bg-sleek-dark text-white border-none shadow-2xl overflow-visible relative">
+            <div className="absolute -top-4 -right-4 w-12 h-12 bg-sleek-accent rounded-2xl shadow-xl flex items-center justify-center transform rotate-12">
+              <DollarSign className="w-6 h-6 text-white" />
+            </div>
+            <p className="text-[10px] font-black uppercase text-white/50 tracking-widest mb-2">Saldo Pendiente</p>
+            <h3 className={cn(
+              "text-3xl font-black tracking-tighter",
+              saldo > 0 ? "text-rose-400" : "text-emerald-400"
+            )}>
+              $ {formatCurrency(saldo)}
+            </h3>
+          </Card>
+
+          <Card className="p-6 md:col-span-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 h-full">
+              {selectedCliente.cuit && (
+                <div className="space-y-1">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">CUIT</p>
+                  <p className="text-sm font-black text-sleek-dark">{selectedCliente.cuit}</p>
+                </div>
+              )}
+              <div className="space-y-1">
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Contacto</p>
+                <p className="text-sm font-black text-sleek-dark">{selectedCliente.telefono || '-'} | {selectedCliente.email || '-'}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Canal</p>
+                <p className="text-sm font-black text-sleek-dark">{selectedCliente.canal}</p>
+              </div>
+            </div>
+          </Card>
+        </div>
+
         {selectedCliente.condicionPago === 'Cuenta Corriente' && (
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <Card className="p-6 border-l-4 border-l-sleek-dark">
               <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">Total Facturado</p>
-              <p className="text-lg font-black text-sleek-dark">$ {facturado.toLocaleString()}</p>
+              <p className="text-lg font-black text-sleek-dark">$ {formatCurrency(facturado)}</p>
             </Card>
             <Card className="p-6 border-l-4 border-l-sleek-success">
               <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">Total Cobrado</p>
-              <p className="text-lg font-black text-sleek-success">$ {totalCobrado.toLocaleString()}</p>
-            </Card>
-            <Card className={cn(
-              "p-6 border-l-4",
-              saldo <= 0 ? "border-l-sleek-success" : 
-              selectedCliente.topeCredito && saldo > selectedCliente.topeCredito ? "border-l-sleek-danger" : 
-              selectedCliente.topeCredito && saldo > selectedCliente.topeCredito * 0.8 ? "border-l-sleek-warning" : "border-l-sleek-dark"
-            )}>
-              <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">
-                {saldo < 0 ? "Saldo a Favor" : "Saldo Pendiente"}
-              </p>
-              <p className={cn(
-                "text-lg font-black",
-                saldo <= 0 ? "text-sleek-success" : 
-                selectedCliente.topeCredito && saldo > selectedCliente.topeCredito ? "text-sleek-danger" : "text-sleek-dark"
-              )}>$ {Math.abs(saldo).toLocaleString()}</p>
+              <p className="text-lg font-black text-sleek-success">$ {formatCurrency(totalCobrado)}</p>
             </Card>
             <Card className="p-6">
               <div className="mb-4">
                 <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">Tope de Crédito</p>
                 <div className="flex justify-between items-baseline">
-                  <p className="text-lg font-black text-slate-700">$ {(selectedCliente.topeCredito || 0).toLocaleString()}</p>
+                  <p className="text-lg font-black text-slate-700">$ {formatCurrency(selectedCliente.topeCredito || 0)}</p>
                   <p className="text-[10px] font-bold text-slate-400 uppercase">
                     {selectedCliente.topeCredito > 0 ? `${Math.round((Math.max(0, saldo) / selectedCliente.topeCredito) * 100)}%` : '0%'}
                   </p>
@@ -12186,7 +12484,7 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
                   }}
                   className="btn-registrar-cobro bg-sleek-success hover:bg-emerald-600 text-white px-4 py-2 rounded-lg font-black text-[10px] uppercase tracking-widest shadow-lg transition-all flex items-center gap-2"
                 >
-                  <Plus className="w-3.5 h-3.5" /> Registrar Cobro
+                  <Plus className="w-3.5 h-3.5" /> Registrar Movimiento
                 </button>
               </div>
 
@@ -12194,19 +12492,17 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
               <div className="px-8 py-4 bg-slate-50/50 border-b border-slate-100 grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
                 <div className="space-y-1.5">
                   <label className="text-[9px] font-black uppercase text-slate-400 tracking-widest">Desde</label>
-                  <input 
-                    type="date" 
+                  <DateInput
                     value={filterCtaDesde}
-                    onChange={(e) => setFilterCtaDesde(e.target.value)}
+                    onChange={setFilterCtaDesde}
                     className="w-full px-3 py-2 bg-white border border-slate-200 rounded text-[11px] font-bold outline-none focus:ring-1 focus:ring-sleek-accent"
                   />
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-[9px] font-black uppercase text-slate-400 tracking-widest">Hasta</label>
-                  <input 
-                    type="date" 
+                  <DateInput
                     value={filterCtaHasta}
-                    onChange={(e) => setFilterCtaHasta(e.target.value)}
+                    onChange={setFilterCtaHasta}
                     className="w-full px-3 py-2 bg-white border border-slate-200 rounded text-[11px] font-bold outline-none focus:ring-1 focus:ring-sleek-accent"
                   />
                 </div>
@@ -12220,6 +12516,7 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
                     <option value="Todos">Todos</option>
                     <option value="Solo Cargos (Ventas)">Solo Cargos (Ventas)</option>
                     <option value="Solo Pagos (Cobros)">Solo Pagos (Cobros)</option>
+                    <option value="Solo Ajustes">Solo Ajustes</option>
                   </select>
                 </div>
                 <div className="space-y-1.5">
@@ -12260,6 +12557,7 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
                       <th className="px-8 py-4 text-right text-[10px] font-black uppercase text-slate-400 tracking-widest">Debe (+)</th>
                       <th className="px-8 py-4 text-right text-[10px] font-black uppercase text-slate-400 tracking-widest">Haber (-)</th>
                       <th className="px-8 py-4 text-right text-[10px] font-black uppercase text-slate-400 tracking-widest">Saldo</th>
+                      <th className="px-8 py-4 text-right text-[10px] font-black uppercase text-slate-400 tracking-widest">Acciones</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
@@ -12270,7 +12568,9 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
                           <td className="px-8 py-4">
                             <span className={cn(
                               "px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest",
-                              t.tipo === 'Cargo' ? "bg-slate-100 text-slate-600" : "bg-emerald-100 text-emerald-700"
+                              t.tipo === 'Cargo' ? "bg-slate-100 text-slate-600" :
+                              t.tipo === 'AJUSTE' ? "bg-blue-100 text-[#3B82F6]" :
+                              "bg-emerald-100 text-emerald-700"
                             )}>{t.tipo}</span>
                           </td>
                           <td className="px-8 py-4">
@@ -12284,14 +12584,48 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
                               {t.comprobante}
                             </button>
                           </td>
-                          <td className="px-8 py-4 text-right font-black text-slate-400">{t.debe > 0 ? `$ ${t.debe.toLocaleString()}` : '-'}</td>
-                          <td className="px-8 py-4 text-right font-black text-sleek-success">{t.haber > 0 ? `$ ${t.haber.toLocaleString()}` : '-'}</td>
-                          <td className="px-8 py-4 text-right font-black text-sleek-dark bg-slate-50/30">$ {t.saldoAcumulado.toLocaleString()}</td>
+                          <td className={cn("px-8 py-4 text-right font-black", t.debe > 0 ? "text-[#EF4444]" : "text-slate-400")}>
+                            {t.debe > 0 ? `$ ${formatCurrency(t.debe)}` : '-'}
+                          </td>
+                          <td className={cn("px-8 py-4 text-right font-black", t.haber > 0 ? "text-[#10B981]" : "text-slate-400")}>
+                            {t.haber > 0 ? `$ ${formatCurrency(t.haber)}` : '-'}
+                          </td>
+                          <td className="px-8 py-4 text-right font-black text-sleek-dark bg-slate-50/30">$ {formatCurrency(t.saldoAcumulado)}</td>
+                          <td className="px-8 py-4 text-right">
+                            {(t.tipo === 'Pago Recibido' || t.tipo === 'AJUSTE') && (
+                              <div className="flex justify-end gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => openEditarCobro(t.raw)}
+                                  className="p-2 hover:bg-slate-200 rounded text-slate-400 hover:text-sleek-accent transition-all"
+                                  title="Editar cobro"
+                                >
+                                  <Pencil className="w-4 h-4" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => printComprobanteCobro(t.raw, selectedCliente)}
+                                  className="p-2 hover:bg-slate-200 rounded text-slate-400 transition-all"
+                                  title="Imprimir comprobante"
+                                >
+                                  <Printer className="w-4 h-4" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteCobro(t.raw)}
+                                  className="p-2 hover:bg-slate-200 rounded text-slate-400 hover:text-rose-500 transition-all"
+                                  title="Eliminar cobro"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            )}
+                          </td>
                         </tr>
                       ))
                     ) : (
                       <tr>
-                        <td colSpan={6} className="px-8 py-12 text-center text-[10px] font-bold text-slate-400 uppercase italic whitespace-nowrap">No se registran transacciones para este cliente</td>
+                        <td colSpan={7} className="px-8 py-12 text-center text-[10px] font-bold text-slate-400 uppercase italic whitespace-nowrap">No se registran transacciones para este cliente</td>
                       </tr>
                     )}
                   </tbody>
@@ -12533,10 +12867,10 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
                         cliente.topeCredito && saldo > cliente.topeCredito ? "text-sleek-danger" : 
                         cliente.topeCredito && saldo > cliente.topeCredito * 0.8 ? "text-sleek-warning" : "text-sleek-dark"
                       )}>
-                        $ {saldo.toLocaleString()}
+                        $ {formatCurrency(saldo)}
                       </p>
                       {cliente.topeCredito > 0 && (
-                        <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Tope: {cliente.topeCredito.toLocaleString()}</p>
+                        <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Tope: {formatCurrency(cliente.topeCredito)}</p>
                       )}
                     </td>
                     <td className="px-8 py-5 text-center">
@@ -13442,7 +13776,60 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
   const [isPagoModalOpen, setIsPagoModalOpen] = useState(false);
   const [selectedProveedor, setSelectedProveedor] = useState<any>(null);
   const [editingItem, setEditingItem] = useState<any>(null);
-  const [pagoData, setPagoData] = useState<any>({ monto: 0, metodo: 'Transferencia' });
+  const [pagoData, setPagoData] = useState<any>({
+    monto: 0,
+    metodo: 'Transferencia',
+    referencia: '',
+    observaciones: '',
+    tipoMovimiento: 'Pago' as 'Pago' | 'Ajuste',
+  });
+  const [editingPagoId, setEditingPagoId] = useState<string | null>(null);
+  const [pagoMontoInput, setPagoMontoInput] = useState('0');
+  const [filterCcDesde, setFilterCcDesde] = useState('');
+  const [filterCcHasta, setFilterCcHasta] = useState(() => new Date().toISOString().split('T')[0]);
+  const [filterCcTipo, setFilterCcTipo] = useState('Todos');
+  const [filterCcSearch, setFilterCcSearch] = useState('');
+
+  const movimientosProveedor = useMemo(() => {
+    if (!selectedProveedor) return [];
+    const items = [
+      ...egresos
+        .filter((e: any) => e.proveedorId === selectedProveedor.id && e.estado === 'Confirmado')
+        .map((e: any) => ({ ...e, type: 'EGRESO' as const })),
+      ...pagosProveedores
+        .filter((p: any) => p.proveedorId === selectedProveedor.id)
+        .map((p: any) => ({ ...p, type: 'PAGO' as const })),
+    ];
+
+    const filtered = items.filter((item: any) => {
+      const tDate = String(item.fecha || '').split('T')[0];
+      const matchesDesde = !filterCcDesde || tDate >= filterCcDesde;
+      const matchesHasta = !filterCcHasta || tDate <= filterCcHasta;
+      const isAjusteProv = (it: any) =>
+        it.tipoMovimiento === 'Ajuste' || String(it.comprobante || '').startsWith('AJ-');
+      const matchesTipo =
+        filterCcTipo === 'Todos' ||
+        (filterCcTipo === 'Pago Proveedor' && item.type === 'PAGO' && !isAjusteProv(item)) ||
+        (filterCcTipo === 'Ajuste' && item.type === 'PAGO' && isAjusteProv(item)) ||
+        (filterCcTipo === 'Cargo (Compra)' && item.type === 'EGRESO');
+      const matchesSearch =
+        !filterCcSearch ||
+        String(item.comprobante || '').toLowerCase().includes(filterCcSearch.toLowerCase());
+      return matchesDesde && matchesHasta && matchesTipo && matchesSearch;
+    });
+
+    return filtered.sort((a: any, b: any) => {
+      const fechaA = parseISO(a.fecha);
+      const fechaB = parseISO(b.fecha);
+      const diffFecha = fechaB.getTime() - fechaA.getTime();
+      if (diffFecha !== 0) return diffFecha;
+      const getCorrelativo = (comp: string) => {
+        const parts = (comp || '').split('-');
+        return parseInt(parts[parts.length - 1], 10) || 0;
+      };
+      return getCorrelativo(b.comprobante || '') - getCorrelativo(a.comprobante || '');
+    });
+  }, [selectedProveedor, egresos, pagosProveedores, filterCcDesde, filterCcHasta, filterCcTipo, filterCcSearch]);
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
@@ -13462,32 +13849,98 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
   };
 
   const calculateSaldo = (proveedorId: string) => {
-    const totalEgresos = egresos
-      .filter((e: any) => e.proveedorId === proveedorId && e.estado === 'Confirmado')
-      .reduce((sum: number, e: any) => sum + e.total, 0);
-    const totalPagos = pagosProveedores
-      .filter((p: any) => p.proveedorId === proveedorId)
-      .reduce((sum: number, p: any) => sum + p.monto, 0);
-    return totalEgresos - totalPagos;
+    const totalEgresos = safeRound(
+      egresos
+        .filter((e: any) => e.proveedorId === proveedorId && e.estado === 'Confirmado')
+        .reduce((sum: number, e: any) => sum + e.total, 0),
+      2
+    );
+    const totalPagos = safeRound(
+      pagosProveedores
+        .filter((p: any) => p.proveedorId === proveedorId)
+        .reduce((sum: number, p: any) => sum + p.monto, 0),
+      2
+    );
+    return safeRound(totalEgresos - totalPagos, 2);
+  };
+
+  const openNuevoMovimiento = () => {
+    setEditingPagoId(null);
+    const monto = safeRound(Math.abs(calculateSaldo(selectedProveedor.id)), 2);
+    setPagoData({
+      monto,
+      metodo: 'Transferencia',
+      referencia: '',
+      observaciones: '',
+      tipoMovimiento: 'Pago',
+    });
+    setPagoMontoInput(String(monto));
+    setIsPagoModalOpen(true);
+  };
+
+  const openEditarMovimiento = (pago: PagoProveedor) => {
+    setEditingPagoId(pago.id);
+    const tipoMov = pago.tipoMovimiento || (String(pago.comprobante || '').startsWith('AJ-') ? 'Ajuste' : 'Pago');
+    const monto = safeRound(pago.monto, 2);
+    setPagoData({
+      monto,
+      metodo: pago.metodo,
+      referencia: pago.referencia || '',
+      observaciones: pago.observaciones || '',
+      tipoMovimiento: tipoMov,
+    });
+    setPagoMontoInput(String(monto));
+    setIsPagoModalOpen(true);
+  };
+
+  const handleDeleteMovimiento = (pago: PagoProveedor) => {
+    confirmDialog('¿Estás seguro de eliminar este movimiento?', () => {
+      setPagosProveedores(pagosProveedores.filter((p: any) => p.id !== pago.id));
+      showNotification('Movimiento eliminado', 'success');
+    });
   };
 
   const handleSavePago = (e: React.FormEvent) => {
     e.preventDefault();
-    const newPago: PagoProveedor = {
-      id: `pago-pr-${Date.now()}`,
-      proveedorId: selectedProveedor.id,
-      fecha: new Date().toISOString().split('T')[0],
-      monto: pagoData.monto,
-      metodo: pagoData.metodo,
-      referencia: pagoData.referencia,
-      comprobante: `OP-${format(new Date(), 'yyyyMMdd')}-${(pagosProveedores.length + 1).toString().padStart(3, '0')}`,
-      observaciones: pagoData.observaciones
-    };
-
-    setPagosProveedores([...pagosProveedores, newPago]);
-    showNotification('Pago registrado con éxito', 'success');
+    const esAjuste = pagoData.tipoMovimiento === 'Ajuste';
+    const parsedAjuste = esAjuste ? parseMontoInput(pagoMontoInput, true) : null;
+    const monto = safeRound(
+      esAjuste ? (parsedAjuste ?? pagoData.monto) : Math.abs(pagoData.monto),
+      2
+    );
+    if (editingPagoId) {
+      setPagosProveedores(pagosProveedores.map((p: any) =>
+        p.id === editingPagoId
+          ? {
+              ...p,
+              monto,
+              metodo: pagoData.metodo,
+              referencia: pagoData.referencia,
+              observaciones: pagoData.observaciones,
+              tipoMovimiento: pagoData.tipoMovimiento,
+            }
+          : p
+      ));
+      showNotification('Movimiento actualizado', 'success');
+    } else {
+      const prefix = esAjuste ? 'AJ' : 'OP';
+      const count = pagosProveedores.filter((p: any) => String(p.comprobante || '').startsWith(`${prefix}-`)).length;
+      const newPago: PagoProveedor = {
+        id: `pago-pr-${Date.now()}`,
+        proveedorId: selectedProveedor.id,
+        fecha: new Date().toISOString().split('T')[0],
+        monto,
+        metodo: pagoData.metodo,
+        referencia: pagoData.referencia,
+        comprobante: `${prefix}-${format(new Date(), 'yyyyMMdd')}-${(count + 1).toString().padStart(3, '0')}`,
+        observaciones: pagoData.observaciones,
+        tipoMovimiento: pagoData.tipoMovimiento,
+      };
+      setPagosProveedores([...pagosProveedores, newPago]);
+      showNotification(esAjuste ? 'Ajuste registrado con éxito' : 'Movimiento registrado con éxito', 'success');
+    }
     setIsPagoModalOpen(false);
-    printOrdenPago(newPago, selectedProveedor);
+    setEditingPagoId(null);
   };
 
   const filtered = proveedores.filter((p: any) => 
@@ -13519,12 +13972,12 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
                 <DollarSign className="w-6 h-6 text-white" />
               </div>
               <p className="text-[10px] font-black uppercase text-white/50 tracking-widest mb-2">Saldo Adeudado</p>
-              <h3 className="text-3xl font-black tracking-tighter">$ {calculateSaldo(selectedProveedor.id).toLocaleString('es-AR', { minimumFractionDigits: 2 })}</h3>
+              <h3 className="text-3xl font-black tracking-tighter">$ {formatCurrency(calculateSaldo(selectedProveedor.id))}</h3>
               <button 
-                onClick={() => { setPagoData({ monto: calculateSaldo(selectedProveedor.id), metodo: 'Transferencia' }); setIsPagoModalOpen(true); }}
+                onClick={openNuevoMovimiento}
                 className="mt-6 w-full py-4 bg-sleek-accent hover:bg-emerald-400 transition-all text-white font-black rounded-xl text-[10px] uppercase tracking-widest shadow-lg flex items-center justify-center gap-2"
               >
-                <Plus className="w-3.5 h-3.5" /> Registrar Pago
+                <Plus className="w-3.5 h-3.5" /> Registrar Movimiento
               </button>
             </Card>
 
@@ -13558,22 +14011,85 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
             </div>
 
             <Card className="border-none shadow-xl overflow-hidden">
+              <div className="px-6 py-4 bg-slate-50/50 border-b border-slate-100 grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
+                <div className="space-y-1.5">
+                  <label className="text-[9px] font-black uppercase text-slate-400 tracking-widest">Desde</label>
+                  <DateInput
+                    value={filterCcDesde}
+                    onChange={setFilterCcDesde}
+                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded text-[11px] font-bold outline-none focus:ring-1 focus:ring-sleek-accent"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[9px] font-black uppercase text-slate-400 tracking-widest">Hasta</label>
+                  <DateInput
+                    value={filterCcHasta}
+                    onChange={setFilterCcHasta}
+                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded text-[11px] font-bold outline-none focus:ring-1 focus:ring-sleek-accent"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[9px] font-black uppercase text-slate-400 tracking-widest">Tipo</label>
+                  <select
+                    value={filterCcTipo}
+                    onChange={(e) => setFilterCcTipo(e.target.value)}
+                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded text-[11px] font-bold outline-none focus:ring-1 focus:ring-sleek-accent appearance-none"
+                  >
+                    <option value="Todos">Todos</option>
+                    <option value="Pago Proveedor">Pago Proveedor</option>
+                    <option value="Ajuste">Ajuste</option>
+                    <option value="Cargo (Compra)">Cargo (Compra)</option>
+                  </select>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[9px] font-black uppercase text-slate-400 tracking-widest">Buscador</label>
+                  <div className="relative">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-300" />
+                    <input
+                      type="text"
+                      placeholder="N° Comprobante"
+                      value={filterCcSearch}
+                      onChange={(e) => setFilterCcSearch(e.target.value)}
+                      className="w-full pl-8 pr-3 py-2 bg-white border border-slate-200 rounded text-[11px] font-bold outline-none focus:ring-1 focus:ring-sleek-accent"
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFilterCcDesde('');
+                      setFilterCcHasta(new Date().toISOString().split('T')[0]);
+                      setFilterCcTipo('Todos');
+                      setFilterCcSearch('');
+                    }}
+                    className="text-[10px] font-black text-slate-400 hover:text-sleek-danger uppercase tracking-widest transition-colors flex items-center gap-1.5 py-2.5"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> Limpiar Filtros
+                  </button>
+                </div>
+              </div>
                <table className="w-full text-left">
                   <thead className="bg-slate-50 border-b border-slate-100">
                     <tr>
                       <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Fecha</th>
                       <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Transacción</th>
                       <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Comprobante</th>
-                      <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Monto</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Debe (+)</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Haber (-)</th>
                       <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Acciones</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {[
-                      ...egresos.filter((e: any) => e.proveedorId === selectedProveedor.id && e.estado === 'Confirmado').map((e: any) => ({ ...e, type: 'EGRESO' })),
-                      ...pagosProveedores.filter((p: any) => p.proveedorId === selectedProveedor.id).map((p: any) => ({ ...p, type: 'PAGO' }))
-                    ].sort((a: any, b: any) => b.fecha.localeCompare(a.fecha))
-                    .map((item: any, idx: number) => (
+                    {movimientosProveedor.map((item: any, idx: number) => {
+                      const montoSigned = item.monto ?? item.total ?? 0;
+                      const isAjuste = item.type === 'PAGO' && (item.tipoMovimiento === 'Ajuste' || String(item.comprobante || '').startsWith('AJ-'));
+                      const { debe, haber } = item.type === 'EGRESO'
+                        ? getCcDebeHaberFromMonto(montoSigned, 'cargo')
+                        : isAjuste
+                          ? getCcDebeHaberFromMonto(montoSigned, 'ajuste')
+                          : getCcDebeHaberFromMonto(montoSigned, 'haber');
+                      return (
                       <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
                         <td className="px-6 py-4">
                            <p className="text-[11px] font-black text-sleek-dark">{format(parseISO(item.fecha), 'dd/MM/yyyy')}</p>
@@ -13581,6 +14097,8 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
                         <td className="px-6 py-4">
                            {item.type === 'EGRESO' ? (
                               <Badge variant="danger" className="bg-rose-50! text-rose-600!">Cargo (Compra)</Badge>
+                           ) : isAjuste ? (
+                              <Badge className="bg-blue-50! text-[#3B82F6]! border-none">Ajuste</Badge>
                            ) : (
                               <Badge variant="success" className="bg-emerald-50! text-emerald-600!">Pago Proveedor</Badge>
                            )}
@@ -13588,25 +14106,47 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
                         <td className="px-6 py-4">
                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{item.comprobante}</p>
                         </td>
-                        <td className={`px-6 py-4 text-right font-black text-xs ${item.type === 'EGRESO' ? 'text-rose-600' : 'text-emerald-600'}`}>
-                           {item.type === 'EGRESO' ? '-' : '+'} $ {item.monto?.toLocaleString('es-AR', { minimumFractionDigits: 2 }) || (item.total?.toLocaleString('es-AR', { minimumFractionDigits: 2 }))}
+                        <td className={cn("px-6 py-4 text-right font-black text-xs", debe > 0 ? "text-[#EF4444]" : "text-slate-400")}>
+                           {debe > 0 ? `$ ${formatCurrency(debe)}` : '-'}
+                        </td>
+                        <td className={cn("px-6 py-4 text-right font-black text-xs", haber > 0 ? "text-[#10B981]" : "text-slate-400")}>
+                           {haber > 0 ? `$ ${formatCurrency(haber)}` : '-'}
                         </td>
                         <td className="px-6 py-4 text-right">
                            {item.type === 'PAGO' && (
-                              <button 
-                                onClick={() => printOrdenPago(item, selectedProveedor)}
-                                className="p-2 hover:bg-slate-200 rounded text-slate-400 transition-all"
-                                title="Imprimir Comprobante"
-                              >
-                                <Printer className="w-4 h-4" />
-                              </button>
+                              <div className="flex justify-end gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => openEditarMovimiento(item)}
+                                  className="p-2 hover:bg-slate-200 rounded text-slate-400 hover:text-sleek-accent transition-all"
+                                  title="Editar movimiento"
+                                >
+                                  <Pencil className="w-4 h-4" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => printOrdenPago(item, selectedProveedor)}
+                                  className="p-2 hover:bg-slate-200 rounded text-slate-400 transition-all"
+                                  title="Imprimir comprobante"
+                                >
+                                  <Printer className="w-4 h-4" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteMovimiento(item)}
+                                  className="p-2 hover:bg-slate-200 rounded text-slate-400 hover:text-rose-500 transition-all"
+                                  title="Eliminar movimiento"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
                            )}
                         </td>
                       </tr>
-                    ))}
-                    {egresos.filter((e: any) => e.proveedorId === selectedProveedor.id).length === 0 && pagosProveedores.filter((p: any) => p.proveedorId === selectedProveedor.id).length === 0 && (
+                    );})}
+                    {movimientosProveedor.length === 0 && (
                       <tr>
-                        <td colSpan={5} className="py-20 text-center">
+                        <td colSpan={6} className="py-20 text-center">
                           <p className="text-xs font-bold text-slate-300 uppercase tracking-widest">Sin movimientos registrados</p>
                         </td>
                       </tr>
@@ -13667,7 +14207,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
                       </td>
                       <td className="px-6 py-4">
                         <p className={`text-xs font-black ${calculateSaldo(p.id) > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                          $ {calculateSaldo(p.id).toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                          $ {formatCurrency(calculateSaldo(p.id))}
                         </p>
                       </td>
                       <td className="px-6 py-4">
@@ -13815,21 +14355,90 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
         </form>
       </Modal>
 
-      <Modal isOpen={isPagoModalOpen} onClose={() => setIsPagoModalOpen(false)} title={`Registrar Pago a ${selectedProveedor?.razonSocial}`}>
+      <Modal
+        isOpen={isPagoModalOpen}
+        onClose={() => { setIsPagoModalOpen(false); setEditingPagoId(null); setPagoMontoInput('0'); }}
+        title={`${editingPagoId ? 'Editar' : 'Registrar'} Movimiento a ${selectedProveedor?.razonSocial}`}
+      >
         <form onSubmit={handleSavePago} className="space-y-6">
+           <div className="space-y-2">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Tipo de Movimiento</label>
+              <select
+                value={pagoData.tipoMovimiento}
+                onChange={(e) => {
+                  const tipoMovimiento = e.target.value as 'Pago' | 'Ajuste';
+                  const monto = tipoMovimiento === 'Pago'
+                    ? safeRound(Math.abs(pagoData.monto), 2)
+                    : pagoData.monto;
+                  setPagoData({ ...pagoData, tipoMovimiento, monto });
+                  setPagoMontoInput(String(monto));
+                }}
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
+              >
+                <option value="Pago">Pago</option>
+                <option value="Ajuste">Ajuste</option>
+              </select>
+           </div>
            <div className="p-6 bg-sleek-dark text-white rounded-2xl shadow-xl flex flex-col items-center">
-              <p className="text-[10px] font-black text-white/40 uppercase tracking-[0.3em] mb-3">Importe a Pagar</p>
-              <div className="flex items-center gap-4">
-                 <span className="text-2xl font-black text-sleek-accent">$</span>
-                 <input 
-                  type="number"
-                  step="0.01"
-                  required
-                  autoFocus
-                  value={pagoData.monto}
-                  onChange={(e) => setPagoData({ ...pagoData, monto: parseFloat(e.target.value) || 0 })}
-                  className="bg-transparent border-none outline-none text-5xl font-black tracking-tighter w-48 text-center placeholder:text-white/10"
-                 />
+              <p className="text-[10px] font-black text-white/40 uppercase tracking-[0.3em] mb-3">Importe del movimiento</p>
+              <p className="text-5xl font-black tracking-tighter text-white mb-4">
+                {formatCurrency(
+                  pagoData.tipoMovimiento === 'Ajuste'
+                    ? (parseMontoInput(pagoMontoInput, true) ?? pagoData.monto ?? 0)
+                    : (pagoData.monto || 0)
+                )}
+              </p>
+              <div className="flex items-center gap-3 w-full max-w-xs">
+                 <span className="text-lg font-black text-sleek-accent">$</span>
+                 {pagoData.tipoMovimiento === 'Ajuste' ? (
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    required
+                    autoFocus
+                    value={pagoMontoInput}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (!isValidMontoInput(v)) return;
+                      setPagoMontoInput(v);
+                      const parsed = parseMontoInput(v, true);
+                      if (parsed !== null) {
+                        setPagoData({ ...pagoData, monto: safeRound(parsed, 2) });
+                      }
+                    }}
+                    onBlur={() => {
+                      const parsed = parseMontoInput(pagoMontoInput, true);
+                      const monto = parsed !== null ? safeRound(parsed, 2) : 0;
+                      setPagoData({ ...pagoData, monto });
+                      setPagoMontoInput(String(monto));
+                    }}
+                    className="flex-1 bg-white/10 border border-white/20 rounded-lg px-4 py-2 text-sm font-bold text-white outline-none focus:border-sleek-accent"
+                    placeholder="-0,00"
+                  />
+                 ) : (
+                  <input
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    required
+                    autoFocus
+                    value={pagoData.monto}
+                    onChange={(e) => {
+                      const raw = parseFloat(e.target.value);
+                      const monto = isNaN(raw) ? 0 : Math.abs(raw);
+                      setPagoData({ ...pagoData, monto: safeRound(monto, 2) });
+                      setPagoMontoInput(String(safeRound(monto, 2)));
+                    }}
+                    onBlur={(e) => {
+                      const raw = parseFloat(e.target.value);
+                      const monto = isNaN(raw) ? 0 : safeRound(Math.abs(raw), 2);
+                      setPagoData({ ...pagoData, monto });
+                      setPagoMontoInput(String(monto));
+                    }}
+                    className="flex-1 bg-white/10 border border-white/20 rounded-lg px-4 py-2 text-sm font-bold text-white outline-none focus:border-sleek-accent"
+                    placeholder="0.00"
+                  />
+                 )}
               </div>
            </div>
 
@@ -13867,14 +14476,14 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
                 value={pagoData.observaciones || ''}
                 onChange={(e) => setPagoData({ ...pagoData, observaciones: e.target.value })}
                 className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700 resize-none"
-                placeholder="Detalla el pago si es necesario..."
+                placeholder="Detalla el movimiento si es necesario..."
               ></textarea>
            </div>
 
            <div className="flex gap-4 pt-4">
-            <button type="button" onClick={() => setIsPagoModalOpen(false)} className="flex-1 py-4 bg-slate-100 text-slate-600 font-black rounded-xl uppercase tracking-widest text-[10px]">Cancelar</button>
-            <button type="submit" className="flex-[2] py-4 bg-emerald-500 hover:bg-emerald-600 text-white font-black rounded-xl shadow-xl uppercase tracking-widest text-[10px] flex items-center justify-center gap-3">
-              <CheckCircle2 className="w-5 h-5" /> Confirmar Pago e Imprimir OP
+            <button type="button" onClick={() => { setIsPagoModalOpen(false); setEditingPagoId(null); }} className="flex-1 py-4 bg-slate-100 text-slate-600 font-black rounded-xl uppercase tracking-widest text-[10px]">Cancelar</button>
+            <button type="submit" className="flex-[2] py-4 bg-emerald-500 hover:bg-emerald-600 text-white font-black rounded-xl shadow-xl uppercase tracking-widest text-[10px]">
+              Confirmar Movimiento
             </button>
           </div>
         </form>
@@ -13892,7 +14501,7 @@ const printOrdenPago = (pago: PagoProveedor, proveedor: Proveedor) => {
   const content = `
     <html>
       <head>
-        <title>Orden de Pago - ${pago.comprobante}</title>
+        <title>Comprobante de Pago - ${pago.comprobante}</title>
         <style>
           body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 40px; color: #334155; line-height: 1.5; }
           .header { display: flex; justify-content: space-between; border-bottom: 2px solid #f1f5f9; padding-bottom: 24px; margin-bottom: 32px; }
@@ -13916,11 +14525,10 @@ const printOrdenPago = (pago: PagoProveedor, proveedor: Proveedor) => {
       <body>
         <div class="header">
           <div>
-            <div class="logo-text">ALIDO</div>
-            <div class="doc-type">Gestión de Egresos</div>
+            <div class="comp-nro" style="font-size: 22px;">COMPROBANTE DE PAGO</div>
           </div>
           <div style="text-align: right">
-            <div class="doc-type">Orden de Pago</div>
+            <div class="doc-type">Nº Comprobante</div>
             <div class="comp-nro">${pago.comprobante}</div>
             <div style="font-size: 12px; font-weight: 700; color: #64748b; margin-top: 4px;">Fecha: ${format(parseISO(pago.fecha), 'dd/MM/yyyy')}</div>
           </div>
@@ -13952,7 +14560,7 @@ const printOrdenPago = (pago: PagoProveedor, proveedor: Proveedor) => {
 
         <div class="total-box">
           <div class="total-label">Importe Total Pagado</div>
-          <div class="total-value">$ ${pago.monto.toLocaleString('es-AR', { minimumFractionDigits: 2 })}</div>
+          <div class="total-value">$ ${formatCurrency(pago.monto)}</div>
         </div>
 
         <div class="footer">
@@ -13965,6 +14573,90 @@ const printOrdenPago = (pago: PagoProveedor, proveedor: Proveedor) => {
             window.print();
             // window.close();
           };
+        </script>
+      </body>
+    </html>
+  `;
+
+  printWindow.document.write(content);
+  printWindow.document.close();
+};
+
+const printComprobanteCobro = (cobro: any, cliente: any) => {
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) return;
+
+  const content = `
+    <html>
+      <head>
+        <title>Comprobante de Cobro - ${cobro.comprobante}</title>
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 40px; color: #334155; line-height: 1.5; }
+          .header { display: flex; justify-content: space-between; border-bottom: 2px solid #f1f5f9; padding-bottom: 24px; margin-bottom: 32px; }
+          .doc-type { font-size: 14px; font-weight: 800; color: #64748b; text-transform: uppercase; letter-spacing: 0.1em; }
+          .comp-nro { font-size: 20px; font-weight: 900; color: #0f172a; }
+          .section { margin-bottom: 32px; }
+          .section-title { font-size: 10px; font-weight: 800; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 12px; border-bottom: 1px solid #f1f5f9; padding-bottom: 4px; }
+          .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; }
+          .label { font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 4px; }
+          .value { font-size: 14px; font-weight: 700; color: #1e293b; }
+          .box { padding: 20px; background: #f8fafc; border-radius: 12px; border: 1px solid #f1f5f9; }
+          .total-box { margin-top: 48px; padding: 32px; background: #0f172a; color: white; border-radius: 16px; text-align: right; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1); }
+          .total-label { font-size: 12px; font-weight: 700; text-transform: uppercase; opacity: 0.6; }
+          .total-value { font-size: 40px; font-weight: 900; letter-spacing: -0.05em; }
+          .footer { margin-top: 100px; display: flex; justify-content: space-between; gap: 60px; }
+          .signature { border-top: 2px solid #e2e8f0; flex: 1; text-align: center; padding-top: 16px; font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; }
+          @media print { .total-box { background: #0f172a !important; color: white !important; -webkit-print-color-adjust: exact; } }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div>
+            <div class="comp-nro" style="font-size: 22px;">COMPROBANTE DE COBRO</div>
+          </div>
+          <div style="text-align: right">
+            <div class="doc-type">Nº Comprobante</div>
+            <div class="comp-nro">${cobro.comprobante}</div>
+            <div style="font-size: 12px; font-weight: 700; color: #64748b; margin-top: 4px;">Fecha: ${format(parseISO(cobro.fecha), 'dd/MM/yyyy')}</div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="grid">
+            <div class="box">
+              <div class="section-title">Destinatario</div>
+              <div class="label">Cliente</div>
+              <div class="value">${cliente.razonSocial}</div>
+              ${cliente.cuit ? `<div style="font-size: 12px; color: #64748b; margin-top: 4px; font-weight: 500;">CUIT: ${cliente.cuit}</div>` : ''}
+            </div>
+            <div class="box">
+              <div class="section-title">Detalles de Cobro</div>
+              <div class="label">Método</div>
+              <div class="value">${cobro.metodo}</div>
+              ${cobro.referencia ? `<div class="label" style="margin-top:12px">Referencia</div><div class="value">${cobro.referencia}</div>` : ''}
+            </div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-title">Concepto / Observaciones</div>
+          <div class="box" style="min-height: 120px;">
+            <div class="value">${cobro.observaciones || 'Cobro registrado en cuenta corriente del cliente.'}</div>
+          </div>
+        </div>
+
+        <div class="total-box">
+          <div class="total-label">Importe Total Cobrado</div>
+          <div class="total-value">$ ${formatCurrency(cobro.monto)}</div>
+        </div>
+
+        <div class="footer">
+          <div class="signature">Firma Autorizada Alido</div>
+          <div class="signature">Recibí Conforme Cliente</div>
+        </div>
+
+        <script>
+          window.onload = () => { window.print(); };
         </script>
       </body>
     </html>
@@ -14020,14 +14712,14 @@ const EgresosView = ({
     };
 
     // Calculate totals if not already correct
-    const neto = data.items.reduce((sum: number, item: any) => sum + item.subtotal, 0);
+    const neto = safeRound(data.items.reduce((sum: number, item: any) => sum + item.subtotal, 0), 2);
     let iva = 0;
-    if (data.tipoIva === 'IVA 21%') iva = neto * 0.21;
-    else if (data.tipoIva === 'IVA 10,5%') iva = neto * 0.105;
+    if (data.tipoIva === 'IVA 21%') iva = safeRound(neto * 0.21, 2);
+    else if (data.tipoIva === 'IVA 10,5%') iva = safeRound(neto * 0.105, 2);
     
     data.neto = neto;
     data.iva = iva;
-    data.total = neto + iva;
+    data.total = safeRound(neto + iva, 2);
 
     if (egresos.find((eg: any) => eg.id === data.id)) {
       setEgresos(egresos.map((eg: any) => eg.id === data.id ? data : eg));
@@ -14140,7 +14832,7 @@ const EgresosView = ({
       const q = field === 'cantidad' ? value : (item.cantidad || 0);
       const p = field === 'precioUnitario' ? value : (item.precioUnitario || 0);
       const m = field === 'monto' ? value : (item.monto || 0);
-      item.subtotal = q * p || m || 0;
+      item.subtotal = safeRound(q * p || m || 0, 2);
     }
     
     if (field === 'productoId') {
@@ -14167,8 +14859,14 @@ const EgresosView = ({
     setEditingItem({ ...editingItem, items: newItems });
   };
 
-  const totalConfirmado = egresos.filter((e: any) => e.estado === 'Confirmado').reduce((sum: number, e: any) => sum + e.total, 0);
-  const totalPendientePago = egresos.filter((e: any) => e.estado === 'Confirmado' && e.estadoPago !== 'Pagado').reduce((sum: number, e: any) => sum + e.total, 0);
+  const totalConfirmado = safeRound(
+    egresos.filter((e: any) => e.estado === 'Confirmado').reduce((sum: number, e: any) => sum + e.total, 0),
+    2
+  );
+  const totalPendientePago = safeRound(
+    egresos.filter((e: any) => e.estado === 'Confirmado' && e.estadoPago !== 'Pagado').reduce((sum: number, e: any) => sum + e.total, 0),
+    2
+  );
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500 text-slate-700">
@@ -14198,11 +14896,11 @@ const EgresosView = ({
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="p-6 bg-white rounded-2xl shadow-xl border border-slate-100 flex flex-col items-center">
            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">Total Egresos Mes</p>
-           <p className="text-3xl font-black text-sleek-dark tracking-tighter">$ {totalConfirmado.toLocaleString('es-AR')}</p>
+           <p className="text-3xl font-black text-sleek-dark tracking-tighter">$ {formatCurrency(totalConfirmado)}</p>
         </div>
         <div className="p-6 bg-white rounded-2xl shadow-xl border border-slate-100 flex flex-col items-center">
            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">Pendiente de Pago</p>
-           <p className="text-3xl font-black text-rose-500 tracking-tighter">$ {totalPendientePago.toLocaleString('es-AR')}</p>
+           <p className="text-3xl font-black text-rose-500 tracking-tighter">$ {formatCurrency(totalPendientePago)}</p>
         </div>
         <div className="p-6 bg-white rounded-2xl shadow-xl border border-slate-100 flex flex-col items-center">
            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">Proveedores Activos</p>
@@ -14275,7 +14973,7 @@ const EgresosView = ({
                        </div>
                     </td>
                     <td className="py-5 px-2 text-right font-black text-sm text-sleek-dark">
-                       $ {eg.total.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                       $ {formatCurrency(eg.total)}
                     </td>
                     <td className="py-5 px-2 text-right">
                        <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-all">
@@ -14339,10 +15037,9 @@ const EgresosView = ({
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2">
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Fecha</label>
-                    <input 
-                      type="date"
+                    <DateInput
                       value={editingItem?.fecha || ''}
-                      onChange={(e) => setEditingItem({ ...editingItem, fecha: e.target.value })}
+                      onChange={(iso) => setEditingItem({ ...editingItem, fecha: iso })}
                       className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg text-sm font-bold focus:ring-2 focus:ring-sleek-accent outline-none"
                     />
                   </div>
@@ -14525,10 +15222,9 @@ const EgresosView = ({
                             </div>
                             <div className="col-span-6 md:col-span-2 space-y-1">
                                <label className="text-[8px] font-black text-slate-400 uppercase">Vencimiento</label>
-                               <input 
-                                 type="date"
+                               <DateInput
                                  value={item.fechaVencimiento || ''}
-                                 onChange={(e) => updateItem(idx, 'fechaVencimiento', e.target.value)}
+                                 onChange={(iso) => updateItem(idx, 'fechaVencimiento', iso)}
                                  className="w-full px-2 py-2 bg-white border border-slate-200 rounded text-[10px] font-bold"
                                />
                             </div>
@@ -14606,14 +15302,14 @@ const EgresosView = ({
                  <div className="md:col-span-1 lg:col-span-3 flex flex-col items-end gap-3">
                     <div className="flex items-center gap-8">
                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Subtotal Neto:</span>
-                       <span className="text-xl font-bold text-slate-600">$ {editingItem?.items?.reduce((s: number, i: any) => s + (i.subtotal || 0), 0).toLocaleString('es-AR', { minimumFractionDigits: 2 })}</span>
+                       <span className="text-xl font-bold text-slate-600">$ {formatCurrency(editingItem?.items?.reduce((s: number, i: any) => s + (i.subtotal || 0), 0) || 0)}</span>
                     </div>
                     <div className="flex items-center gap-8">
                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">IVA:</span>
                        <span className="text-xl font-bold text-slate-500">$ {(() => {
                          const neto = editingItem?.items?.reduce((s: number, i: any) => s + (i.subtotal || 0), 0);
-                         if (editingItem?.tipoIva === 'IVA 21%') return (neto * 0.21).toLocaleString('es-AR', { minimumFractionDigits: 2 });
-                         if (editingItem?.tipoIva === 'IVA 10,5%') return (neto * 0.105).toLocaleString('es-AR', { minimumFractionDigits: 2 });
+                         if (editingItem?.tipoIva === 'IVA 21%') return formatCurrency(neto * 0.21);
+                         if (editingItem?.tipoIva === 'IVA 10,5%') return formatCurrency(neto * 0.105);
                          return '0,00';
                        })()}</span>
                     </div>
@@ -14625,7 +15321,7 @@ const EgresosView = ({
                          let iva = 0;
                          if (editingItem?.tipoIva === 'IVA 21%') iva = neto * 0.21;
                          else if (editingItem?.tipoIva === 'IVA 10,5%') iva = neto * 0.105;
-                         return (neto + iva).toLocaleString('es-AR', { minimumFractionDigits: 2 });
+                         return formatCurrency(neto + iva);
                        })()}</span>
                     </div>
                  </div>
@@ -14876,7 +15572,7 @@ const InventarioDashboard = ({
                 setEditingItem(almacen);
               }}>
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">{almacen.nombre}</span>
-                <span className="text-xl font-bold text-sleek-dark block mb-6">{(capacidad || 0).toLocaleString()} kg Capacidad</span>
+                <span className="text-xl font-bold text-sleek-dark block mb-6">{formatNumber(capacidad || 0)} kg Capacidad</span>
                 
                 <div className="mb-6">
                   <ProgressBar 
@@ -15338,7 +16034,7 @@ const InicioView = ({
                         )}
                       >
                         <p className="uppercase tracking-wide truncate">{prod?.nombre || 'Producto'}</p>
-                        <p className="opacity-80 text-[10px]">Stock: {item.actual.toLocaleString('es-AR')}</p>
+                        <p className="opacity-80 text-[10px]">Stock: {formatNumber(item.actual)}</p>
                       </div>
                     );
                   })}
