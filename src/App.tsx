@@ -247,6 +247,36 @@ const DateInput: React.FC<{
   );
 };
 
+/** Vincula un lote de stock (movimientos) con su registro de etiquetado/envases. */
+const findLoteEtiquetadoForStockLote = (
+  l: { productoId: string; numeroLote: string; id?: string },
+  lotesEtiquetados: any[],
+  lotesProduccion: any[] = [],
+  lotesDespiece: any[] = []
+): any | null => {
+  const targetLoteNum = l.numeroLote;
+  const internalProdLote = lotesProduccion.find((lp: any) => lp.numeroLote === targetLoteNum);
+  const internalDespieceLote = lotesDespiece.find((ld: any) => ld.numeroLote === targetLoteNum);
+  const internalId = internalProdLote?.id || internalDespieceLote?.id;
+
+  return (
+    lotesEtiquetados.find((item: any) => {
+      const matchesNumero = item.loteNumero === targetLoteNum;
+      const matchesId = item.loteId === targetLoteNum;
+      const matchesInternalId = internalId && (item.loteId === internalId || item.parentLoteId === internalId);
+      const matchesRawId = l.id && item.loteId === l.id;
+      const butcheryPartMatch = internalId && item.loteId === `${internalId}-${l.productoId}`;
+      const productMatch = !item.productoId || item.productoId === l.productoId;
+      return butcheryPartMatch || ((matchesNumero || matchesId || matchesInternalId || matchesRawId) && productMatch);
+    }) || null
+  );
+};
+
+const isEnvaseVigente = (e: any): boolean => {
+  const isAnulado = e.anulado === true || e.anulado === 'true';
+  return !isAnulado && (e.estado === 'en_stock' || !e.estado);
+};
+
 const safeFormat = (date: any, formatStr: string, fallback: string = '-') => {
   if (!date) return fallback;
   try {
@@ -7913,6 +7943,8 @@ const MovimientosView = ({
   productos, almacenes, unidades, 
   currentUser, showNotification, 
   getPesoEquivalente, lotesStock,
+  lotesEtiquetados, setLotesEtiquetados,
+  lotesProduccion, lotesDespiece,
   descuentosPendientes, setDescuentosPendientes,
   mercaderiaPendiente, setMercaderiaPendiente
 }: any) => {
@@ -8325,6 +8357,10 @@ const MovimientosView = ({
             almacenes={almacenes}
             unidades={unidades}
             lotesStock={lotesStock}
+            lotesEtiquetados={lotesEtiquetados}
+            setLotesEtiquetados={setLotesEtiquetados}
+            lotesProduccion={lotesProduccion}
+            lotesDespiece={lotesDespiece}
             getPesoEquivalente={getPesoEquivalente}
             currentUser={currentUser}
             onClose={() => setIsModalOpen(false)}
@@ -8680,7 +8716,12 @@ const EntradaForm = ({ productos, almacenes, unidades, getPesoEquivalente, curre
   );
 };
 
-const SalidaForm = ({ productos, almacenes, unidades, lotesStock, getPesoEquivalente, currentUser, onSave, onClose }: any) => {
+const SalidaForm = ({
+  productos, almacenes, unidades, lotesStock,
+  lotesEtiquetados, setLotesEtiquetados,
+  lotesProduccion, lotesDespiece,
+  getPesoEquivalente, currentUser, onSave, onClose
+}: any) => {
   const [formData, setFormData] = useState<any>({
     productoId: '',
     almacenId: '',
@@ -8693,6 +8734,8 @@ const SalidaForm = ({ productos, almacenes, unidades, lotesStock, getPesoEquival
 
   const [searchTerm, setSearchTerm] = useState('');
   const [availableLotes, setAvailableLotes] = useState<any[]>([]);
+  const [selectedEnvKeys, setSelectedEnvKeys] = useState<Record<string, boolean>>({});
+  const [filterLoteEnv, setFilterLoteEnv] = useState('');
 
   const filteredProducts = productos.filter((p: any) => 
     p.nombre.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -8701,33 +8744,175 @@ const SalidaForm = ({ productos, almacenes, unidades, lotesStock, getPesoEquival
 
   const selectedProd = productos.find((p: any) => p.id === formData.productoId);
   const pesoEq = selectedProd ? getPesoEquivalente(selectedProd.id) : 1;
+  const isKgProduct = selectedProd?.unidadMedidaId === 'u1';
   const stockEnAlmacen = formData.almacenId ? lotesStock.filter((l: any) => l.productoId === formData.productoId && l.almacenId === formData.almacenId).reduce((sum: number, l: any) => sum + l.cantidad, 0) : 0;
 
+  const availableEnvases = useMemo(() => {
+    if (!formData.productoId || !formData.almacenId) return [];
+    const lotes = lotesStock
+      .filter((l: any) => l.productoId === formData.productoId && l.almacenId === formData.almacenId && l.cantidad > 0.0001)
+      .sort((a: any, b: any) => new Date(a.fechaVencimiento).getTime() - new Date(b.fechaVencimiento).getTime());
+
+    const rows: any[] = [];
+    lotes.forEach((l: any) => {
+      const le = findLoteEtiquetadoForStockLote(l, lotesEtiquetados, lotesProduccion, lotesDespiece);
+      if (!le?.envases?.length) return;
+      le.envases.forEach((env: any) => {
+        if (!isEnvaseVigente(env)) return;
+        const key = `${le.loteId}::${env.codigoBarras}::${env.numero}`;
+        rows.push({
+          key,
+          leId: le.loteId,
+          envase: env,
+          numeroLote: l.numeroLote,
+          fechaVencimiento: l.fechaVencimiento,
+        });
+      });
+    });
+    return rows.sort(
+      (a, b) => new Date(a.fechaVencimiento).getTime() - new Date(b.fechaVencimiento).getTime()
+    );
+  }, [formData.productoId, formData.almacenId, lotesStock, lotesEtiquetados, lotesProduccion, lotesDespiece]);
+
+  const useEnvaseMode = availableEnvases.length > 0;
+
+  const filteredEnvRows = useMemo(() => {
+    const q = filterLoteEnv.trim().toLowerCase();
+    if (!q) return availableEnvases;
+    return availableEnvases.filter((r: any) => r.numeroLote.toLowerCase().includes(q));
+  }, [availableEnvases, filterLoteEnv]);
+
+  const selectedEnvRows = useMemo(
+    () => availableEnvases.filter((r: any) => selectedEnvKeys[r.key]),
+    [availableEnvases, selectedEnvKeys]
+  );
+
+  const resumenEnvases = useMemo(() => {
+    const totalPeso = selectedEnvRows.reduce((s: number, r: any) => s + (parseFloat(r.envase.pesoNeto) || 0), 0);
+    return { count: selectedEnvRows.length, totalPeso };
+  }, [selectedEnvRows]);
+
+  const allFilteredSelected =
+    filteredEnvRows.length > 0 && filteredEnvRows.every((r: any) => selectedEnvKeys[r.key]);
+
   useEffect(() => {
+    setSelectedEnvKeys({});
+    setFilterLoteEnv('');
+    setFormData((prev: any) => ({ ...prev, cantidad: 0 }));
+  }, [formData.productoId, formData.almacenId]);
+
+  useEffect(() => {
+    if (useEnvaseMode) return;
     if (formData.productoId && formData.almacenId) {
       const lotes = lotesStock
         .filter((l: any) => l.productoId === formData.productoId && l.almacenId === formData.almacenId)
         .sort((a: any, b: any) => new Date(a.fechaVencimiento).getTime() - new Date(b.fechaVencimiento).getTime());
-      
       setAvailableLotes(lotes.map((l: any) => ({ ...l, descontar: 0 })));
+    } else {
+      setAvailableLotes([]);
     }
-  }, [formData.productoId, formData.almacenId, lotesStock]);
+  }, [formData.productoId, formData.almacenId, lotesStock, useEnvaseMode]);
 
-  // Aplicar FEFO automático al cambiar la cantidad
   useEffect(() => {
-    if (formData.cantidad > 0 && availableLotes.length > 0) {
-      let rest = formData.cantidad;
-      const updated = availableLotes.map(l => {
-        const take = Math.min(rest, l.cantidad);
-        rest -= take;
-        return { ...l, descontar: take };
+    if (useEnvaseMode || formData.cantidad <= 0 || availableLotes.length === 0) return;
+    let rest = formData.cantidad;
+    const updated = availableLotes.map(l => {
+      const take = Math.min(rest, l.cantidad);
+      rest -= take;
+      return { ...l, descontar: take };
+    });
+    setAvailableLotes(updated);
+  }, [formData.cantidad, useEnvaseMode]);
+
+  const toggleSelectAllEnvases = () => {
+    if (allFilteredSelected) {
+      setSelectedEnvKeys((prev) => {
+        const next = { ...prev };
+        filteredEnvRows.forEach((r: any) => delete next[r.key]);
+        return next;
       });
-      setAvailableLotes(updated);
+    } else {
+      setSelectedEnvKeys((prev) => {
+        const next = { ...prev };
+        filteredEnvRows.forEach((r: any) => { next[r.key] = true; });
+        return next;
+      });
     }
-  }, [formData.cantidad]);
+  };
+
+  const buildSalidaMov = (loteNumero: string, cantidad: number, cantidadKg: number, fechaVencimiento: string, obsExtra: string): Movimiento => ({
+    id: `MOV-${Date.now()}-${Math.random()}`,
+    tipo: 'salida',
+    productoId: formData.productoId,
+    almacenId: formData.almacenId,
+    cantidad,
+    unidad: unidades.find((u: any) => u.id === selectedProd?.unidadMedidaId)?.abreviatura || 'kg',
+    cantidadKg,
+    motivo: formData.motivo === 'Otro' ? formData.otroMotivo : formData.motivo,
+    loteNumero,
+    fechaIngreso: safeFormat(new Date(), 'yyyy-MM-dd'),
+    fechaVencimiento,
+    origen: 'manual',
+    usuario: currentUser.name,
+    fechaHora: new Date().toISOString(),
+    anulado: false,
+    referencia: formData.referencia,
+    observaciones: [formData.observaciones, obsExtra].filter(Boolean).join(' | ')
+  });
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const motivoStr = formData.motivo === 'Otro' ? formData.otroMotivo : formData.motivo;
+
+    if (useEnvaseMode) {
+      if (selectedEnvRows.length === 0) {
+        globalAlert('Seleccione al menos un envase para dar de baja.');
+        return;
+      }
+
+      const now = new Date().toISOString();
+      const selectedKeysSet = new Set(selectedEnvRows.map((r: any) => r.key));
+
+      const updatedLE = lotesEtiquetados.map((le: any) => {
+        const updatedEnvases = le.envases.map((ev: any) => {
+          const key = `${le.loteId}::${ev.codigoBarras}::${ev.numero}`;
+          if (!selectedKeysSet.has(key)) return ev;
+          return {
+            ...ev,
+            estado: 'baja',
+            motivoBaja: `Salida manual: ${motivoStr}`,
+            fechaBaja: now,
+            usuarioBaja: currentUser.name,
+          };
+        });
+        const active = updatedEnvases.filter(isEnvaseVigente);
+        const pesoTotalEtiquetado = active.reduce((s: number, ev: any) => s + (parseFloat(ev.pesoNeto) || 0), 0);
+        return { ...le, envases: updatedEnvases, pesoTotalEtiquetado };
+      });
+      setLotesEtiquetados(updatedLE);
+
+      const byLote: Record<string, any[]> = {};
+      selectedEnvRows.forEach((row: any) => {
+        if (!byLote[row.numeroLote]) byLote[row.numeroLote] = [];
+        byLote[row.numeroLote].push(row);
+      });
+
+      const newMovs: Movimiento[] = Object.entries(byLote).map(([numeroLote, items]) => {
+        const totalPeso = items.reduce((s, i) => s + (parseFloat(i.envase.pesoNeto) || 0), 0);
+        const envNums = items.map((i: any) => `#${i.envase.numero}`).join(', ');
+        return buildSalidaMov(
+          numeroLote,
+          isKgProduct ? totalPeso : items.length,
+          totalPeso,
+          items[0].fechaVencimiento,
+          `Envases: ${envNums}`
+        );
+      });
+
+      onSave(newMovs);
+      return;
+    }
+
     if (formData.cantidad > stockEnAlmacen) {
       globalAlert('Cantidad superior al stock disponible');
       return;
@@ -8739,25 +8924,9 @@ const SalidaForm = ({ productos, almacenes, unidades, lotesStock, getPesoEquival
       return;
     }
 
-    const newMovs: Movimiento[] = availableLotes.filter(l => l.descontar > 0).map(l => ({
-      id: `MOV-${Date.now()}-${Math.random()}`,
-      tipo: 'salida',
-      productoId: formData.productoId,
-      almacenId: formData.almacenId,
-      cantidad: l.descontar,
-      unidad: unidades.find((u: any) => u.id === selectedProd?.unidadMedidaId)?.abreviatura || 'kg',
-      cantidadKg: l.descontar * pesoEq,
-      motivo: formData.motivo === 'Otro' ? formData.otroMotivo : formData.motivo,
-      loteNumero: l.numeroLote,
-      fechaIngreso: safeFormat(new Date(), 'yyyy-MM-dd'),
-      fechaVencimiento: l.fechaVencimiento,
-      origen: 'manual',
-      usuario: currentUser.name,
-      fechaHora: new Date().toISOString(),
-      anulado: false,
-      referencia: formData.referencia,
-      observaciones: formData.observaciones
-    }));
+    const newMovs: Movimiento[] = availableLotes.filter(l => l.descontar > 0).map(l =>
+      buildSalidaMov(l.numeroLote, l.descontar, l.descontar * pesoEq, l.fechaVencimiento, '')
+    );
 
     onSave(newMovs);
   };
@@ -8806,6 +8975,7 @@ const SalidaForm = ({ productos, almacenes, unidades, lotesStock, getPesoEquival
           </select>
         </div>
 
+        {!useEnvaseMode && (
         <div>
           <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Cantidad a Retirar *</label>
           <input 
@@ -8819,8 +8989,103 @@ const SalidaForm = ({ productos, almacenes, unidades, lotesStock, getPesoEquival
           />
           <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase">Stock Disponible: {formatNumber(stockEnAlmacen)} {selectedProd ? unidades.find((u: any) => u.id === selectedProd.unidadMedidaId)?.abreviatura : 'un'}</p>
         </div>
+        )}
 
-        {availableLotes.length > 0 && (
+        {useEnvaseMode && formData.almacenId && (
+          <div className="md:col-span-2 space-y-4">
+            <p className="text-[10px] font-bold text-sleek-accent uppercase tracking-widest">
+              Producto con envases etiquetados — seleccioná cuáles dar de baja
+            </p>
+            <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] border-b border-slate-100 pb-2">Selección de Envases</h4>
+            <input
+              type="text"
+              placeholder="Filtrar por lote..."
+              value={filterLoteEnv}
+              onChange={(e) => setFilterLoteEnv(e.target.value)}
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-sleek-accent"
+            />
+            <div className="bg-slate-50 rounded-xl border border-slate-200 overflow-hidden max-h-64 overflow-y-auto">
+              <table className="w-full text-left text-[11px]">
+                <thead className="bg-white border-b border-slate-200 sticky top-0 z-10">
+                  <tr>
+                    <th className="px-3 py-2 w-10">
+                      <input
+                        type="checkbox"
+                        checked={allFilteredSelected}
+                        onChange={toggleSelectAllEnvases}
+                        className="w-4 h-4 rounded border-slate-300 text-sleek-danger focus:ring-sleek-danger"
+                        title="Seleccionar todos"
+                      />
+                    </th>
+                    <th className="px-3 py-2 font-bold uppercase">Envase</th>
+                    <th className="px-3 py-2 font-bold uppercase">Lote</th>
+                    <th className="px-3 py-2 text-right font-bold uppercase">Peso</th>
+                    <th className="px-3 py-2 text-center font-bold uppercase">Vencimiento</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {filteredEnvRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-4 py-6 text-center text-slate-400 font-bold uppercase text-[10px]">
+                        Sin envases para este filtro
+                      </td>
+                    </tr>
+                  ) : filteredEnvRows.map((row: any) => {
+                    const isVencido = safeIsBefore(row.fechaVencimiento, new Date());
+                    const isCerca = !isVencido && safeDiffDays(row.fechaVencimiento, new Date()) <= 7;
+                    return (
+                      <tr
+                        key={row.key}
+                        className={cn(selectedEnvKeys[row.key] && 'bg-amber-50/40', isVencido && 'bg-rose-50/30')}
+                      >
+                        <td className="px-3 py-2">
+                          <input
+                            type="checkbox"
+                            checked={!!selectedEnvKeys[row.key]}
+                            onChange={() => setSelectedEnvKeys((prev) => {
+                              const next = { ...prev };
+                              if (next[row.key]) delete next[row.key];
+                              else next[row.key] = true;
+                              return next;
+                            })}
+                            className="w-4 h-4 rounded border-slate-300 text-sleek-danger focus:ring-sleek-danger"
+                          />
+                        </td>
+                        <td className="px-3 py-2 font-mono font-bold text-sleek-dark">#{row.envase.numero}</td>
+                        <td className="px-3 py-2 font-mono font-bold text-slate-600">{row.numeroLote}</td>
+                        <td className="px-3 py-2 text-right font-bold text-slate-700">{formatNumber(row.envase.pesoNeto, 3)} kg</td>
+                        <td className="px-3 py-2 text-center">
+                          <span className={cn(
+                            'px-2 py-0.5 rounded font-bold text-[10px]',
+                            isVencido ? 'bg-rose-100 text-rose-600' : isCerca ? 'bg-amber-100 text-amber-600' : 'bg-emerald-50 text-emerald-600'
+                          )}>
+                            {safeFormat(row.fechaVencimiento, 'dd/MM/yyyy')}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="bg-slate-100 rounded-xl p-4 grid grid-cols-2 md:grid-cols-3 gap-4 text-center">
+              <div>
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Envases seleccionados</p>
+                <p className="text-lg font-black text-sleek-dark">{resumenEnvases.count}</p>
+              </div>
+              <div>
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Peso total</p>
+                <p className="text-lg font-black text-sleek-dark">{formatNumber(resumenEnvases.totalPeso, 3)} kg</p>
+              </div>
+              <div className="col-span-2 md:col-span-1">
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Disponibles en almacén</p>
+                <p className="text-lg font-black text-slate-600">{availableEnvases.length} env.</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {!useEnvaseMode && availableLotes.length > 0 && (
           <div className="md:col-span-2 space-y-4">
             <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] border-b border-slate-100 pb-2">Selección de Lotes (FEFO)</h4>
             <div className="bg-slate-50 rounded-xl border border-slate-200 overflow-hidden">
@@ -17095,6 +17360,10 @@ export default function App() {
         showNotification={showNotification}
         getPesoEquivalente={getPesoEquivalente}
         lotesStock={lotesStock}
+        lotesEtiquetados={lotesEtiquetados}
+        setLotesEtiquetados={setLotesEtiquetados}
+        lotesProduccion={lotesProduccion}
+        lotesDespiece={lotesDespiece}
         descuentosPendientes={descuentosPendientes}
         setDescuentosPendientes={setDescuentosPendientes}
         mercaderiaPendiente={mercaderiaPendiente}
