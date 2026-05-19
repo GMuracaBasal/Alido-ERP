@@ -322,6 +322,155 @@ const calcularCantidadStockLote = (
   };
 };
 
+/** Lotes con stock > 0 para vista de almacén (respeta envases etiquetados). */
+const getLotesVisiblesEnAlmacen = (
+  productoId: string,
+  almacenId: string,
+  lotesStock: any[],
+  productos: any[],
+  lotesEtiquetados: any[],
+  lotesProduccion: any[] = [],
+  lotesDespiece: any[] = []
+) => {
+  const prod = productos.find((p: any) => p.id === productoId);
+  return lotesStock
+    .filter((l: any) => l.productoId === productoId && l.almacenId === almacenId)
+    .map((l: any) => {
+      const { cantidad, pesoEquivalenteReal } = calcularCantidadStockLote(
+        l,
+        prod,
+        lotesEtiquetados,
+        lotesProduccion,
+        lotesDespiece
+      );
+      return { ...l, cantidad, pesoEquivalenteReal };
+    })
+    .filter((l: any) => (l.cantidad || 0) > 0.0001);
+};
+
+const buildEnvaseSelectionKey = (leId: string, env: { codigoBarras: string; numero: number | string }) =>
+  `${leId}::${env.codigoBarras}::${env.numero}`;
+
+/** Filas de envases disponibles para un producto (opcionalmente en un almacén). */
+const buildEnvaseRowsForProducto = (
+  productoId: string,
+  lotesStock: any[],
+  lotesEtiquetados: any[],
+  lotesProduccion: any[],
+  lotesDespiece: any[],
+  almacenId?: string
+) => {
+  const stockLotes = lotesStock
+    .filter(
+      (l: any) =>
+        l.productoId === productoId &&
+        l.cantidad > 0.0001 &&
+        (!almacenId || l.almacenId === almacenId)
+    )
+    .sort((a: any, b: any) => new Date(a.fechaVencimiento).getTime() - new Date(b.fechaVencimiento).getTime());
+
+  const rows: any[] = [];
+  stockLotes.forEach((l: any) => {
+    const le = findLoteEtiquetadoForStockLote(l, lotesEtiquetados, lotesProduccion, lotesDespiece);
+    if (!le) return;
+    le.envases.forEach((env: any) => {
+      if (!isEnvaseVigente(env)) return;
+      rows.push({
+        key: buildEnvaseSelectionKey(le.loteId, env),
+        leId: le.loteId,
+        envase: env,
+        numeroLote: l.numeroLote,
+        fechaVencimiento: l.fechaVencimiento,
+        almacenId: l.almacenId,
+      });
+    });
+  });
+  return rows;
+};
+
+const productoTieneEnvasesEtiquetados = (
+  productoId: string,
+  lotesStock: any[],
+  lotesEtiquetados: any[],
+  lotesProduccion: any[],
+  lotesDespiece: any[],
+  almacenId?: string
+) => buildEnvaseRowsForProducto(productoId, lotesStock, lotesEtiquetados, lotesProduccion, lotesDespiece, almacenId).length > 0;
+
+/** Resuelve filas de envases por keys guardadas (sin depender del stock en lotesStock). */
+const resolveEnvaseRowsByKeys = (
+  keys: string[],
+  lotesEtiquetados: any[],
+  lotesStock: any[],
+  lotesProduccion: any[] = [],
+  lotesDespiece: any[] = []
+): any[] => {
+  const keysSet = new Set(keys);
+  const rows: any[] = [];
+  lotesEtiquetados.forEach((le: any) => {
+    (le.envases || []).forEach((env: any) => {
+      const key = buildEnvaseSelectionKey(le.loteId, env);
+      if (!keysSet.has(key) || !isEnvaseVigente(env)) return;
+      const numeroLote = le.loteNumero || le.loteId;
+      const stockLote =
+        lotesStock.find((ls: any) => ls.numeroLote === numeroLote) ||
+        lotesStock.find(
+          (ls: any) =>
+            findLoteEtiquetadoForStockLote(ls, lotesEtiquetados, lotesProduccion, lotesDespiece)?.loteId ===
+            le.loteId
+        );
+      rows.push({
+        key,
+        leId: le.loteId,
+        envase: env,
+        numeroLote: stockLote?.numeroLote || numeroLote,
+        fechaVencimiento: stockLote?.fechaVencimiento || le.fechaVencimiento,
+        almacenId: stockLote?.almacenId || le.almacenId,
+      });
+    });
+  });
+  return rows;
+};
+
+/** Marca envases en baja sobre una copia del estado (sin setState). */
+const aplicarBajaEnvasesEnEstado = (
+  selectedRows: any[],
+  lotesEtiquetados: any[],
+  motivoBaja: string,
+  usuario: string
+): any[] => {
+  const now = new Date().toISOString();
+  const keysSet = new Set(selectedRows.map((r: any) => r.key));
+  return lotesEtiquetados.map((le: any) => {
+    const updatedEnvases = (le.envases || []).map((ev: any) => {
+      const key = buildEnvaseSelectionKey(le.loteId, ev);
+      if (!keysSet.has(key)) return ev;
+      return {
+        ...ev,
+        estado: 'baja',
+        motivoBaja,
+        fechaBaja: now,
+        usuarioBaja: usuario,
+      };
+    });
+    const active = updatedEnvases.filter(isEnvaseVigente);
+    const pesoTotalEtiquetado = active.reduce((s: number, ev: any) => s + (parseFloat(ev.pesoNeto) || 0), 0);
+    return { ...le, envases: updatedEnvases, pesoTotalEtiquetado };
+  });
+};
+
+/** Marca envases en baja vía setState (salida manual y otros flujos). */
+const aplicarBajaEnvasesSeleccionados = (
+  selectedRows: any[],
+  lotesEtiquetados: any[],
+  setLotesEtiquetados: (fn: (prev: any[]) => any[]) => void,
+  motivoBaja: string,
+  usuario: string
+) => {
+  setLotesEtiquetados((prev) => aplicarBajaEnvasesEnEstado(selectedRows, prev, motivoBaja, usuario));
+  return selectedRows;
+};
+
 const safeFormat = (date: any, formatStr: string, fallback: string = '-') => {
   if (!date) return fallback;
   try {
@@ -610,6 +759,10 @@ interface LoteProduccion {
     cantidadTeorica: number;
     cantidadReal: number;
     almacenId?: string;
+    /** Claves envase: leId::codigoBarras::numero */
+    envasesSeleccionados?: string[];
+    /** Si true, finalizar usa FEFO genérico aunque haya envases */
+    descuentoGenerico?: boolean;
   }[];
   pesoBruto?: number;
   pesoNeto?: number;
@@ -1682,6 +1835,22 @@ const generarNumeroLote = (
   }
 
   return `${basePrefijo}-${ymd}-${(maxSeq + 1).toString().padStart(3, '0')}`;
+};
+
+/** Más recientes primero: fecha elaboración desc, luego N° lote desc. */
+const compareLotesRecientesPrimero = (
+  a: { fechaElaboracion?: string; numeroLote?: string; id?: string },
+  b: { fechaElaboracion?: string; numeroLote?: string; id?: string }
+) => {
+  const dateDiff =
+    new Date(b.fechaElaboracion || 0).getTime() - new Date(a.fechaElaboracion || 0).getTime();
+  if (dateDiff !== 0) return dateDiff;
+  const numCmp = (b.numeroLote || '').localeCompare(a.numeroLote || '', undefined, {
+    numeric: true,
+    sensitivity: 'base',
+  });
+  if (numCmp !== 0) return numCmp;
+  return (b.id || '').localeCompare(a.id || '');
 };
 
 const getProductoIdFromLoteProduccion = (l: any): string | undefined => {
@@ -3508,6 +3677,165 @@ const PlantillasDespieceView = ({
   );
 };
 
+/** Modal reutilizable: selección de envases (misma lógica que salida manual). */
+const SelectorEnvasesModal = ({
+  isOpen,
+  onClose,
+  onConfirm,
+  titulo,
+  productoId,
+  productos,
+  almacenId,
+  lotesStock,
+  lotesEtiquetados,
+  lotesProduccion,
+  lotesDespiece,
+  initialSelectedKeys = [] as string[],
+}: any) => {
+  const [selectedKeys, setSelectedKeys] = useState<Record<string, boolean>>({});
+  const [filterLote, setFilterLote] = useState('');
+
+  const prod = productos.find((p: any) => p.id === productoId);
+  const isKg = prod?.unidadMedidaId === 'u1';
+
+  const availableRows = useMemo(
+    () =>
+      productoId
+        ? buildEnvaseRowsForProducto(productoId, lotesStock, lotesEtiquetados, lotesProduccion, lotesDespiece, almacenId || undefined)
+        : [],
+    [productoId, lotesStock, lotesEtiquetados, lotesProduccion, lotesDespiece, almacenId]
+  );
+
+  const filteredRows = useMemo(() => {
+    const q = filterLote.trim().toLowerCase();
+    if (!q) return availableRows;
+    return availableRows.filter((r: any) => r.numeroLote.toLowerCase().includes(q));
+  }, [availableRows, filterLote]);
+
+  const selectedRows = useMemo(
+    () => availableRows.filter((r: any) => selectedKeys[r.key]),
+    [availableRows, selectedKeys]
+  );
+
+  const totalPeso = useMemo(
+    () => selectedRows.reduce((s: number, r: any) => s + (parseFloat(r.envase.pesoNeto) || 0), 0),
+    [selectedRows]
+  );
+
+  const allFilteredSelected =
+    filteredRows.length > 0 && filteredRows.every((r: any) => selectedKeys[r.key]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const init: Record<string, boolean> = {};
+    initialSelectedKeys.forEach((k: string) => { init[k] = true; });
+    setSelectedKeys(init);
+    setFilterLote('');
+  }, [isOpen, productoId, initialSelectedKeys.join('|')]);
+
+  const toggleAll = () => {
+    if (allFilteredSelected) {
+      setSelectedKeys((prev) => {
+        const next = { ...prev };
+        filteredRows.forEach((r: any) => delete next[r.key]);
+        return next;
+      });
+    } else {
+      setSelectedKeys((prev) => {
+        const next = { ...prev };
+        filteredRows.forEach((r: any) => { next[r.key] = true; });
+        return next;
+      });
+    }
+  };
+
+  const handleConfirm = () => {
+    if (selectedRows.length === 0) {
+      globalAlert('Seleccione al menos un envase.');
+      return;
+    }
+    const cantidadReal = isKg ? safeRound(totalPeso, 3) : selectedRows.length;
+    onConfirm({
+      keys: selectedRows.map((r: any) => r.key),
+      rows: selectedRows,
+      cantidadReal,
+      totalPeso: safeRound(totalPeso, 3),
+    });
+    onClose();
+  };
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title={titulo || 'Selección de envases'} className="max-w-3xl">
+      <div className="space-y-4">
+        <input
+          type="text"
+          placeholder="Filtrar por lote..."
+          value={filterLote}
+          onChange={(e) => setFilterLote(e.target.value)}
+          className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-sleek-accent"
+        />
+        <div className="bg-slate-50 rounded-xl border border-slate-200 overflow-hidden max-h-72 overflow-y-auto">
+          <table className="w-full text-left text-[11px]">
+            <thead className="bg-white border-b border-slate-200 sticky top-0 z-10">
+              <tr>
+                <th className="px-3 py-2 w-10">
+                  <input type="checkbox" checked={allFilteredSelected} onChange={toggleAll} className="w-4 h-4 rounded" title="Seleccionar todos" />
+                </th>
+                <th className="px-3 py-2 font-bold uppercase">Envase</th>
+                <th className="px-3 py-2 font-bold uppercase">Lote</th>
+                <th className="px-3 py-2 text-right font-bold uppercase">Peso</th>
+                <th className="px-3 py-2 text-center font-bold uppercase">Vencimiento</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200">
+              {filteredRows.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-4 py-8 text-center text-slate-400 font-bold uppercase text-[10px]">
+                    Sin envases disponibles
+                  </td>
+                </tr>
+              ) : (
+                filteredRows.map((row: any) => (
+                  <tr key={row.key} className={cn(selectedKeys[row.key] && 'bg-amber-50/40')}>
+                    <td className="px-3 py-2">
+                      <input
+                        type="checkbox"
+                        checked={!!selectedKeys[row.key]}
+                        onChange={() =>
+                          setSelectedKeys((prev) => {
+                            const next = { ...prev };
+                            if (next[row.key]) delete next[row.key];
+                            else next[row.key] = true;
+                            return next;
+                          })
+                        }
+                        className="w-4 h-4 rounded"
+                      />
+                    </td>
+                    <td className="px-3 py-2 font-mono font-bold">#{row.envase.numero}</td>
+                    <td className="px-3 py-2 font-mono font-bold text-slate-600">{row.numeroLote}</td>
+                    <td className="px-3 py-2 text-right font-bold">{formatNumber(row.envase.pesoNeto, 3)} kg</td>
+                    <td className="px-3 py-2 text-center">{safeFormat(row.fechaVencimiento, 'dd/MM/yyyy')}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div className="bg-slate-100 rounded-xl p-4 text-center space-y-1">
+          <p className="text-[11px] font-bold text-slate-600 uppercase tracking-wide">
+            Envases seleccionados: {selectedRows.length} | Peso total: {formatNumber(totalPeso, 2)} kg
+          </p>
+        </div>
+        <div className="flex justify-end gap-3 pt-2">
+          <button type="button" onClick={onClose} className="px-6 py-2 text-xs font-bold uppercase text-slate-400">Cancelar</button>
+          <button type="button" onClick={handleConfirm} className="px-8 py-2 bg-sleek-accent text-white text-xs font-bold uppercase rounded-lg">Confirmar</button>
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
 const LotesProduccionView = ({ 
   lotesProduccion, setLotesProduccion, 
   lotesHistorial, setLotesHistorial,
@@ -3515,7 +3843,8 @@ const LotesProduccionView = ({
   lotesStock,
   movimientos, setMovimientos,
   unidades, users, currentUser, showNotification, getPesoEquivalente,
-  lotesEtiquetados, setLotesEtiquetados, setDescuentosPendientes
+  lotesEtiquetados, setLotesEtiquetados, setDescuentosPendientes,
+  lotesDespiece = []
 }: any) => {
   const [view, setView] = useState<'list' | 'form' | 'detail'>('list');
   const [selectedLote, setSelectedLote] = useState<any>(null);
@@ -3523,6 +3852,8 @@ const LotesProduccionView = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [filterEstado, setFilterEstado] = useState('Todos');
   const [isFinalizing, setIsFinalizing] = useState(false);
+  const [envaseModalInsumoIdx, setEnvaseModalInsumoIdx] = useState<number | null>(null);
+  const [insumoEnvaseWarningIdx, setInsumoEnvaseWarningIdx] = useState<number | null>(null);
 
   const [formData, setFormData] = useState<any>({
     numeroLote: '',
@@ -3541,6 +3872,14 @@ const LotesProduccionView = ({
     unidadesReales: 0,
     almacenDestinoId: ''
   });
+
+  const updateInsumoAt = (idx: number, patch: Partial<any>) => {
+    setFormData((prev: any) => {
+      const insumos = [...prev.insumos];
+      insumos[idx] = { ...insumos[idx], ...patch };
+      return { ...prev, insumos };
+    });
+  };
 
   const handleNewLote = () => {
     const fechaElab = safeFormat(new Date(), 'yyyy-MM-dd');
@@ -3699,7 +4038,36 @@ const LotesProduccionView = ({
     setView(estado === 'Finalizado' && selectedLote ? 'detail' : 'list');
   };
 
-  const handleFinalize = () => {
+  const insumosParaFinalizar =
+    view === 'form' ? (formData.insumos || []) : (selectedLote?.insumos || formData.insumos || []);
+
+  const insumoNecesitaSeleccionEnvases = (ins: any) => {
+    if (!ins.materiaPrimaId || ins.descuentoGenerico) return false;
+    if (ins.envasesSeleccionados?.length) return false;
+    return productoTieneEnvasesEtiquetados(
+      ins.materiaPrimaId,
+      lotesStock,
+      lotesEtiquetados,
+      lotesProduccion,
+      lotesDespiece,
+      ins.almacenId
+    );
+  };
+
+  const requestFinalize = () => {
+    if (selectedLote?.estado === 'Finalizado') {
+      showNotification('Este lote ya fue finalizado.', 'error');
+      return;
+    }
+    const pendienteIdx = insumosParaFinalizar.findIndex((ins: any) => insumoNecesitaSeleccionEnvases(ins));
+    if (pendienteIdx >= 0) {
+      setInsumoEnvaseWarningIdx(pendienteIdx);
+      return;
+    }
+    setIsFinalizeModalOpen(true);
+  };
+
+  const ejecutarFinalize = () => {
     if (isFinalizing) return;
     if (selectedLote?.estado === 'Finalizado') {
       showNotification('Este lote ya fue finalizado.', 'error');
@@ -3762,19 +4130,92 @@ const LotesProduccionView = ({
     const prod = productos.find((p: any) => p.id === selectedLote.productoId);
     const unidadPT = unidades.find((u: any) => u.id === prod?.unidadMedidaId)?.abreviatura || 'kg';
 
-    selectedLote.insumos.forEach((ins: any) => {
+    let updatedLotesEtiquetados = lotesEtiquetados;
+
+    insumosParaFinalizar.forEach((ins: any) => {
+      const prodIns = productos.find((p: any) => p.id === ins.materiaPrimaId);
+      const unitIns = unidades.find((u: any) => u.id === prodIns?.unidadMedidaId)?.abreviatura || 'kg';
+      const isKgIns = prodIns?.unidadMedidaId === 'u1';
+      const motivoBaja = `Consumo Producción Lote ${selectedLote.numeroLote}`;
+
+      if (ins.envasesSeleccionados?.length && !ins.descuentoGenerico) {
+        const rows = resolveEnvaseRowsByKeys(
+          ins.envasesSeleccionados,
+          updatedLotesEtiquetados,
+          lotesStock,
+          lotesProduccion,
+          lotesDespiece
+        );
+
+        if (rows.length > 0) {
+          updatedLotesEtiquetados = aplicarBajaEnvasesEnEstado(
+            rows,
+            updatedLotesEtiquetados,
+            motivoBaja,
+            currentUser.name
+          );
+        }
+
+        const byLote: Record<string, any[]> = {};
+        rows.forEach((row: any) => {
+          if (!byLote[row.numeroLote]) byLote[row.numeroLote] = [];
+          byLote[row.numeroLote].push(row);
+        });
+
+        Object.entries(byLote).forEach(([numeroLote, items]) => {
+          const totalPeso = items.reduce(
+            (s, i) => s + (parseFloat(i.envase.pesoNeto) || parseFloat(i.envase.peso) || 0),
+            0
+          );
+          if (totalPeso <= 0.0001) return;
+
+          const cantidadMov = isKgIns ? totalPeso : items.length;
+          if (cantidadMov <= 0.0001) return;
+
+          const envNums = items.map((i: any) => `#${i.envase.numero}`).join(', ');
+          addedMovimientos.push({
+            id: `MOV-${Date.now()}-${Math.random()}`,
+            tipo: 'salida',
+            productoId: ins.materiaPrimaId,
+            almacenId: items[0].almacenId,
+            cantidad: cantidadMov,
+            unidad: unitIns,
+            cantidadKg: totalPeso,
+            motivo: motivoBaja,
+            loteNumero: numeroLote,
+            fechaIngreso: safeFormat(new Date(), 'yyyy-MM-dd'),
+            fechaVencimiento: items[0].fechaVencimiento,
+            origen: 'produccion',
+            usuario: currentUser.name,
+            fechaHora: now,
+            anulado: false,
+            referencia: selectedLote.numeroLote,
+            observaciones: `Envases: ${envNums}`,
+          });
+        });
+        return;
+      }
+
       let remainingToDeduct = ins.cantidadReal;
+      if (remainingToDeduct <= 0.0001) return;
+
       const productLotes = [...lotesStock]
-        .filter((ls: any) => ls.productoId === ins.materiaPrimaId)
+        .filter(
+          (ls: any) =>
+            ls.productoId === ins.materiaPrimaId &&
+            (ls.cantidad || 0) > 0.0001 &&
+            (!ins.almacenId || ls.almacenId === ins.almacenId)
+        )
         .sort((a, b) => new Date(a.fechaVencimiento).getTime() - new Date(b.fechaVencimiento).getTime());
 
       productLotes.forEach((ls: any) => {
-        if (remainingToDeduct <= 0) return;
+        if (remainingToDeduct <= 0.0001) return;
         const deduct = Math.min(ls.cantidad, remainingToDeduct);
+        if (deduct <= 0.0001) return;
         remainingToDeduct -= deduct;
 
-        const prodIns = productos.find((p: any) => p.id === ins.materiaPrimaId);
-        const unitIns = unidades.find((u: any) => u.id === prodIns?.unidadMedidaId)?.abreviatura || 'kg';
+        const cantidadKg = deduct * getPesoEquivalente(ins.materiaPrimaId, ls);
+        if (cantidadKg <= 0.0001 && deduct <= 0.0001) return;
 
         addedMovimientos.push({
           id: `MOV-${Date.now()}-${Math.random()}`,
@@ -3783,8 +4224,8 @@ const LotesProduccionView = ({
           almacenId: ls.almacenId,
           cantidad: deduct,
           unidad: unitIns,
-          cantidadKg: deduct * getPesoEquivalente(ins.materiaPrimaId),
-          motivo: `Consumo Producción Lote ${selectedLote.numeroLote}`,
+          cantidadKg,
+          motivo: motivoBaja,
           loteNumero: ls.numeroLote,
           fechaIngreso: safeFormat(new Date(), 'yyyy-MM-dd'),
           fechaVencimiento: ls.fechaVencimiento,
@@ -3792,7 +4233,7 @@ const LotesProduccionView = ({
           usuario: currentUser.name,
           fechaHora: now,
           anulado: false,
-          referencia: selectedLote.numeroLote
+          referencia: selectedLote.numeroLote,
         });
       });
     });
@@ -3821,6 +4262,7 @@ const LotesProduccionView = ({
     const finalizedLote = {
       ...selectedLote,
       ...finalizeData,
+      insumos: insumosParaFinalizar,
       estado: 'Finalizado',
       fechaFinalizacion: now,
       rendimientoReal,
@@ -3831,14 +4273,14 @@ const LotesProduccionView = ({
 
     setLotesProduccion(lotesProduccion.map((l: any) => l.id === selectedLote.id ? finalizedLote : l));
     setMovimientos([...addedMovimientos, ...updatedMovimientos]);
-    
-    // Update Etiquetas state if exists
-    const etiquetaData = lotesEtiquetados.find((le: any) => le.loteId === selectedLote.id);
+
+    const etiquetaData = updatedLotesEtiquetados.find((le: any) => le.loteId === selectedLote.id);
     if (etiquetaData && etiquetaData.estado !== 'finalizado') {
-       setLotesEtiquetados(lotesEtiquetados.map((le: any) => 
-         le.loteId === selectedLote.id ? { ...le, estado: 'finalizado' } : le
-       ));
+      updatedLotesEtiquetados = updatedLotesEtiquetados.map((le: any) =>
+        le.loteId === selectedLote.id ? { ...le, estado: 'finalizado' } : le
+      );
     }
+    setLotesEtiquetados(updatedLotesEtiquetados);
 
     const historyEntry: LoteProduccionHistorial = {
       id: `lh-${Date.now()}`,
@@ -3857,13 +4299,96 @@ const LotesProduccionView = ({
     showNotification('Lote finalizado correctamente', 'success');
   };
 
+  const renderEnvaseModals = () => (
+    <>
+      <Modal
+        isOpen={insumoEnvaseWarningIdx !== null}
+        onClose={() => setInsumoEnvaseWarningIdx(null)}
+        title="Insumo con envases etiquetados"
+      >
+        {insumoEnvaseWarningIdx !== null && (() => {
+          const ins = insumosParaFinalizar[insumoEnvaseWarningIdx];
+          const mp = productos.find((p: any) => p.id === ins?.materiaPrimaId);
+          return (
+            <div className="space-y-6">
+              <p className="text-sm text-slate-600">
+                El insumo <strong>{mp?.nombre}</strong> tiene envases etiquetados en stock.
+                ¿Cómo querés descontar el consumo?
+              </p>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const idx = insumoEnvaseWarningIdx;
+                    setInsumoEnvaseWarningIdx(null);
+                    setEnvaseModalInsumoIdx(idx);
+                  }}
+                  className="flex-1 py-3 bg-sleek-accent text-white text-[10px] font-black uppercase tracking-widest rounded-lg"
+                >
+                  Seleccionar envases
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const idx = insumoEnvaseWarningIdx;
+                    const insumos = [...insumosParaFinalizar];
+                    insumos[idx] = { ...insumos[idx], descuentoGenerico: true, envasesSeleccionados: [] };
+                    if (view === 'form') setFormData((p: any) => ({ ...p, insumos }));
+                    if (selectedLote) setSelectedLote({ ...selectedLote, insumos });
+                    setInsumoEnvaseWarningIdx(null);
+                    showNotification('Se usará descuento genérico (FEFO) para este insumo.', 'info');
+                  }}
+                  className="flex-1 py-3 bg-slate-100 text-slate-700 text-[10px] font-black uppercase tracking-widest rounded-lg border border-slate-200"
+                >
+                  Descontar genérico
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setInsumoEnvaseWarningIdx(null)}
+                  className="flex-1 py-3 text-slate-400 text-[10px] font-black uppercase tracking-widest"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+      </Modal>
+      <SelectorEnvasesModal
+        isOpen={envaseModalInsumoIdx !== null}
+        onClose={() => setEnvaseModalInsumoIdx(null)}
+        titulo="Seleccionar envases del insumo"
+        productoId={envaseModalInsumoIdx !== null ? (insumosParaFinalizar[envaseModalInsumoIdx]?.materiaPrimaId || '') : ''}
+        productos={productos}
+        almacenId={envaseModalInsumoIdx !== null ? insumosParaFinalizar[envaseModalInsumoIdx]?.almacenId : undefined}
+        lotesStock={lotesStock}
+        lotesEtiquetados={lotesEtiquetados}
+        lotesProduccion={lotesProduccion}
+        lotesDespiece={lotesDespiece}
+        initialSelectedKeys={envaseModalInsumoIdx !== null ? (insumosParaFinalizar[envaseModalInsumoIdx]?.envasesSeleccionados || []) : []}
+        onConfirm={({ keys, cantidadReal }: any) => {
+          if (envaseModalInsumoIdx === null) return;
+          const idx = envaseModalInsumoIdx;
+          updateInsumoAt(idx, { envasesSeleccionados: keys, cantidadReal, descuentoGenerico: false });
+          if (selectedLote) {
+            const insumos = [...insumosParaFinalizar];
+            insumos[idx] = { ...insumos[idx], envasesSeleccionados: keys, cantidadReal, descuentoGenerico: false };
+            setSelectedLote({ ...selectedLote, insumos });
+          }
+          setEnvaseModalInsumoIdx(null);
+          showNotification(`${keys.length} envase(s) seleccionado(s). Cantidad real actualizada.`, 'success');
+        }}
+      />
+    </>
+  );
+
   const filteredLotes = lotesProduccion.filter((l: any) => {
     const prod = productos.find((p: any) => p.id === l.productoId);
     const matchesSearch = l.numeroLote.toLowerCase().includes(searchTerm.toLowerCase()) || 
                          prod?.nombre.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesEstado = filterEstado === 'Todos' || l.estado === filterEstado;
     return matchesSearch && matchesEstado;
-  }).sort((a: any, b: any) => new Date(b.fechaElaboracion).getTime() - new Date(a.fechaElaboracion).getTime());
+  }).sort(compareLotesRecientesPrimero);
 
   if (view === 'form') {
     return (
@@ -4007,6 +4532,11 @@ const LotesProduccionView = ({
                       const unit = unidades.find((u: any) => u.id === mp?.unidadMedidaId);
                       const stock = lotesStock.filter((ls: any) => ls.productoId === ins.materiaPrimaId).reduce((sum: number, ls: any) => sum + ls.cantidad, 0);
                       const isFinalizado = selectedLote?.estado === 'Finalizado';
+                      const tieneEnvasesEtiquetados = ins.materiaPrimaId && productoTieneEnvasesEtiquetados(
+                        ins.materiaPrimaId, lotesStock, lotesEtiquetados, lotesProduccion, lotesDespiece, ins.almacenId
+                      );
+                      const nEnvasesSel = ins.envasesSeleccionados?.length || 0;
+                      const pendienteEnvases = tieneEnvasesEtiquetados && nEnvasesSel === 0 && !ins.descuentoGenerico;
                       
                       return (
                         <tr key={idx}>
@@ -4016,7 +4546,12 @@ const LotesProduccionView = ({
                               disabled={isFinalizado}
                               onChange={e => {
                                 const newInsumos = [...formData.insumos];
-                                newInsumos[idx] = { ...newInsumos[idx], materiaPrimaId: e.target.value };
+                                newInsumos[idx] = {
+                                  ...newInsumos[idx],
+                                  materiaPrimaId: e.target.value,
+                                  envasesSeleccionados: [],
+                                  descuentoGenerico: false,
+                                };
                                 setFormData({ ...formData, insumos: newInsumos });
                               }}
                               className="w-full bg-transparent text-sm font-bold text-sleek-dark focus:outline-none focus:border-sleek-accent border-b border-transparent hover:border-slate-200 py-1 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -4029,18 +4564,43 @@ const LotesProduccionView = ({
                           </td>
                           <td className="px-8 py-4 text-sm text-slate-400 font-mono">{formatNum(ins.cantidadTeorica)}</td>
                           <td className="px-8 py-4">
-                            <input 
-                              type="number" 
-                              step="0.001"
-                              value={ins.cantidadReal || 0}
-                              disabled={isFinalizado}
-                              onChange={e => {
-                                const newInsumos = [...formData.insumos];
-                                newInsumos[idx].cantidadReal = formatNum(parseFloat(e.target.value) || 0);
-                                setFormData({ ...formData, insumos: newInsumos });
-                              }}
-                              className="w-24 px-2 py-1 bg-slate-50 border border-slate-200 rounded text-sm font-bold focus:outline-none focus:border-sleek-accent disabled:opacity-50 disabled:cursor-not-allowed"
-                            />
+                            <div className="flex flex-wrap items-center gap-2">
+                              <input 
+                                type="number" 
+                                step="0.001"
+                                value={ins.cantidadReal || 0}
+                                disabled={isFinalizado || nEnvasesSel > 0}
+                                onChange={e => {
+                                  const newInsumos = [...formData.insumos];
+                                  newInsumos[idx] = {
+                                    ...newInsumos[idx],
+                                    cantidadReal: formatNum(parseFloat(e.target.value) || 0),
+                                    envasesSeleccionados: [],
+                                    descuentoGenerico: false,
+                                  };
+                                  setFormData({ ...formData, insumos: newInsumos });
+                                }}
+                                className="w-24 px-2 py-1 bg-slate-50 border border-slate-200 rounded text-sm font-bold focus:outline-none focus:border-sleek-accent disabled:opacity-50 disabled:cursor-not-allowed"
+                              />
+                              {tieneEnvasesEtiquetados && !isFinalizado && (
+                                <button
+                                  type="button"
+                                  onClick={() => setEnvaseModalInsumoIdx(idx)}
+                                  className="p-1.5 rounded border border-slate-200 text-slate-500 hover:border-sleek-accent hover:text-sleek-accent transition-colors"
+                                  title="Seleccionar envases"
+                                >
+                                  <Package className="w-4 h-4" />
+                                </button>
+                              )}
+                              {nEnvasesSel > 0 && (
+                                <span className="inline-flex items-center gap-1 text-[9px] font-black uppercase text-sleek-success">
+                                  <Package className="w-3 h-3" /> {nEnvasesSel} envases
+                                </span>
+                              )}
+                              {pendienteEnvases && (
+                                <span className="text-[9px] font-black uppercase text-sleek-warning">Seleccionar envases</span>
+                              )}
+                            </div>
                           </td>
                           <td className="px-8 py-4 text-xs font-bold text-slate-400 uppercase">{unit?.abreviatura}</td>
                           <td className="px-8 py-4">
@@ -4158,6 +4718,7 @@ const LotesProduccionView = ({
             </div>
           </div>
         </div>
+        {renderEnvaseModals()}
       </div>
     );
   }
@@ -4232,7 +4793,7 @@ const LotesProduccionView = ({
                     unidadesReales: pesoEtiquetado > 0 ? etiquetado.envases.length : (pesoManual / getPesoEquivalente(selectedLote.productoId)),
                     almacenDestinoId: ''
                   });
-                  setIsFinalizeModalOpen(true);
+                  requestFinalize();
                 }}
                 className="bg-sleek-success text-white px-6 py-2 rounded font-bold text-xs uppercase tracking-widest hover:bg-emerald-600 transition-all flex items-center gap-2"
               >
@@ -4383,7 +4944,19 @@ const LotesProduccionView = ({
                             <p className="text-[10px] text-slate-400 uppercase font-bold">{mp?.codigo}</p>
                           </td>
                           <td className="px-6 py-4 text-sm text-slate-400 font-mono">{formatNum(ins.cantidadTeorica)}</td>
-                          <td className="px-6 py-4 text-sm text-sleek-dark font-bold font-mono">{formatNum(ins.cantidadReal)}</td>
+                          <td className="px-6 py-4">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-sm text-sleek-dark font-bold font-mono">{formatNum(ins.cantidadReal)}</span>
+                              {(ins.envasesSeleccionados?.length || 0) > 0 && (
+                                <span className="inline-flex items-center gap-1 text-[9px] font-black uppercase text-sleek-success">
+                                  <Package className="w-3 h-3" /> {ins.envasesSeleccionados.length} envases
+                                </span>
+                              )}
+                              {ins.descuentoGenerico && (
+                                <span className="text-[9px] font-black uppercase text-slate-400">FEFO genérico</span>
+                              )}
+                            </div>
+                          </td>
                           <td className="px-6 py-4">
                             <p className={cn(
                               "text-xs font-bold font-mono",
@@ -4621,7 +5194,7 @@ const LotesProduccionView = ({
             <div className="flex justify-end gap-3 pt-6 border-t border-slate-100">
               <button onClick={() => setIsFinalizeModalOpen(false)} className="px-6 py-2 text-xs font-bold uppercase tracking-widest text-slate-400 hover:text-slate-600">Cancelar</button>
               <button 
-                onClick={handleFinalize}
+                onClick={ejecutarFinalize}
                 disabled={isFinalizing}
                 className="px-10 py-3 bg-sleek-success text-white text-xs font-bold uppercase tracking-widest rounded-lg hover:bg-emerald-600 transition-all shadow-lg shadow-sleek-success/20 flex items-center gap-2 disabled:opacity-50 disabled:grayscale"
               >
@@ -4630,6 +5203,7 @@ const LotesProduccionView = ({
             </div>
           </div>
         </Modal>
+        {renderEnvaseModals()}
       </div>
     );
   } catch (err) {
@@ -5858,7 +6432,7 @@ const EtiquetasView = ({
         numeroLote: getLoteField(l, 'numeroLote'),
         fechaElaboracion: getLoteField(l, 'fecha')
       }));
-    return [...prod, ...desp].sort((a, b) => new Date(b.fechaElaboracion).getTime() - new Date(a.fechaElaboracion).getTime());
+    return [...prod, ...desp].sort(compareLotesRecientesPrimero);
   }, [lotesProduccion, lotesDespiece]);
 
   const selectedLote = useMemo(() => {
@@ -6486,14 +7060,25 @@ const EtiquetasView = ({
   const [historySearchTerm, setHistorySearchTerm] = useState('');
 
   const lotesEtiquetadosHistory = useMemo(() => {
-    return lotesEtiquetados.filter((le: any) => {
-      const p = productos.find(prod => prod.id === le.productoId);
-      const loteObj = lotesDisponibles.find(lf => lf.id === le.parentLoteId || lf.id === le.loteId);
-      const name = p?.nombre || '';
-      const num = loteObj?.numeroLote || '';
-      return name.toLowerCase().includes(historySearchTerm.toLowerCase()) || 
-             num.toLowerCase().includes(historySearchTerm.toLowerCase());
-    });
+    return lotesEtiquetados
+      .filter((le: any) => {
+        const p = productos.find(prod => prod.id === le.productoId);
+        const loteObj = lotesDisponibles.find(lf => lf.id === le.parentLoteId || lf.id === le.loteId);
+        const name = p?.nombre || '';
+        const num = loteObj?.numeroLote || '';
+        return (
+          name.toLowerCase().includes(historySearchTerm.toLowerCase()) ||
+          num.toLowerCase().includes(historySearchTerm.toLowerCase())
+        );
+      })
+      .sort((a: any, b: any) => {
+        const loteA = lotesDisponibles.find((lf) => lf.id === a.parentLoteId || lf.id === a.loteId);
+        const loteB = lotesDisponibles.find((lf) => lf.id === b.parentLoteId || lf.id === b.loteId);
+        return compareLotesRecientesPrimero(
+          { fechaElaboracion: loteA?.fechaElaboracion, numeroLote: loteA?.numeroLote, id: loteA?.id },
+          { fechaElaboracion: loteB?.fechaElaboracion, numeroLote: loteB?.numeroLote, id: loteB?.id }
+        );
+      });
   }, [lotesEtiquetados, historySearchTerm, productos, lotesDisponibles]);
 
   const envasesParaMostrar = useMemo(() => {
@@ -6607,11 +7192,16 @@ const EtiquetasView = ({
             </div>
             
             <div className="max-h-[400px] overflow-y-auto space-y-2 pr-2 custom-scrollbar">
-              {lotesDisponibles.filter(l => {
-                const p = productos.find(prod => prod.id === (l.productoId || l.materiaPrimaId));
-                return l.numeroLote.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                       p?.nombre.toLowerCase().includes(searchTerm.toLowerCase());
-              }).map(lote => {
+              {lotesDisponibles
+                .filter((l) => {
+                  const p = productos.find(prod => prod.id === (l.productoId || l.materiaPrimaId));
+                  return (
+                    l.numeroLote.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                    p?.nombre.toLowerCase().includes(searchTerm.toLowerCase())
+                  );
+                })
+                .sort(compareLotesRecientesPrimero)
+                .map((lote) => {
                 const p = productos.find(prod => prod.id === (lote.productoId || lote.materiaPrimaId));
                 const isSelected = selectedLoteId === lote.id;
                 
@@ -9654,7 +10244,13 @@ const AlmacenesView = ({
 
     // Find products with stock in this almacen that are NOT assigned via stockSeguridad
     const unassignedWithStock = Array.from(new Set(
-      lotesStock.filter((ls: any) => ls.almacenId === selectedAlmacen.id && ls.cantidad > 0.001 && !assignedProductIds.has(ls.productoId))
+      lotesStock
+        .filter((ls: any) => {
+          if (ls.almacenId !== selectedAlmacen.id || assignedProductIds.has(ls.productoId)) return false;
+          const p = productos.find((pr: any) => pr.id === ls.productoId);
+          const { cantidad } = calcularCantidadStockLote(ls, p, lotesEtiquetados, lotesProduccion, lotesDespiece);
+          return cantidad > 0.001;
+        })
         .map((ls: any) => ls.productoId)
     )).map((pid: any) => ({ productoId: pid, cantidad: 0, almacenId: selectedAlmacen.id, _unassigned: true }));
 
@@ -9818,7 +10414,15 @@ const AlmacenesView = ({
                   const prod = productos.find((p: any) => p.id === ap.productoId);
                   const actual = getStockActual(prod.id, selectedAlmacen.id);
                   const seguridad = ap.cantidad;
-                  const prodLotes = lotesStock.filter((l: any) => l.productoId === prod.id && l.almacenId === selectedAlmacen.id);
+                  const prodLotes = getLotesVisiblesEnAlmacen(
+                    prod.id,
+                    selectedAlmacen.id,
+                    lotesStock,
+                    productos,
+                    lotesEtiquetados,
+                    lotesProduccion,
+                    lotesDespiece
+                  );
                   const prodUnidad = unidades.find((u: any) => u.id === prod.unidadMedidaId)?.abreviatura || '';
                   
                   let status = 'gris';
@@ -17419,6 +18023,7 @@ export default function App() {
                 lotesEtiquetados={lotesEtiquetados}
                 setLotesEtiquetados={setLotesEtiquetados}
                 setDescuentosPendientes={setDescuentosPendientes}
+                lotesDespiece={lotesDespiece}
               />
             )}
             {activeModule === 'PRODUCCIÓN' && activeSubSection === 'Lotes de Despiece' && (
