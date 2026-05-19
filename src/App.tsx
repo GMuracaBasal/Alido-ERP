@@ -265,7 +265,10 @@ const findLoteEtiquetadoForStockLote = (
       const matchesId = item.loteId === targetLoteNum;
       const matchesInternalId = internalId && (item.loteId === internalId || item.parentLoteId === internalId);
       const matchesRawId = l.id && item.loteId === l.id;
-      const butcheryPartMatch = internalId && item.loteId === `${internalId}-${l.productoId}`;
+      const butcheryPartMatch =
+        internalId &&
+        (item.loteId === `${internalId}-${l.productoId}` ||
+          (typeof item.loteId === 'string' && item.loteId.startsWith(`${internalId}-`)));
       const productMatch = !item.productoId || item.productoId === l.productoId;
       return butcheryPartMatch || ((matchesNumero || matchesId || matchesInternalId || matchesRawId) && productMatch);
     }) || null
@@ -274,7 +277,49 @@ const findLoteEtiquetadoForStockLote = (
 
 const isEnvaseVigente = (e: any): boolean => {
   const isAnulado = e.anulado === true || e.anulado === 'true';
-  return !isAnulado && (e.estado === 'en_stock' || !e.estado);
+  if (isAnulado) return false;
+  if (e.estado === 'baja' || e.estado === 'anulado' || e.estado === 'Vendido') return false;
+  return e.estado === 'en_stock' || !e.estado;
+};
+
+/** Envases vigentes de un lote de stock (misma vinculación que Ver Cajas). */
+const getEnvasesVigentesForStockLote = (
+  l: { productoId: string; numeroLote: string; id?: string; cantidad?: number; pesoEquivalenteReal?: number },
+  lotesEtiquetados: any[],
+  lotesProduccion: any[] = [],
+  lotesDespiece: any[] = []
+): any[] => {
+  const le = findLoteEtiquetadoForStockLote(l, lotesEtiquetados, lotesProduccion, lotesDespiece);
+  if (!le?.envases?.length) return [];
+  return le.envases.filter(isEnvaseVigente);
+};
+
+/** Cantidad de stock: suma de pesos de envases vigentes si hay etiquetado; si no, movimientos. */
+const calcularCantidadStockLote = (
+  l: { productoId: string; numeroLote: string; id?: string; cantidad: number; pesoEquivalenteReal?: number },
+  prod: { unidadMedidaId?: string } | undefined,
+  lotesEtiquetados: any[],
+  lotesProduccion: any[] = [],
+  lotesDespiece: any[] = []
+): { cantidad: number; pesoEquivalenteReal: number } => {
+  const le = findLoteEtiquetadoForStockLote(l, lotesEtiquetados, lotesProduccion, lotesDespiece);
+  const active = le?.envases?.length ? le.envases.filter(isEnvaseVigente) : [];
+
+  if (le?.envases?.length) {
+    if (active.length === 0) {
+      return { cantidad: 0, pesoEquivalenteReal: l.pesoEquivalenteReal ?? 1 };
+    }
+    const totalWeight = active.reduce((s: number, e: any) => s + (parseFloat(e.pesoNeto) || parseFloat(e.peso) || 0), 0);
+    const correctedQty = prod?.unidadMedidaId === 'u1' ? safeRound(totalWeight, 2) : active.length;
+    const correctedFactor =
+      correctedQty > 0 ? safeRound(totalWeight / correctedQty, 4) : (l.pesoEquivalenteReal ?? 1);
+    return { cantidad: correctedQty, pesoEquivalenteReal: correctedFactor };
+  }
+
+  return {
+    cantidad: safeRound(l.cantidad, 2),
+    pesoEquivalenteReal: l.pesoEquivalenteReal ?? 1,
+  };
 };
 
 const safeFormat = (date: any, formatStr: string, fallback: string = '-') => {
@@ -8747,16 +8792,29 @@ const SalidaForm = ({
   const isKgProduct = selectedProd?.unidadMedidaId === 'u1';
   const stockEnAlmacen = formData.almacenId ? lotesStock.filter((l: any) => l.productoId === formData.productoId && l.almacenId === formData.almacenId).reduce((sum: number, l: any) => sum + l.cantidad, 0) : 0;
 
-  const availableEnvases = useMemo(() => {
+  const loteHasEnvasesVigentes = useCallback(
+    (l: any) => getEnvasesVigentesForStockLote(l, lotesEtiquetados, lotesProduccion, lotesDespiece).length > 0,
+    [lotesEtiquetados, lotesProduccion, lotesDespiece]
+  );
+
+  const stockLotesEnAlmacen = useMemo(() => {
     if (!formData.productoId || !formData.almacenId) return [];
-    const lotes = lotesStock
+    return lotesStock
       .filter((l: any) => l.productoId === formData.productoId && l.almacenId === formData.almacenId && l.cantidad > 0.0001)
       .sort((a: any, b: any) => new Date(a.fechaVencimiento).getTime() - new Date(b.fechaVencimiento).getTime());
+  }, [formData.productoId, formData.almacenId, lotesStock]);
 
+  const lotesSinEtiquetasBase = useMemo(
+    () => stockLotesEnAlmacen.filter((l: any) => !loteHasEnvasesVigentes(l)),
+    [stockLotesEnAlmacen, loteHasEnvasesVigentes]
+  );
+
+  const availableEnvases = useMemo(() => {
     const rows: any[] = [];
-    lotes.forEach((l: any) => {
+    stockLotesEnAlmacen.forEach((l: any) => {
+      if (!loteHasEnvasesVigentes(l)) return;
       const le = findLoteEtiquetadoForStockLote(l, lotesEtiquetados, lotesProduccion, lotesDespiece);
-      if (!le?.envases?.length) return;
+      if (!le) return;
       le.envases.forEach((env: any) => {
         if (!isEnvaseVigente(env)) return;
         const key = `${le.loteId}::${env.codigoBarras}::${env.numero}`;
@@ -8772,9 +8830,13 @@ const SalidaForm = ({
     return rows.sort(
       (a, b) => new Date(a.fechaVencimiento).getTime() - new Date(b.fechaVencimiento).getTime()
     );
-  }, [formData.productoId, formData.almacenId, lotesStock, lotesEtiquetados, lotesProduccion, lotesDespiece]);
+  }, [stockLotesEnAlmacen, lotesEtiquetados, lotesProduccion, lotesDespiece, loteHasEnvasesVigentes]);
 
-  const useEnvaseMode = availableEnvases.length > 0;
+  const modoSoloSinEtiquetas = availableEnvases.length === 0 && lotesSinEtiquetasBase.length > 0;
+  const modoSoloConEtiquetas = availableEnvases.length > 0 && lotesSinEtiquetasBase.length === 0;
+  const modoMixto = availableEnvases.length > 0 && lotesSinEtiquetasBase.length > 0;
+  const showEnvaseSection = availableEnvases.length > 0;
+  const showSinEtiquetaSection = lotesSinEtiquetasBase.length > 0;
 
   const filteredEnvRows = useMemo(() => {
     const q = filterLoteEnv.trim().toLowerCase();
@@ -8789,8 +8851,37 @@ const SalidaForm = ({
 
   const resumenEnvases = useMemo(() => {
     const totalPeso = selectedEnvRows.reduce((s: number, r: any) => s + (parseFloat(r.envase.pesoNeto) || 0), 0);
-    return { count: selectedEnvRows.length, totalPeso };
-  }, [selectedEnvRows]);
+    const cantidad = isKgProduct ? totalPeso : selectedEnvRows.length;
+    return { count: selectedEnvRows.length, totalPeso, cantidad };
+  }, [selectedEnvRows, isKgProduct]);
+
+  const resumenSinEtiqueta = useMemo(() => {
+    const total = availableLotes.reduce((s: number, l: any) => s + (parseFloat(l.descontar) || 0), 0);
+    const totalKg = availableLotes.reduce((s: number, l: any) => {
+      const qty = parseFloat(l.descontar) || 0;
+      const factor = l.pesoEquivalenteReal ?? pesoEq;
+      return s + qty * factor;
+    }, 0);
+    return { total, totalKg };
+  }, [availableLotes, pesoEq]);
+
+  const resumenTotal = useMemo(() => {
+    const cantidadEtiquetada = resumenEnvases.cantidad;
+    const cantidadSinEtiqueta = resumenSinEtiqueta.total;
+    const cantidadTotal = cantidadEtiquetada + cantidadSinEtiqueta;
+    const pesoTotalKg = resumenEnvases.totalPeso + resumenSinEtiqueta.totalKg;
+    return {
+      cantidadEtiquetada,
+      cantidadSinEtiqueta,
+      cantidadTotal,
+      pesoTotalKg,
+      envasesCount: resumenEnvases.count,
+    };
+  }, [resumenEnvases, resumenSinEtiqueta]);
+
+  const unidadAbr = selectedProd
+    ? unidades.find((u: any) => u.id === selectedProd.unidadMedidaId)?.abreviatura || 'kg'
+    : 'kg';
 
   const allFilteredSelected =
     filteredEnvRows.length > 0 && filteredEnvRows.every((r: any) => selectedEnvKeys[r.key]);
@@ -8802,19 +8893,15 @@ const SalidaForm = ({
   }, [formData.productoId, formData.almacenId]);
 
   useEffect(() => {
-    if (useEnvaseMode) return;
     if (formData.productoId && formData.almacenId) {
-      const lotes = lotesStock
-        .filter((l: any) => l.productoId === formData.productoId && l.almacenId === formData.almacenId)
-        .sort((a: any, b: any) => new Date(a.fechaVencimiento).getTime() - new Date(b.fechaVencimiento).getTime());
-      setAvailableLotes(lotes.map((l: any) => ({ ...l, descontar: 0 })));
+      setAvailableLotes(lotesSinEtiquetasBase.map((l: any) => ({ ...l, descontar: 0 })));
     } else {
       setAvailableLotes([]);
     }
-  }, [formData.productoId, formData.almacenId, lotesStock, useEnvaseMode]);
+  }, [formData.productoId, formData.almacenId, lotesSinEtiquetasBase]);
 
   useEffect(() => {
-    if (useEnvaseMode || formData.cantidad <= 0 || availableLotes.length === 0) return;
+    if (!modoSoloSinEtiquetas || formData.cantidad <= 0 || availableLotes.length === 0) return;
     let rest = formData.cantidad;
     const updated = availableLotes.map(l => {
       const take = Math.min(rest, l.cantidad);
@@ -8822,7 +8909,7 @@ const SalidaForm = ({
       return { ...l, descontar: take };
     });
     setAvailableLotes(updated);
-  }, [formData.cantidad, useEnvaseMode]);
+  }, [formData.cantidad, modoSoloSinEtiquetas, availableLotes.length]);
 
   const toggleSelectAllEnvases = () => {
     if (allFilteredSelected) {
@@ -8860,73 +8947,108 @@ const SalidaForm = ({
     observaciones: [formData.observaciones, obsExtra].filter(Boolean).join(' | ')
   });
 
+  const applyEnvaseBajas = (motivoStr: string): Movimiento[] => {
+    const now = new Date().toISOString();
+    const selectedKeysSet = new Set(selectedEnvRows.map((r: any) => r.key));
+
+    const updatedLE = lotesEtiquetados.map((le: any) => {
+      const updatedEnvases = le.envases.map((ev: any) => {
+        const key = `${le.loteId}::${ev.codigoBarras}::${ev.numero}`;
+        if (!selectedKeysSet.has(key)) return ev;
+        return {
+          ...ev,
+          estado: 'baja',
+          motivoBaja: `Salida manual: ${motivoStr}`,
+          fechaBaja: now,
+          usuarioBaja: currentUser.name,
+        };
+      });
+      const active = updatedEnvases.filter(isEnvaseVigente);
+      const pesoTotalEtiquetado = active.reduce((s: number, ev: any) => s + (parseFloat(ev.pesoNeto) || 0), 0);
+      return { ...le, envases: updatedEnvases, pesoTotalEtiquetado };
+    });
+    setLotesEtiquetados(updatedLE);
+
+    const byLote: Record<string, any[]> = {};
+    selectedEnvRows.forEach((row: any) => {
+      if (!byLote[row.numeroLote]) byLote[row.numeroLote] = [];
+      byLote[row.numeroLote].push(row);
+    });
+
+    return Object.entries(byLote).map(([numeroLote, items]) => {
+      const totalPeso = items.reduce((s, i) => s + (parseFloat(i.envase.pesoNeto) || 0), 0);
+      const envNums = items.map((i: any) => `#${i.envase.numero}`).join(', ');
+      return buildSalidaMov(
+        numeroLote,
+        isKgProduct ? totalPeso : items.length,
+        totalPeso,
+        items[0].fechaVencimiento,
+        `Envases: ${envNums}`
+      );
+    });
+  };
+
+  const buildMovsSinEtiqueta = (): Movimiento[] => {
+    return availableLotes
+      .filter((l: any) => (parseFloat(l.descontar) || 0) > 0.0001)
+      .map((l: any) => {
+        const qty = parseFloat(l.descontar) || 0;
+        const factor = l.pesoEquivalenteReal ?? pesoEq;
+        return buildSalidaMov(l.numeroLote, qty, qty * factor, l.fechaVencimiento, 'Stock sin etiquetar');
+      });
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const motivoStr = formData.motivo === 'Otro' ? formData.otroMotivo : formData.motivo;
+    const hasEnv = selectedEnvRows.length > 0;
+    const lotesConDescuento = availableLotes.filter((l: any) => (parseFloat(l.descontar) || 0) > 0.0001);
+    const hasSinEtiqueta = lotesConDescuento.length > 0;
 
-    if (useEnvaseMode) {
-      if (selectedEnvRows.length === 0) {
-        globalAlert('Seleccione al menos un envase para dar de baja.');
+    if (modoSoloConEtiquetas && !hasEnv) {
+      globalAlert('Seleccione al menos un envase para dar de baja.');
+      return;
+    }
+
+    if (modoMixto && !hasEnv && !hasSinEtiqueta) {
+      globalAlert('Seleccione envases y/o indique cantidad a descontar en lotes sin etiquetar.');
+      return;
+    }
+
+    if (modoSoloSinEtiquetas) {
+      if (!hasSinEtiqueta && formData.cantidad <= 0) {
+        globalAlert('Indique la cantidad a retirar.');
         return;
       }
-
-      const now = new Date().toISOString();
-      const selectedKeysSet = new Set(selectedEnvRows.map((r: any) => r.key));
-
-      const updatedLE = lotesEtiquetados.map((le: any) => {
-        const updatedEnvases = le.envases.map((ev: any) => {
-          const key = `${le.loteId}::${ev.codigoBarras}::${ev.numero}`;
-          if (!selectedKeysSet.has(key)) return ev;
-          return {
-            ...ev,
-            estado: 'baja',
-            motivoBaja: `Salida manual: ${motivoStr}`,
-            fechaBaja: now,
-            usuarioBaja: currentUser.name,
-          };
-        });
-        const active = updatedEnvases.filter(isEnvaseVigente);
-        const pesoTotalEtiquetado = active.reduce((s: number, ev: any) => s + (parseFloat(ev.pesoNeto) || 0), 0);
-        return { ...le, envases: updatedEnvases, pesoTotalEtiquetado };
-      });
-      setLotesEtiquetados(updatedLE);
-
-      const byLote: Record<string, any[]> = {};
-      selectedEnvRows.forEach((row: any) => {
-        if (!byLote[row.numeroLote]) byLote[row.numeroLote] = [];
-        byLote[row.numeroLote].push(row);
-      });
-
-      const newMovs: Movimiento[] = Object.entries(byLote).map(([numeroLote, items]) => {
-        const totalPeso = items.reduce((s, i) => s + (parseFloat(i.envase.pesoNeto) || 0), 0);
-        const envNums = items.map((i: any) => `#${i.envase.numero}`).join(', ');
-        return buildSalidaMov(
-          numeroLote,
-          isKgProduct ? totalPeso : items.length,
-          totalPeso,
-          items[0].fechaVencimiento,
-          `Envases: ${envNums}`
-        );
-      });
-
-      onSave(newMovs);
-      return;
+      if (formData.cantidad > stockEnAlmacen) {
+        globalAlert('Cantidad superior al stock disponible');
+        return;
+      }
+      const totalADescontar = availableLotes.reduce((sum, l) => sum + (parseFloat(l.descontar) || 0), 0);
+      if (Math.abs(totalADescontar - formData.cantidad) > 0.001) {
+        globalAlert('La suma de los lotes a descontar debe coincidir con la cantidad total.');
+        return;
+      }
     }
 
-    if (formData.cantidad > stockEnAlmacen) {
-      globalAlert('Cantidad superior al stock disponible');
-      return;
+    if ((modoMixto || showSinEtiquetaSection) && hasSinEtiqueta) {
+      for (const l of lotesConDescuento) {
+        const qty = parseFloat(l.descontar) || 0;
+        if (qty > l.cantidad + 0.001) {
+          globalAlert(`La cantidad a descontar del lote ${l.numeroLote} supera el disponible (${formatNumber(l.cantidad)}).`);
+          return;
+        }
+      }
     }
 
-    const totalADescontar = availableLotes.reduce((sum, l) => sum + l.descontar, 0);
-    if (Math.abs(totalADescontar - formData.cantidad) > 0.001) {
-      globalAlert('La suma de los lotes a descontar debe coincidir con la cantidad total.');
+    const newMovs: Movimiento[] = [];
+    if (hasEnv) newMovs.push(...applyEnvaseBajas(motivoStr));
+    if (hasSinEtiqueta) newMovs.push(...buildMovsSinEtiqueta());
+
+    if (newMovs.length === 0) {
+      globalAlert('No hay cantidades seleccionadas para registrar la salida.');
       return;
     }
-
-    const newMovs: Movimiento[] = availableLotes.filter(l => l.descontar > 0).map(l =>
-      buildSalidaMov(l.numeroLote, l.descontar, l.descontar * pesoEq, l.fechaVencimiento, '')
-    );
 
     onSave(newMovs);
   };
@@ -8975,7 +9097,7 @@ const SalidaForm = ({
           </select>
         </div>
 
-        {!useEnvaseMode && (
+        {modoSoloSinEtiquetas && (
         <div>
           <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Cantidad a Retirar *</label>
           <input 
@@ -8987,15 +9109,25 @@ const SalidaForm = ({
             onChange={e => setFormData({ ...formData, cantidad: parseFloat(e.target.value) || 0 })}
             className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none"
           />
-          <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase">Stock Disponible: {formatNumber(stockEnAlmacen)} {selectedProd ? unidades.find((u: any) => u.id === selectedProd.unidadMedidaId)?.abreviatura : 'un'}</p>
+          <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase">Stock Disponible: {formatNumber(stockEnAlmacen)} {unidadAbr}</p>
         </div>
         )}
 
-        {useEnvaseMode && formData.almacenId && (
-          <div className="md:col-span-2 space-y-4">
-            <p className="text-[10px] font-bold text-sleek-accent uppercase tracking-widest">
-              Producto con envases etiquetados — seleccioná cuáles dar de baja
+        {modoMixto && formData.almacenId && (
+          <div className="md:col-span-2">
+            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+              Stock mixto: lotes etiquetados y lotes sin etiquetar en este almacén
             </p>
+          </div>
+        )}
+
+        {showEnvaseSection && formData.almacenId && (
+          <div className="md:col-span-2 space-y-4">
+            {modoSoloConEtiquetas && (
+              <p className="text-[10px] font-bold text-sleek-accent uppercase tracking-widest">
+                Producto con envases etiquetados — seleccioná cuáles dar de baja
+              </p>
+            )}
             <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] border-b border-slate-100 pb-2">Selección de Envases</h4>
             <input
               type="text"
@@ -9068,26 +9200,38 @@ const SalidaForm = ({
                 </tbody>
               </table>
             </div>
-            <div className="bg-slate-100 rounded-xl p-4 grid grid-cols-2 md:grid-cols-3 gap-4 text-center">
-              <div>
-                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Envases seleccionados</p>
-                <p className="text-lg font-black text-sleek-dark">{resumenEnvases.count}</p>
+            {modoSoloConEtiquetas && (
+              <div className="bg-slate-100 rounded-xl p-4 grid grid-cols-2 md:grid-cols-3 gap-4 text-center">
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Envases seleccionados</p>
+                  <p className="text-lg font-black text-sleek-dark">{resumenEnvases.count}</p>
+                </div>
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Peso total</p>
+                  <p className="text-lg font-black text-sleek-dark">{formatNumber(resumenEnvases.totalPeso, 3)} kg</p>
+                </div>
+                <div className="col-span-2 md:col-span-1">
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Disponibles en almacén</p>
+                  <p className="text-lg font-black text-slate-600">{availableEnvases.length} env.</p>
+                </div>
               </div>
-              <div>
-                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Peso total</p>
-                <p className="text-lg font-black text-sleek-dark">{formatNumber(resumenEnvases.totalPeso, 3)} kg</p>
-              </div>
-              <div className="col-span-2 md:col-span-1">
-                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Disponibles en almacén</p>
-                <p className="text-lg font-black text-slate-600">{availableEnvases.length} env.</p>
-              </div>
-            </div>
+            )}
           </div>
         )}
 
-        {!useEnvaseMode && availableLotes.length > 0 && (
+        {modoMixto && showSinEtiquetaSection && (
+          <div className="md:col-span-2 flex items-center gap-4 py-2">
+            <div className="h-px flex-1 bg-slate-200" />
+            <span className="text-[9px] font-black text-slate-400 uppercase tracking-[0.25em] shrink-0">Lotes sin etiquetas</span>
+            <div className="h-px flex-1 bg-slate-200" />
+          </div>
+        )}
+
+        {showSinEtiquetaSection && availableLotes.length > 0 && (
           <div className="md:col-span-2 space-y-4">
-            <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] border-b border-slate-100 pb-2">Selección de Lotes (FEFO)</h4>
+            <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] border-b border-slate-100 pb-2">
+              {modoMixto ? 'Stock sin etiquetar' : 'Selección de Lotes (FEFO)'}
+            </h4>
             <div className="bg-slate-50 rounded-xl border border-slate-200 overflow-hidden">
               <table className="w-full text-left text-[11px]">
                 <thead className="bg-white border-b border-slate-200">
@@ -9105,7 +9249,9 @@ const SalidaForm = ({
                     return (
                       <tr key={l.id} className={cn(isVencido && "bg-rose-50/50", l.descontar > 0 && "bg-amber-50/30")}>
                         <td className="px-4 py-3 font-mono font-bold text-sleek-dark">{l.numeroLote}</td>
-                        <td className="px-4 py-3 text-right font-bold text-slate-500">{formatNumber(l.cantidad)}</td>
+                        <td className="px-4 py-3 text-right font-bold text-slate-500">
+                          {isKgProduct ? `${formatNumber(l.cantidad, 3)} kg` : `${formatNumber(l.cantidad)} ${unidadAbr}`}
+                        </td>
                         <td className="px-4 py-3 text-center">
                           <span className={cn(
                             "px-2 py-0.5 rounded font-bold",
@@ -9134,6 +9280,34 @@ const SalidaForm = ({
                   })}
                 </tbody>
               </table>
+            </div>
+          </div>
+        )}
+
+        {modoMixto && formData.almacenId && (
+          <div className="md:col-span-2 bg-slate-100 rounded-xl p-5 border border-slate-200">
+            <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-4 text-center">Resumen total de la salida</p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+              <div>
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Envases</p>
+                <p className="text-base font-black text-sleek-dark">{resumenEnvases.count}</p>
+              </div>
+              <div>
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Peso envases</p>
+                <p className="text-base font-black text-sleek-dark">{formatNumber(resumenEnvases.totalPeso, 3)} kg</p>
+              </div>
+              <div>
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Sin etiquetar</p>
+                <p className="text-base font-black text-sleek-dark">
+                  {formatNumber(resumenSinEtiqueta.totalKg, 2)} kg
+                </p>
+              </div>
+              <div>
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Total salida</p>
+                <p className="text-lg font-black text-sleek-danger">
+                  Total a descontar: {formatNumber(resumenTotal.pesoTotalKg, 2)} kg
+                </p>
+              </div>
             </div>
           </div>
         )}
@@ -9796,37 +9970,11 @@ const AlmacenesView = ({
                                               <td colSpan={5} className="py-0">
                                                 <div className="bg-white m-4 rounded-xl border border-slate-100 shadow-sm overflow-hidden">
                                                   {(() => {
-                                                    // 1. Diagnosis tools (Robust lookup)
-                                                    const targetLoteNum = lote.numeroLote;
-                                                    const targetLoteId = lote.id; // This is the ls-p1-a1-L001 ID
-
-                                                    // 2. Try to find the internal production/butchery ID from the human-readable number
-                                                    const internalProdLote = lotesProduccion.find((lp: any) => lp.numeroLote === targetLoteNum);
-                                                    const internalDespieceLote = lotesDespiece.find((ld: any) => ld.numeroLote === targetLoteNum);
-                                                    const internalId = internalProdLote?.id || internalDespieceLote?.id;
-
-                                                    console.log("=== DEBUG VER CAJAS ===");
-                                                    console.log("Lote buscado (stock):", targetLoteNum);
-                                                    console.log("Internal ID inferido:", internalId);
-                                                    console.log("Lotes Etiquetados (prop):", lotesEtiquetados);
-                                                    console.log("Todas las claves en localStorage:", Object.keys(localStorage));
-
-                                                    // 3. ROBUST MATCHING
-                                                    const le = lotesEtiquetados.find((item: any) => {
-                                                      const matchesNumero = item.loteNumero === targetLoteNum;
-                                                      const matchesId = item.loteId === targetLoteNum;
-                                                      const matchesInternalId = internalId && (item.loteId === internalId || item.parentLoteId === internalId);
-                                                      const matchesRawId = item.loteId === targetLoteId;
-                                                      
-                                                      // Specialized butchery matching (e.g., lp1-pt1)
-                                                      const butcheryPartMatch = internalId && item.loteId?.startsWith(`${internalId}-`);
-
-                                                      return matchesNumero || matchesId || matchesInternalId || matchesRawId || butcheryPartMatch;
-                                                    });
-                                                    
-                                                    // Filter containers that are actually in stock (not 'baja')
-                                                    const activeEnvases = (le?.envases || []).filter((e: any) => 
-                                                      (e.estado === 'en_stock' || !e.estado) && !(e.anulado === true || e.anulado === 'true')
+                                                    const activeEnvases = getEnvasesVigentesForStockLote(
+                                                      lote,
+                                                      lotesEtiquetados,
+                                                      lotesProduccion,
+                                                      lotesDespiece
                                                     );
 
                                                     if (activeEnvases.length === 0) {
@@ -16666,42 +16814,16 @@ export default function App() {
 
     const result = Object.values(stockMap).filter(l => l.cantidad > 0.0001 || l.cantidad < -0.0001);
 
-    // CRITICAL FIX: Override movements with physical container stock if labeling data exists
-    return result.map(l => {
-      const prod = productos.find(p => p.id === l.productoId);
-      if (!prod) return l;
-
-      const targetLoteNum = l.numeroLote;
-      const internalProdLote = (lotesProduccion || []).find((lp: any) => lp.numeroLote === targetLoteNum);
-      const internalDespieceLote = (lotesDespiece || []).find((ld: any) => ld.numeroLote === targetLoteNum);
-      const internalId = internalProdLote?.id || internalDespieceLote?.id;
-
-      const le = (lotesEtiquetados || []).find((item: any) => {
-        const matchesNumero = item.loteNumero === targetLoteNum;
-        const matchesId = item.loteId === targetLoteNum;
-        const matchesInternalId = internalId && (item.loteId === internalId || item.parentLoteId === internalId);
-        const matchesRawId = item.loteId === l.id;
-        // Specialized butchery matching: must match BOTH lote AND product
-        const butcheryPartMatch = internalId && item.loteId === `${internalId}-${l.productoId}`;
-
-        // For non-butchery matches, also verify productoId if available
-        const productMatch = !item.productoId || item.productoId === l.productoId;
-
-        return butcheryPartMatch || ((matchesNumero || matchesId || matchesInternalId || matchesRawId) && productMatch);
-      });
-
-      if (le && le.envases && le.envases.length > 0) {
-        const activeEnvases = le.envases.filter((e: any) => {
-          const isAnulado = e.anulado === true || e.anulado === 'true';
-          return (e.estado === 'en_stock' || !e.estado) && !isAnulado;
-        });
-        const totalWeight = activeEnvases.reduce((s: number, e: any) => s + e.pesoNeto, 0);
-        const correctedQty = prod.unidadMedidaId === 'u1' ? totalWeight : activeEnvases.length;
-        const correctedFactor = activeEnvases.length > 0 ? (correctedQty > 0 ? totalWeight / correctedQty : 1) : 1;
-        return { ...l, cantidad: correctedQty, pesoEquivalenteReal: correctedFactor };
-      }
-      
-      return l;
+    return result.map((l) => {
+      const prod = productos.find((p) => p.id === l.productoId);
+      const { cantidad, pesoEquivalenteReal } = calcularCantidadStockLote(
+        l,
+        prod,
+        lotesEtiquetados || [],
+        lotesProduccion || [],
+        lotesDespiece || []
+      );
+      return { ...l, cantidad, pesoEquivalenteReal };
     });
   }, [movimientos, productos, lotesEtiquetados, lotesProduccion, lotesDespiece]);
 
