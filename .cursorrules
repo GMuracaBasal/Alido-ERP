@@ -1,0 +1,54 @@
+# Alido ERP — Reglas para Cursor
+
+## Proyecto
+ERP para fábrica de alimentos (Alido S.A.). React 19 + TypeScript + Vite + Tailwind. Toda la app está en `src/App.tsx` (~15.500 líneas). Base de datos: Supabase (tabla app_data key-value JSONB).
+
+## Arquitectura
+- Archivo principal: `src/App.tsx` — contiene TODOS los componentes, interfaces, datos iniciales y lógica
+- Cliente Supabase: `src/supabaseClient.ts`
+- Estilos: `src/index.css` (Tailwind + temas custom)
+- Logos: `/public/alido-logo.png`, `/public/basal-logo.png`
+
+## Módulos
+INICIO, INVENTARIO (Dashboard/Almacenes/Productos/Movimientos/Alertas/Reportes), PRODUCCIÓN (Lotes Producción/Lotes Despiece/Recetas/Plantillas/Etiquetas/Dashboard/Trazabilidad), VENTAS (Ventas-Pedidos/Dashboard/Clientes/Listas Precios/Puntos Venta), EGRESOS (Egresos-Compras/Proveedores/Tipos Egreso/Plan Cuentas), USUARIOS.
+
+## Convenciones de código
+- Estilos: usar clases Tailwind existentes (sleek-dark, sleek-accent, sleek-success, sleek-danger, sleek-warning)
+- Labels: text-[10px] font-bold text-slate-400 uppercase tracking-widest
+- Cards: bg-white rounded shadow-sm border border-slate-100
+- Badges: componente Badge con variants (success/warning/danger/info/default)
+- Modal: componente Modal existente
+- Formateo numérico: funciones formatNum() y displayNum()
+- Fechas: safeFormat() con date-fns
+
+## Reglas de negocio CRÍTICAS
+1. El almacén de destino se define SOLO desde la sección de Lotes, NUNCA desde Etiquetas
+2. La finalización de lotes se hace SOLO desde Lotes (Producción y Despiece), NUNCA desde Etiquetas
+3. Al cambiar almacén en lote finalizado → generar movimientos de transferencia (salida viejo + entrada nuevo)
+4. handleSaveLote acepta estados: 'Planificado' | 'En Proceso' | 'Finalizado'
+5. Movimientos tienen origen: 'manual' | 'produccion' | 'despiece' | 'transferencia'
+6. Insumos en lotes de producción son editables (agregar/eliminar/cambiar). Campo fromReceta distingue los de receta vs manuales
+7. FEFO (First Expired First Out) para descuento de stock
+8. Pantalla de inicio: NUNCA mostrar montos monetarios, solo cantidades operativas
+
+## Errores comunes a evitar
+- NO reemplazar nombres de funciones existentes (ej: no cambiar handleFinalize por filteredLotes)
+- NO dejar tags JSX sin cerrar
+- NO cambiar el estado de un lote Finalizado a otro estado al guardar cambios
+- NO modificar la lógica de sincronización Supabase (supabaseClient.ts)
+- Siempre verificar compilación (tsc --noEmit) después de cambios
+
+## Interfaces principales
+- Producto: { id, codigo, nombre, tipo, origen, unidadMedidaId, usoCruzado, pesoNetoUnidad, pesoEquivalenteKg }
+- Movimiento: { id, tipo, productoId, almacenId, cantidad, origen, referencia, anulado }
+- LoteDespiece: { id, numeroLote, materiaPrimaId, cantidadIngresada, estado, cortes[] }
+- LoteProduccion: { id, numeroLote, productoTerminadoId, cantidadEstimada, estado, insumos[] }
+- User: { id, username, password, role, name, permisos, inicioConfig }
+
+## Al hacer cambios
+1. Indicar exactamente qué componente/función modificar
+2. Especificar qué NO tocar
+3. Usar los tipos TypeScript existentes
+4. Mantener estilos coherentes con el resto del sistema
+5. Probar compilación antes de aceptar
+
