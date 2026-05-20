@@ -675,7 +675,6 @@ interface Producto {
   pesoNetoUnidad?: number;
   pesoBrutoUnidad?: number;
   ean13?: string;
-  prefijoLote?: string; // Prefijo de 3 letras para numeración de lotes (ej: "MPC", "MCA", "HBC")
   // Legacy fields for compatibility
   unidadMedida?: string;
   alerggenos?: string[];
@@ -1019,6 +1018,7 @@ interface EgresoItem {
   cantidad?: number;
   precioUnitario?: number;
   loteProveedor?: string;
+  numeroLoteGenerado?: string;
   fechaVencimiento?: string;
   concepto?: string; // if not impactaInventario
   monto?: number;
@@ -1816,33 +1816,58 @@ const getLoteField = (lote: any, campo: string) => {
   return null;
 };
 
-const PREFIJO_LOTE_REGEX = /^[A-Z0-9]{3}$/;
-
-const isValidPrefijoLote = (value: string) => PREFIJO_LOTE_REGEX.test(value);
-
 const generarNumeroLote = (
-  producto: { prefijoLote?: string } | null | undefined,
-  tipo: 'produccion' | 'despiece',
-  fechaElaboracion: string,
-  lotesExistentes: { numeroLote?: string }[]
+  codigoProducto: string,
+  fecha: string,
+  lotesExistentes: any[]
 ): string => {
-  const ymd = (fechaElaboracion || safeFormat(new Date(), 'yyyy-MM-dd')).replace(/-/g, '');
-  const prefijoRaw = producto?.prefijoLote?.trim().toUpperCase();
-  const basePrefijo = prefijoRaw && isValidPrefijoLote(prefijoRaw)
-    ? prefijoRaw
-    : (tipo === 'produccion' ? 'LOT' : 'DSP');
+  const fechaFormateada = (fecha || safeFormat(new Date(), 'yyyy-MM-dd')).replace(/-/g, '');
+  const codigo = (codigoProducto || 'SIN').trim();
+  const prefijo = `${codigo}-${fechaFormateada}`;
+  const lotesDelDia = lotesExistentes.filter((l) => (l.numeroLote || '').startsWith(prefijo));
 
-  const escaped = basePrefijo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const pattern = new RegExp(`^${escaped}-${ymd}-(\\d{3})$`, 'i');
+  let maxCorrelativo = 0;
+  lotesDelDia.forEach((l) => {
+    const parts = (l.numeroLote || '').split('-');
+    const ultimo = parseInt(parts[parts.length - 1], 10);
+    if (!isNaN(ultimo) && ultimo > maxCorrelativo) {
+      maxCorrelativo = ultimo;
+    }
+  });
 
-  let maxSeq = 0;
-  for (const l of lotesExistentes) {
-    const num = String(l.numeroLote || '');
-    const m = num.match(pattern);
-    if (m) maxSeq = Math.max(maxSeq, parseInt(m[1], 10));
-  }
+  const correlativo = String(maxCorrelativo + 1).padStart(3, '0');
+  return `${prefijo}-${correlativo}`;
+};
 
-  return `${basePrefijo}-${ymd}-${(maxSeq + 1).toString().padStart(3, '0')}`;
+/** Recolecta todos los números de lote del sistema para evitar duplicados. */
+const collectLotesExistentes = (
+  lotesProduccion: any[] = [],
+  lotesDespiece: any[] = [],
+  movimientos: any[] = []
+): { numeroLote: string }[] => {
+  const nums = new Set<string>();
+  const add = (n?: string) => {
+    if (n?.trim()) nums.add(n.trim());
+  };
+  lotesProduccion.forEach((l) => add(l.numeroLote));
+  lotesDespiece.forEach((l) => add(getLoteField(l, 'numeroLote') || l.numeroLote));
+  movimientos.forEach((m) => add(m.loteNumero));
+  return Array.from(nums).map((numeroLote) => ({ numeroLote }));
+};
+
+const generarCodigoEnvase = (numeroLote: string, envasesDelLote: any[]): string => {
+  const maxNum =
+    envasesDelLote.length > 0
+      ? Math.max(
+          ...envasesDelLote.map((e) => {
+            const parts = (e.codigo || e.codigoBarras || '').split('-');
+            const ultimo = parseInt(parts[parts.length - 1], 10);
+            return isNaN(ultimo) ? 0 : ultimo;
+          })
+        )
+      : 0;
+  const correlativo = String(maxNum + 1).padStart(3, '0');
+  return `${numeroLote}-${correlativo}`;
 };
 
 /** Más recientes primero: fecha elaboración desc, luego N° lote desc. */
@@ -1987,8 +2012,7 @@ const CatalogoTab = ({ productos, setProductos, familias, subfamilias, unidades,
     pesoBrutoUnidad: 0,
     ean13: '',
     usoCruzado: false,
-    pesoEquivalenteKg: 1,
-    prefijoLote: ''
+    pesoEquivalenteKg: 1
   });
 
   const generateNextCodigo = () => {
@@ -2023,8 +2047,7 @@ const CatalogoTab = ({ productos, setProductos, familias, subfamilias, unidades,
         pesoBrutoUnidad: 0,
         ean13: '',
         usoCruzado: false,
-        pesoEquivalenteKg: 1,
-        prefijoLote: ''
+        pesoEquivalenteKg: 1
       });
     }
     setIsModalOpen(true);
@@ -2036,25 +2059,7 @@ const CatalogoTab = ({ productos, setProductos, familias, subfamilias, unidades,
       return;
     }
 
-    const prefijoNorm = (formData.prefijoLote || '').trim().toUpperCase();
-    if (prefijoNorm) {
-      if (!isValidPrefijoLote(prefijoNorm)) {
-        showNotification('El prefijo de lote debe ser exactamente 3 caracteres alfanuméricos (letras o números)', 'error');
-        return;
-      }
-      const duplicado = productos.some(
-        (p: any) => p.prefijoLote?.toUpperCase() === prefijoNorm && p.id !== editingProducto?.id
-      );
-      if (duplicado) {
-        showNotification('Ese prefijo de lote ya está en uso por otro producto', 'error');
-        return;
-      }
-    }
-
-    const payload = {
-      ...formData,
-      prefijoLote: prefijoNorm || undefined,
-    };
+    const payload = { ...formData };
 
     if (editingProducto) {
       setProductos(productos.map((p: any) => p.id === editingProducto.id ? { ...p, ...payload } : p));
@@ -2227,40 +2232,11 @@ const CatalogoTab = ({ productos, setProductos, familias, subfamilias, unidades,
 
       <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={editingProducto ? 'Editar Producto' : 'Nuevo Producto'}>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Código</label>
               <input type="text" value={formData.codigo || ''} onChange={e => setFormData({ ...formData, codigo: e.target.value })} className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded text-sm focus:outline-none focus:border-sleek-accent" />
-            </div>
-            <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Prefijo de lote</label>
-              <input
-                type="text"
-                maxLength={3}
-                value={formData.prefijoLote || ''}
-                onChange={e => {
-                  const v = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 3);
-                  setFormData({ ...formData, prefijoLote: v });
-                }}
-                placeholder="Ej: MPC, H01"
-                className={cn(
-                  "w-full px-4 py-2 bg-slate-50 border rounded text-sm font-mono uppercase focus:outline-none focus:border-sleek-accent",
-                  formData.prefijoLote && formData.prefijoLote.length > 0 && !isValidPrefijoLote(formData.prefijoLote)
-                    ? "border-red-300"
-                    : "border-slate-200"
-                )}
-              />
-              <p className="text-[10px] text-slate-500 mt-1">
-                3 caracteres alfanuméricos para identificar lotes (ej: MPC, M01, HC3)
-              </p>
-              {formData.prefijoLote && formData.prefijoLote.length > 0 && !isValidPrefijoLote(formData.prefijoLote) && (
-                <p className="text-[10px] font-bold text-red-500 mt-0.5">Debe ser exactamente 3 caracteres alfanuméricos (letras o números)</p>
-              )}
-              {formData.prefijoLote && isValidPrefijoLote(formData.prefijoLote) && productos.some(
-                (p: any) => p.prefijoLote?.toUpperCase() === formData.prefijoLote && p.id !== editingProducto?.id
-              ) && (
-                <p className="text-[10px] font-bold text-red-500 mt-0.5">Este prefijo ya está en uso</p>
-              )}
+              <p className="text-[10px] text-slate-500 mt-1">Se usa para generar números de lote (ej: EM-001-20260520-001)</p>
             </div>
             <div>
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Nombre del Producto *</label>
@@ -3867,6 +3843,11 @@ const LotesProduccionView = ({
   const [envaseModalInsumoIdx, setEnvaseModalInsumoIdx] = useState<number | null>(null);
   const [insumoEnvaseWarningIdx, setInsumoEnvaseWarningIdx] = useState<number | null>(null);
 
+  const todosLosLotes = useMemo(
+    () => collectLotesExistentes(lotesProduccion, lotesDespiece, movimientos),
+    [lotesProduccion, lotesDespiece, movimientos]
+  );
+
   const [formData, setFormData] = useState<any>({
     numeroLote: '',
     productoId: '',
@@ -3894,9 +3875,8 @@ const LotesProduccionView = ({
   };
 
   const handleNewLote = () => {
-    const fechaElab = safeFormat(new Date(), 'yyyy-MM-dd');
     setFormData({
-      numeroLote: generarNumeroLote(null, 'produccion', fechaElab, lotesProduccion),
+      numeroLote: '',
       productoId: '',
       cantidadEstimada: 0,
       fechaElaboracion: safeFormat(new Date(), 'yyyy-MM-dd'),
@@ -3938,7 +3918,15 @@ const LotesProduccionView = ({
       productoId: prodId,
       insumos,
       fechaVencimiento: prod?.vidaUtilDias ? safeFormat(addDays(parseISO(formData.fechaElaboracion), prod.vidaUtilDias), 'yyyy-MM-dd', '') : '',
-      ...(!selectedLote ? { numeroLote: generarNumeroLote(prod, 'produccion', formData.fechaElaboracion, lotesProduccion) } : {}),
+      ...(!selectedLote
+        ? {
+            numeroLote: generarNumeroLote(
+              prod?.codigo || 'SIN',
+              formData.fechaElaboracion,
+              todosLosLotes
+            ),
+          }
+        : {}),
     });
   };
 
@@ -4478,7 +4466,22 @@ const LotesProduccionView = ({
                   <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Fecha Elaboración</label>
                   <DateInput
                     value={formData.fechaElaboracion || ''}
-                    onChange={(iso) => setFormData({ ...formData, fechaElaboracion: iso })}
+                    onChange={(iso) => {
+                      const prod = productos.find((p: any) => p.id === formData.productoId);
+                      setFormData({
+                        ...formData,
+                        fechaElaboracion: iso,
+                        ...(!selectedLote && formData.productoId
+                          ? {
+                              numeroLote: generarNumeroLote(
+                                prod?.codigo || 'SIN',
+                                iso,
+                                todosLosLotes
+                              ),
+                            }
+                          : {}),
+                      });
+                    }}
                     className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded text-sm focus:outline-none focus:border-sleek-accent"
                   />
                 </div>
@@ -5437,13 +5440,19 @@ const LotesDespieceView = ({
   lotesStock,
   movimientos, setMovimientos,
   unidades, users, currentUser, showNotification, getPesoEquivalente,
-  lotesEtiquetados, setLotesEtiquetados, setDescuentosPendientes
+  lotesEtiquetados, setLotesEtiquetados, setDescuentosPendientes,
+  lotesProduccion = []
 }: any) => {
   const [view, setView] = useState<'list' | 'form' | 'detail'>('list');
   const [selectedLote, setSelectedLote] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterEstado, setFilterEstado] = useState('Todos');
   const [isFinalizing, setIsFinalizing] = useState(false);
+
+  const todosLosLotes = useMemo(
+    () => collectLotesExistentes(lotesProduccion, lotesDespiece, movimientos),
+    [lotesProduccion, lotesDespiece, movimientos]
+  );
 
   const [formData, setFormData] = useState<any>({
     numeroLote: '',
@@ -5457,9 +5466,8 @@ const LotesDespieceView = ({
   });
 
   const handleNewLote = () => {
-    const fechaElab = safeFormat(new Date(), 'yyyy-MM-dd');
     setFormData({
-      numeroLote: generarNumeroLote(null, 'despiece', fechaElab, lotesDespiece),
+      numeroLote: '',
       materiaPrimaId: '',
       cantidadIngresada: 0,
       fechaElaboracion: safeFormat(new Date(), 'yyyy-MM-dd'),
@@ -5496,7 +5504,15 @@ const LotesDespieceView = ({
       materiaPrimaId: mpId,
       cortes,
       fechaVencimiento: mp?.vidaUtil?.valor ? safeFormat(addDays(parseISO(formData.fechaElaboracion), mp.vidaUtil.unidad === 'meses' ? mp.vidaUtil.valor * 30 : mp.vidaUtil.valor), 'yyyy-MM-dd', '') : '',
-      ...(!selectedLote ? { numeroLote: generarNumeroLote(mp, 'despiece', formData.fechaElaboracion, lotesDespiece) } : {}),
+      ...(!selectedLote
+        ? {
+            numeroLote: generarNumeroLote(
+              mp?.codigo || 'SIN',
+              formData.fechaElaboracion,
+              todosLosLotes
+            ),
+          }
+        : {}),
     });
   };
 
@@ -6515,22 +6531,24 @@ const EtiquetasView = ({
   }, [isKgProduct, weighingMode, currentWeight, manualWeight, manualUnits, product]);
 
   const nextEnvaseNumero = useMemo(() => {
-    if (!loteEtiquetado) return 1;
-    return loteEtiquetado.envases.length + 1;
-  }, [loteEtiquetado]);
+    if (!loteEtiquetado || !selectedLote?.numeroLote) return 1;
+    const vigentes = loteEtiquetado.envases.filter((e: any) => {
+      const isAnulado = e.anulado === true || e.anulado === 'true';
+      return !isAnulado && e.estado !== 'baja';
+    });
+    const code = generarCodigoEnvase(selectedLote.numeroLote, vigentes);
+    const parts = code.split('-');
+    return parseInt(parts[parts.length - 1], 10) || 1;
+  }, [loteEtiquetado, selectedLote]);
 
   const currentBarcodeValue = useMemo(() => {
-    if (!selectedLote) return '';
-    const code = selectedLote.numeroLote;
-    
-    if (selectedLote.tipo === 'despiece') {
-       const prodCode = product?.codigo || '000';
-       return `${code}-${prodCode}-${nextEnvaseNumero.toString().padStart(3, '0')}`;
-    }
-    
-    const suffix = selectedCorteId ? `-${productos.find(p => p.id === selectedCorteId)?.codigo.slice(-3)}` : '';
-    return `${code}${suffix}-${nextEnvaseNumero.toString().padStart(3, '0')}`;
-  }, [selectedLote, product, nextEnvaseNumero, selectedCorteId, productos]);
+    if (!selectedLote?.numeroLote || !loteEtiquetado) return '';
+    const vigentes = loteEtiquetado.envases.filter((e: any) => {
+      const isAnulado = e.anulado === true || e.anulado === 'true';
+      return !isAnulado && e.estado !== 'baja';
+    });
+    return generarCodigoEnvase(selectedLote.numeroLote, vigentes);
+  }, [selectedLote, loteEtiquetado]);
 
   // Serial Port Logic
   const connectScale = async () => {
@@ -8988,6 +9006,9 @@ const MovimientosView = ({
             unidades={unidades}
             getPesoEquivalente={getPesoEquivalente}
             currentUser={currentUser}
+            lotesProduccion={lotesProduccion}
+            lotesDespiece={lotesDespiece}
+            movimientos={movimientos}
             onClose={() => setIsModalOpen(false)}
             onSave={(newMov: Movimiento) => {
               setMovimientos([newMov, ...movimientos]);
@@ -9110,7 +9131,20 @@ const MovimientosView = ({
 
 // --- Formularios de Movimientos ---
 
-const EntradaForm = ({ productos, almacenes, unidades, getPesoEquivalente, currentUser, onSave, onClose, descuentosPendientes, setDescuentosPendientes }: any) => {
+const EntradaForm = ({
+  productos,
+  almacenes,
+  unidades,
+  getPesoEquivalente,
+  currentUser,
+  onSave,
+  onClose,
+  descuentosPendientes,
+  setDescuentosPendientes,
+  lotesProduccion = [],
+  lotesDespiece = [],
+  movimientos = [],
+}: any) => {
   const [formData, setFormData] = useState<any>({
     productoId: '',
     almacenId: '',
@@ -9129,6 +9163,12 @@ const EntradaForm = ({ productos, almacenes, unidades, getPesoEquivalente, curre
   const [searchTerm, setSearchTerm] = useState('');
   const [showRegulizeAlert, setShowRegulizeAlert] = useState(false);
   const [currentPendientes, setCurrentPendientes] = useState<any[]>([]);
+  const [loteEditadoManual, setLoteEditadoManual] = useState(false);
+
+  const todosLosLotes = useMemo(
+    () => collectLotesExistentes(lotesProduccion, lotesDespiece, movimientos),
+    [lotesProduccion, lotesDespiece, movimientos]
+  );
 
   const filteredProducts = productos.filter((p: any) => 
     p.nombre.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -9149,14 +9189,26 @@ const EntradaForm = ({ productos, almacenes, unidades, getPesoEquivalente, curre
         setShowRegulizeAlert(false);
       }
 
-      // Auto calcular vencimiento
       if (selectedProd?.vidaUtil?.valor) {
         const v = selectedProd.vidaUtil;
         const days = v.unidad === 'meses' ? v.valor * 30 : v.valor;
-        setFormData(prev => ({ ...prev, fechaVencimiento: safeFormat(addDays(parseISO(formData.fechaIngreso), days), 'yyyy-MM-dd', '') }));
+        setFormData((prev: any) => ({
+          ...prev,
+          fechaVencimiento: safeFormat(addDays(parseISO(formData.fechaIngreso), days), 'yyyy-MM-dd', ''),
+        }));
+      }
+
+      if (!loteEditadoManual) {
+        const prod = productos.find((p: any) => p.id === pId);
+        const autoLote = generarNumeroLote(
+          prod?.codigo || 'SIN',
+          formData.fechaIngreso,
+          todosLosLotes
+        );
+        setFormData((prev: any) => ({ ...prev, loteNumero: autoLote }));
       }
     }
-  }, [formData.productoId, formData.fechaIngreso, descuentosPendientes, selectedProd]);
+  }, [formData.productoId, formData.fechaIngreso, descuentosPendientes, selectedProd, loteEditadoManual, productos, todosLosLotes]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -9202,7 +9254,10 @@ const EntradaForm = ({ productos, almacenes, unidades, getPesoEquivalente, curre
           <select 
             required
             value={formData.productoId || ''}
-            onChange={e => setFormData({ ...formData, productoId: e.target.value })}
+            onChange={e => {
+              setLoteEditadoManual(false);
+              setFormData({ ...formData, productoId: e.target.value });
+            }}
             className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none"
           >
             <option value="">-- Seleccionar Producto * --</option>
@@ -9273,9 +9328,16 @@ const EntradaForm = ({ productos, almacenes, unidades, getPesoEquivalente, curre
           <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Nº Lote *</label>
           <input 
             type="text" required
-            placeholder="Lote de proveedor o interno"
+            placeholder={formData.productoId ? generarNumeroLote(
+              productos.find((p: any) => p.id === formData.productoId)?.codigo || 'SIN',
+              formData.fechaIngreso,
+              todosLosLotes
+            ) : 'Se autogenera al seleccionar producto'}
             value={formData.loteNumero || ''}
-            onChange={e => setFormData({ ...formData, loteNumero: e.target.value })}
+            onChange={e => {
+              setLoteEditadoManual(true);
+              setFormData({ ...formData, loteNumero: e.target.value });
+            }}
             className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm font-mono font-bold outline-none"
           />
         </div>
@@ -9284,7 +9346,18 @@ const EntradaForm = ({ productos, almacenes, unidades, getPesoEquivalente, curre
           <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Fecha de Ingreso</label>
           <DateInput
             value={formData.fechaIngreso || ''}
-            onChange={(iso) => setFormData({ ...formData, fechaIngreso: iso })}
+            onChange={(iso) => {
+              if (!loteEditadoManual && formData.productoId) {
+                const prod = productos.find((p: any) => p.id === formData.productoId);
+                setFormData({
+                  ...formData,
+                  fechaIngreso: iso,
+                  loteNumero: generarNumeroLote(prod?.codigo || 'SIN', iso, todosLosLotes),
+                });
+              } else {
+                setFormData({ ...formData, fechaIngreso: iso });
+              }
+            }}
             className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none"
           />
         </div>
@@ -15708,6 +15781,8 @@ const EgresosView = ({
   setPlantillasEgresos,
   movimientos,
   setMovimientos,
+  lotesProduccion = [],
+  lotesDespiece = [],
   currentUser,
   showNotification 
 }: any) => {
@@ -15724,6 +15799,47 @@ const EgresosView = ({
     const matchesStatus = filterStatus === 'Todos' || e.estado === filterStatus;
     return matchesSearch && matchesType && matchesStatus;
   }).sort((a: any, b: any) => b.fecha.localeCompare(a.fecha));
+
+  const procesarCompraInventario = (data: any, movsBase: any[]) => {
+    const acumulado = [...collectLotesExistentes(lotesProduccion, lotesDespiece, movsBase)];
+    const proveedorNombre = proveedores.find((p: any) => p.id === data.proveedorId)?.razonSocial || 'Desconocido';
+    const movimientosNuevos: any[] = [];
+    const itemsActualizados = data.items.map((it: any) => {
+      if (!it.productoId || !it.almacenDestinoId) return it;
+
+      const prod = productos.find((p: any) => p.id === it.productoId);
+      const numeroLote = generarNumeroLote(prod?.codigo || 'SIN', data.fecha, acumulado);
+      acumulado.push({ numeroLote });
+
+      const obsParts: string[] = [];
+      if (it.loteProveedor) obsParts.push(`Lote proveedor: ${it.loteProveedor}`);
+
+      movimientosNuevos.push({
+        id: `mov-purchase-${Date.now()}-${it.id}`,
+        tipo: 'entrada' as const,
+        productoId: it.productoId,
+        almacenId: it.almacenDestinoId,
+        cantidad: it.cantidad,
+        unidad: prod?.unidadMedidaId === 'u1' ? 'kg' : 'un',
+        cantidadKg: prod?.unidadMedidaId === 'u1' ? it.cantidad : (it.cantidad * (prod?.pesoNetoUnidad || 0)),
+        motivo: `Compra - Egreso ${data.comprobante}`,
+        loteNumero: numeroLote,
+        fechaIngreso: data.fecha,
+        fechaVencimiento: it.fechaVencimiento || '',
+        origen: 'Compra',
+        proveedor: proveedorNombre,
+        usuario: currentUser.name,
+        fechaHora: new Date().toISOString(),
+        anulado: false,
+        referencia: data.comprobante,
+        observaciones: obsParts.join(' | ') || '',
+      });
+
+      return { ...it, numeroLoteGenerado: numeroLote };
+    });
+
+    return { items: itemsActualizados, movimientos: movimientosNuevos };
+  };
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
@@ -15750,87 +15866,35 @@ const EgresosView = ({
     data.iva = iva;
     data.total = safeRound(neto + iva, 2);
 
-    if (egresos.find((eg: any) => eg.id === data.id)) {
-      setEgresos(egresos.map((eg: any) => eg.id === data.id ? data : eg));
-      
-      // If confirmed and impacts inventory, sync movements
-      if (data.estado === 'Confirmado') {
-        const tipo = tiposEgreso.find((t: any) => t.id === data.tipoEgresoId);
-        if (tipo?.impactaInventario) {
-          // Remove old movements for this egreso
-          let updatedMovs = movimientos.filter((m: any) => m.referencia !== data.comprobante);
-          
-          // Generate new movements
-          const newEntries: Movimiento[] = data.items
-            .filter((it: any) => it.productoId && it.almacenDestinoId)
-            .map((it: any) => {
-              const prod = productos.find((p: any) => p.id === it.productoId);
-              return {
-                id: `mov-purchase-${Date.now()}-${it.id}`,
-                tipo: 'entrada',
-                productoId: it.productoId,
-                almacenId: it.almacenDestinoId,
-                cantidad: it.cantidad,
-                unidad: prod?.unidadMedidaId === 'u1' ? 'kg' : 'un',
-                cantidadKg: prod?.unidadMedidaId === 'u1' ? it.cantidad : (it.cantidad * (prod?.pesoNetoUnidad || 0)),
-                motivo: `Compra - Egreso ${data.comprobante}`,
-                loteNumero: it.loteProveedor || `COMP-${safeFormat(new Date(), 'yyyyMMdd')}-${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`,
-                fechaIngreso: data.fecha,
-                fechaVencimiento: it.fechaVencimiento || '',
-                origen: 'Compra',
-                proveedor: proveedores.find((p: any) => p.id === data.proveedorId)?.razonSocial || 'Desconocido',
-                usuario: currentUser.name,
-                fechaHora: new Date().toISOString(),
-                anulado: false,
-                referencia: data.comprobante
-              };
-            });
-          
-          setMovimientos([...newEntries, ...updatedMovs]);
-          showNotification(`Egreso confirmado. Mercadería ingresada al inventario.`, 'success');
-        } else {
-          showNotification('Egreso actualizado', 'success');
-        }
+    const isUpdate = egresos.some((eg: any) => eg.id === data.id);
+    const tipoEgreso = tiposEgreso.find((t: any) => t.id === data.tipoEgresoId);
+    let movimientosCompra: any[] = [];
+
+    if (data.estado === 'Confirmado' && tipoEgreso?.impactaInventario) {
+      const movsBase = isUpdate
+        ? movimientos.filter((m: any) => m.referencia !== data.comprobante)
+        : movimientos;
+      const resultado = procesarCompraInventario(data, movsBase);
+      data.items = resultado.items;
+      movimientosCompra = resultado.movimientos;
+    }
+
+    if (isUpdate) {
+      setEgresos(egresos.map((eg: any) => (eg.id === data.id ? data : eg)));
+
+      if (data.estado === 'Confirmado' && tipoEgreso?.impactaInventario) {
+        const updatedMovs = movimientos.filter((m: any) => m.referencia !== data.comprobante);
+        setMovimientos([...movimientosCompra, ...updatedMovs]);
+        showNotification('Egreso confirmado. Mercadería ingresada al inventario.', 'success');
       } else {
         showNotification('Egreso actualizado', 'success');
       }
     } else {
       setEgresos([...egresos, data]);
-      
-      // If confirmed and impacts inventory, generate movements
-      if (data.estado === 'Confirmado') {
-        const tipo = tiposEgreso.find((t: any) => t.id === data.tipoEgresoId);
-        if (tipo?.impactaInventario) {
-          const newEntries: Movimiento[] = data.items
-            .filter((it: any) => it.productoId && it.almacenDestinoId)
-            .map((it: any) => {
-              const prod = productos.find((p: any) => p.id === it.productoId);
-              return {
-                id: `mov-purchase-${Date.now()}-${it.id}`,
-                tipo: 'entrada',
-                productoId: it.productoId,
-                almacenId: it.almacenDestinoId,
-                cantidad: it.cantidad,
-                unidad: prod?.unidadMedidaId === 'u1' ? 'kg' : 'un',
-                cantidadKg: prod?.unidadMedidaId === 'u1' ? it.cantidad : (it.cantidad * (prod?.pesoNetoUnidad || 0)),
-                motivo: `Compra - Egreso ${data.comprobante}`,
-                loteNumero: it.loteProveedor || `COMP-${safeFormat(new Date(), 'yyyyMMdd')}-${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`,
-                fechaIngreso: data.fecha,
-                fechaVencimiento: it.fechaVencimiento || '',
-                origen: 'Compra',
-                proveedor: proveedores.find((p: any) => p.id === data.proveedorId)?.razonSocial || 'Desconocido',
-                usuario: currentUser.name,
-                fechaHora: new Date().toISOString(),
-                anulado: false,
-                referencia: data.comprobante
-              };
-            });
-          
-          setMovimientos([...newEntries, ...movimientos]);
-          showNotification(`Egreso registrado. Mercadería ingresada al inventario.`, 'success');
-        } else {
-          showNotification('Egreso registrado', 'success');
-        }
+
+      if (data.estado === 'Confirmado' && tipoEgreso?.impactaInventario) {
+        setMovimientos([...movimientosCompra, ...movimientos]);
+        showNotification('Egreso registrado. Mercadería ingresada al inventario.', 'success');
       } else {
         showNotification('Egreso registrado', 'success');
       }
@@ -16240,14 +16304,25 @@ const EgresosView = ({
                                />
                             </div>
                             <div className="col-span-4 md:col-span-2 space-y-1">
-                               <label className="text-[8px] font-black text-slate-400 uppercase">Lote Prov.</label>
-                               <input 
-                                 type="text"
-                                 value={item.loteProveedor || ''}
-                                 onChange={(e) => updateItem(idx, 'loteProveedor', e.target.value)}
-                                 className="w-full px-3 py-2 bg-white border border-slate-200 rounded text-[10px] font-bold"
-                                 placeholder="Lote..."
-                               />
+                               <label className="text-[8px] font-black text-slate-400 uppercase">
+                                 {item.numeroLoteGenerado ? 'Lote generado' : 'Lote Prov.'}
+                               </label>
+                               {item.numeroLoteGenerado ? (
+                                 <div className="px-3 py-2 bg-white border border-slate-200 rounded">
+                                   <p className="text-[10px] font-mono font-bold text-sleek-dark">{item.numeroLoteGenerado}</p>
+                                   {item.loteProveedor && (
+                                     <p className="text-[8px] text-slate-400 font-bold mt-0.5">Prov: {item.loteProveedor}</p>
+                                   )}
+                                 </div>
+                               ) : (
+                                 <input 
+                                   type="text"
+                                   value={item.loteProveedor || ''}
+                                   onChange={(e) => updateItem(idx, 'loteProveedor', e.target.value)}
+                                   className="w-full px-3 py-2 bg-white border border-slate-200 rounded text-[10px] font-bold"
+                                   placeholder="Lote proveedor..."
+                                 />
+                               )}
                             </div>
                             <div className="col-span-6 md:col-span-2 space-y-1">
                                <label className="text-[8px] font-black text-slate-400 uppercase">Vencimiento</label>
@@ -16762,14 +16837,6 @@ const InicioView = ({
   const today = format(new Date(), 'yyyy-MM-dd');
 
   const misLotes = useMemo(() => {
-    const inferTipoLote = (numero: string, source: 'produccion' | 'despiece'): 'produccion' | 'despiece' => {
-      const n = String(numero || '').toUpperCase();
-      if (n.startsWith('DSP-')) return 'despiece';
-      if (n.startsWith('LOT-') || /^L-\d/.test(n)) return 'produccion';
-      if (/^[A-Z0-9]{3}-\d{8}-\d{3}$/.test(n)) return source;
-      return source;
-    };
-
     const getSortDate = (l: any, tipo: 'produccion' | 'despiece') => {
       const raw = l.fechaCreacion
         || l.fechaFinalizacion
@@ -16815,7 +16882,7 @@ const InicioView = ({
 
     lotesProduccion.forEach((l: any) => {
       const numero = l.numeroLote || '';
-      const tipo = inferTipoLote(numero, 'produccion');
+      const tipo = 'produccion' as const;
       const unidad = getUnidadAbrev(l, tipo);
       items.push({
         id: l.id,
@@ -16830,7 +16897,7 @@ const InicioView = ({
 
     lotesDespiece.forEach((l: any) => {
       const numero = getLoteField(l, 'numeroLote') || l.numeroLote || '';
-      const tipo = inferTipoLote(numero, 'despiece');
+      const tipo = 'despiece' as const;
       const estado = (getLoteField(l, 'estado') || l.estado) as string;
       const cantidad = getLoteField(l, 'cantidad') ?? l.cantidadIngresada;
       const unidad = getUnidadAbrev(l, tipo);
@@ -18065,6 +18132,7 @@ export default function App() {
               <LotesDespieceView 
                 lotesDespiece={lotesDespiece}
                 setLotesDespiece={setLotesDespiece}
+                lotesProduccion={lotesProduccion}
                 lotesDespieceHistorial={lotesDespieceHistorial}
                 setLotesDespieceHistorial={setLotesDespieceHistorial}
                 plantillasDespiece={plantillasDespiece}
@@ -18212,6 +18280,8 @@ export default function App() {
                 setPlantillasEgresos={setPlantillasEgresos}
                 movimientos={movimientos}
                 setMovimientos={setMovimientos}
+                lotesProduccion={lotesProduccion}
+                lotesDespiece={lotesDespiece}
                 currentUser={currentUser}
                 showNotification={showNotification}
               />
