@@ -109,13 +109,21 @@ function cn(...inputs: ClassValue[]) {
 // Formato numérico argentino: 1234567.89 → "1.234.567,89"
 const formatNumber = (value: number, decimals?: number): string => {
   if (value === null || value === undefined || isNaN(value)) return '0';
-  const fixed = decimals !== undefined ? value.toFixed(decimals) : value.toString();
+  const isNegative = value < 0;
+  const absValue = Math.abs(value);
+
+  let fixed: string;
+  if (decimals !== undefined) {
+    fixed = absValue.toFixed(decimals);
+  } else {
+    fixed = absValue.toFixed(3);
+    fixed = fixed.replace(/\.?0+$/, '');
+  }
+
   const [intPart, decPart] = fixed.split('.');
   const intFormatted = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-  if (decPart !== undefined) {
-    return `${intFormatted},${decPart}`;
-  }
-  return intFormatted;
+  const result = decPart !== undefined ? `${intFormatted},${decPart}` : intFormatted;
+  return isNegative ? `-${result}` : result;
 };
 
 // Redondeo seguro para evitar errores de punto flotante (ej: 553183.1000000001 → 553183.10)
@@ -2066,17 +2074,21 @@ const CatalogoTab = ({ productos, setProductos, familias, subfamilias, unidades,
     });
   };
 
-  const filteredProductos = productos.filter((p: any) => {
-    const matchesSearch = p.nombre.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                          p.codigo.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          familias.find((f: any) => f.id === p.familiaId)?.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          subfamilias.find((s: any) => s.id === p.subfamiliaId)?.nombre.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesTipo = filterTipo === 'Todos' || p.tipo === filterTipo;
-    const matchesOrigen = filterOrigen === 'Todos' || p.origen === filterOrigen;
-    const matchesFamilia = filterFamilia === 'Todas' || p.familiaId === filterFamilia;
-    const matchesSubfamilia = filterSubfamilia === 'Todas' || p.subfamiliaId === filterSubfamilia;
-    return matchesSearch && matchesTipo && matchesOrigen && matchesFamilia && matchesSubfamilia;
-  });
+  const filteredProductos = productos
+    .filter((p: any) => {
+      const matchesSearch = p.nombre.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                            p.codigo.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                            familias.find((f: any) => f.id === p.familiaId)?.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                            subfamilias.find((s: any) => s.id === p.subfamiliaId)?.nombre.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesTipo = filterTipo === 'Todos' || p.tipo === filterTipo;
+      const matchesOrigen = filterOrigen === 'Todos' || p.origen === filterOrigen;
+      const matchesFamilia = filterFamilia === 'Todas' || p.familiaId === filterFamilia;
+      const matchesSubfamilia = filterSubfamilia === 'Todas' || p.subfamiliaId === filterSubfamilia;
+      return matchesSearch && matchesTipo && matchesOrigen && matchesFamilia && matchesSubfamilia;
+    })
+    .sort((a: any, b: any) =>
+      (a.nombre || '').localeCompare(b.nombre || '', 'es', { sensitivity: 'base' })
+    );
 
   const paginatedProductos = filteredProductos.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
   const totalPages = Math.ceil(filteredProductos.length / itemsPerPage);
@@ -2847,14 +2859,14 @@ const RecetasProduccionView = ({
             <div className="grid grid-cols-2 gap-6 bg-slate-50 p-4 rounded border border-slate-100">
               <div>
                 <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Total Insumos</p>
-                <p className="text-lg font-bold text-sleek-dark">{totalInsumos.toFixed(3)}</p>
+                <p className="text-lg font-bold text-sleek-dark">{displayNum(totalInsumos)}</p>
               </div>
               <div className="text-right">
                 <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Rendimiento Teórico</p>
                 <p className={cn(
                   "text-lg font-bold",
                   rendimientoTeorico > 100 ? "text-sleek-danger" : "text-sleek-success"
-                )}>{rendimientoTeorico.toFixed(1)}%</p>
+                )}>{formatNumber(formatNum(rendimientoTeorico, 1), 1)}%</p>
               </div>
             </div>
           </div>
@@ -3514,7 +3526,7 @@ const PlantillasDespieceView = ({
                       </td>
                       <td className="px-6 py-4 text-center">
                         <div className="flex flex-col items-center gap-1">
-                          <span className="text-sm font-bold text-sleek-dark">{rendTotal.toFixed(1)}%</span>
+                          <span className="text-sm font-bold text-sleek-dark">{formatNumber(formatNum(rendTotal, 1), 1)}%</span>
                           <div className="w-20 h-1 bg-slate-100 rounded-full overflow-hidden">
                             <div 
                               className={cn(
@@ -3635,12 +3647,12 @@ const PlantillasDespieceView = ({
                 <tfoot className="bg-slate-50/50 font-bold">
                   <tr>
                     <td className="px-4 py-3 text-[9px] uppercase tracking-widest text-slate-400">Rendimiento Total</td>
-                    <td className="px-4 py-3 text-sm text-sleek-dark font-mono">{rendimientoTotal.toFixed(1)}%</td>
+                    <td className="px-4 py-3 text-sm text-sleek-dark font-mono">{formatNumber(formatNum(rendimientoTotal, 1), 1)}%</td>
                     <td></td>
                   </tr>
                   <tr>
                     <td className="px-4 py-3 text-[9px] uppercase tracking-widest text-slate-400">Merma Esperada</td>
-                    <td className="px-4 py-3 text-sm text-sleek-warning font-mono">{mermaEsperada.toFixed(1)}%</td>
+                    <td className="px-4 py-3 text-sm text-sleek-warning font-mono">{formatNumber(formatNum(mermaEsperada, 1), 1)}%</td>
                     <td></td>
                   </tr>
                 </tfoot>
@@ -5049,7 +5061,7 @@ const LotesProduccionView = ({
                           <tr key={eidx} className={cn("transition-colors", isBaja ? "bg-rose-50/20 opacity-60" : "hover:bg-slate-50/50")}>
                             <td className="px-6 py-3 font-bold text-slate-400">#{env.numero}</td>
                             <td className="px-6 py-3 font-mono font-bold text-sleek-dark lowercase">{env.codigoBarras}</td>
-                            <td className="px-6 py-3 font-black text-sleek-dark">{env.pesoNeto.toFixed(3)} kg</td>
+                            <td className="px-6 py-3 font-black text-sleek-dark">{displayNum(env.pesoNeto)} kg</td>
                             <td className="px-6 py-3 font-bold text-slate-400 uppercase">
                               {safeFormat(env.fechaHora, 'dd/MM/yy HH:mm')}
                             </td>
@@ -5144,7 +5156,7 @@ const LotesProduccionView = ({
                   />
                   {productos.find((p: any) => p.id === selectedLote.productoId)?.unidadMedidaId !== 'u1' && (
                     <p className="text-[9px] font-bold text-sleek-accent uppercase">
-                      Estimado: {(finalizeData.pesoNeto / getPesoEquivalente(selectedLote.productoId)).toFixed(2)} {unidades.find((u: any) => u.id === productos.find((p: any) => p.id === selectedLote.productoId)?.unidadMedidaId)?.abreviatura}
+                      Estimado: {displayNum(finalizeData.pesoNeto / getPesoEquivalente(selectedLote.productoId), 2)} {unidades.find((u: any) => u.id === productos.find((p: any) => p.id === selectedLote.productoId)?.unidadMedidaId)?.abreviatura}
                     </p>
                   )}
                 </div>
@@ -7153,7 +7165,7 @@ const EtiquetasView = ({
                    <p className="text-xs font-bold text-slate-600 uppercase truncate">{p?.nombre}</p>
                    <div className="flex justify-between items-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">
                      <span>{le.envases.length} Envases</span>
-                     <span>{le.pesoTotalEtiquetado.toFixed(1)} kg</span>
+                     <span>{displayNum(le.pesoTotalEtiquetado, 1)} kg</span>
                    </div>
                    <button 
                      onClick={() => {
@@ -7450,7 +7462,7 @@ const EtiquetasView = ({
                       "text-8xl font-black tracking-tighter tabular-nums transition-colors",
                       isStable ? "text-sleek-dark" : "text-slate-300"
                     )}>
-                      {currentPackagingWeight.toFixed(3)}
+                      {displayNum(currentPackagingWeight)}
                     </span>
                     <span className="text-4xl font-black text-slate-300 tracking-tighter">kg</span>
                   </div>
@@ -7636,7 +7648,7 @@ const EtiquetasView = ({
                     <div className="space-y-4">
                        <div className="flex justify-between items-end">
                           <div>
-                             <p className="text-xl font-black tabular-nums">{loteEtiquetado.envases[loteEtiquetado.envases.length - 1].pesoNeto.toFixed(3)} kg</p>
+                             <p className="text-xl font-black tabular-nums">{displayNum(loteEtiquetado.envases[loteEtiquetado.envases.length - 1].pesoNeto)} kg</p>
                              <p className="text-[9px] font-bold text-white/40 uppercase font-mono">{loteEtiquetado.envases[loteEtiquetado.envases.length - 1].codigoBarras}</p>
                           </div>
                           <p className="text-[9px] font-bold text-sleek-accent uppercase">Envase #{loteEtiquetado.envases[loteEtiquetado.envases.length - 1].numero}</p>
@@ -7658,7 +7670,7 @@ const EtiquetasView = ({
                <div className="flex gap-4 items-center">
                   <p className="text-[10px] font-bold text-slate-400 uppercase">
                     Total Lote: <span className="text-sleek-accent">{selectedLote?.tipo === 'despiece' ? envasesParaMostrar.filter(e => !e.anulado).length : loteEtiquetado?.envases.filter((e: any) => !e.anulado).length || 0}</span> Envases | 
-                    <span className="text-sleek-accent"> {totalPesoLote.toFixed(2)}</span> kg
+                    <span className="text-sleek-accent"> {displayNum(totalPesoLote, 2)}</span> kg
                   </p>
                </div>
             </div>
@@ -7714,7 +7726,7 @@ const EtiquetasView = ({
                             }}
                             className="text-xs font-black text-sleek-dark hover:text-sleek-accent disabled:opacity-40 disabled:cursor-not-allowed"
                           >
-                            {e.pesoNeto.toFixed(3)} kg
+                            {displayNum(e.pesoNeto)} kg
                           </button>
                         )}
                       </td>
@@ -7844,16 +7856,16 @@ const EtiquetasView = ({
             </div>
             <div>
               <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Peso Neto Total</p>
-              <p className="text-xs font-black text-sleek-accent uppercase">{pesoEtiquetado.toFixed(3)} kg</p>
+              <p className="text-xs font-black text-sleek-accent uppercase">{displayNum(pesoEtiquetado)} kg</p>
             </div>
             <div>
               <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Cant. Estimada Original</p>
-              <p className="text-xs font-black text-slate-500 uppercase">{pesoTotalEstimado.toFixed(3)} kg</p>
+              <p className="text-xs font-black text-slate-500 uppercase">{displayNum(pesoTotalEstimado)} kg</p>
             </div>
             <div>
               <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Diferencia</p>
               <p className={cn("text-xs font-black uppercase", (pesoEtiquetado - pesoTotalEstimado) >= 0 ? "text-emerald-600" : "text-rose-600")}>
-                {(pesoEtiquetado - pesoTotalEstimado).toFixed(3)} kg
+                {displayNum(pesoEtiquetado - pesoTotalEstimado)} kg
               </p>
             </div>
           </div>
@@ -7927,7 +7939,7 @@ const EtiquetasView = ({
              <p className="text-xs font-bold uppercase tracking-widest mb-2 font-mono">¿Estás seguro de dar de baja el envase #{anularModal.envase?.numero}?</p>
              <div className="grid grid-cols-2 gap-4 text-[10px] font-bold">
                 <p>Código: <span className="font-mono">{anularModal.envase?.codigoBarras}</span></p>
-                <p>Peso: {anularModal.envase?.pesoNeto.toFixed(3)} kg</p>
+                <p>Peso: {displayNum(anularModal.envase?.pesoNeto)} kg</p>
              </div>
           </div>
 
@@ -9226,7 +9238,7 @@ const EntradaForm = ({ productos, almacenes, unidades, getPesoEquivalente, curre
             className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none"
           />
           {selectedProd && selectedProd.unidadMedidaId !== 'u1' && (
-            <p className="text-[10px] font-bold text-sleek-accent mt-1 uppercase">Equivale a {(formData.cantidad * pesoEq).toFixed(2)} kg</p>
+            <p className="text-[10px] font-bold text-sleek-accent mt-1 uppercase">Equivale a {displayNum(formData.cantidad * pesoEq, 2)} kg</p>
           )}
         </div>
 
@@ -16783,8 +16795,23 @@ const InicioView = ({
       return unidades.find((u: UnidadMedida) => u.id === prod?.unidadMedidaId)?.abreviatura || '';
     };
 
-    type MisLoteItem = { id: string; numero: string; estado: string; descripcion: string; tipo: 'produccion' | 'despiece'; sortDate: number };
+    type MisLoteItem = {
+      id: string;
+      numero: string;
+      estado: string;
+      descripcion: string;
+      fecha: string;
+      tipo: 'produccion' | 'despiece';
+      sortDate: number;
+    };
     const items: MisLoteItem[] = [];
+
+    const getFechaLote = (l: any, tipo: 'produccion' | 'despiece') => {
+      if (tipo === 'despiece') {
+        return l.fechaElaboracion || l.fechaCreacion || getLoteField(l, 'fecha') || '';
+      }
+      return l.fechaElaboracion || l.fechaCreacion || l.fecha || '';
+    };
 
     lotesProduccion.forEach((l: any) => {
       const numero = l.numeroLote || '';
@@ -16794,7 +16821,8 @@ const InicioView = ({
         id: l.id,
         numero,
         estado: l.estado,
-        descripcion: `${getNombreProducto(l, tipo)} · ${l.cantidadEstimada} ${unidad}`.trim(),
+        descripcion: `${getNombreProducto(l, tipo)} · ${formatNumber(formatNum(l.cantidadEstimada))} ${unidad}`.trim(),
+        fecha: getFechaLote(l, tipo),
         tipo,
         sortDate: getSortDate(l, tipo),
       });
@@ -16810,7 +16838,8 @@ const InicioView = ({
         id: l.id,
         numero,
         estado,
-        descripcion: `${getNombreProducto(l, tipo)} · ${cantidad} ${unidad}`.trim(),
+        descripcion: `${getNombreProducto(l, tipo)} · ${formatNumber(formatNum(cantidad))} ${unidad}`.trim(),
+        fecha: getFechaLote(l, tipo),
         tipo,
         sortDate: getSortDate(l, tipo),
       });
@@ -16961,7 +16990,7 @@ const InicioView = ({
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 items-stretch">
           {config.misLotes && (
             <Card className={INICIO_SECTION_CARD}>
-              {sectionTitle(<Flame className="w-4 h-4 text-orange-500" />, 'Mis lotes del día')}
+              {sectionTitle(<Flame className="w-4 h-4 text-orange-500" />, 'Producción')}
               {misLotes.length === 0 ? (
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-2">No hay lotes recientes</p>
               ) : (
@@ -16980,6 +17009,9 @@ const InicioView = ({
                     <div className="min-w-0">
                       <p className="text-xs font-black text-sleek-dark uppercase truncate">{lote.numero}</p>
                       <p className="text-[10px] font-bold text-slate-500 truncate">{lote.descripcion}</p>
+                      {lote.fecha && (
+                        <p className="text-[10px] text-slate-400 font-bold">{safeFormat(lote.fecha, 'dd/MM/yyyy')}</p>
+                      )}
                     </div>
                     <Badge variant={loteBadgeVariant(lote.estado)} className="shrink-0">{lote.estado}</Badge>
                   </div>
@@ -17014,7 +17046,7 @@ const InicioView = ({
                         <span className={cn('w-1.5 h-1.5 rounded-full mt-1 shrink-0', dotClass)} />
                         <div className="flex-1 min-w-0">
                           <p className="font-bold text-sleek-dark leading-tight text-[11px] truncate">
-                            {tipoLabel} · {prod?.nombre || 'Producto'} · {m.cantidad} {m.unidad} · {alm?.nombre || 'Almacén'}
+                            {tipoLabel} · {prod?.nombre || 'Producto'} · {formatNumber(formatNum(m.cantidad))} {m.unidad} · {alm?.nombre || 'Almacén'}
                           </p>
                           <p className="text-slate-400 font-bold text-[10px]">
                             {m.usuario} · {formatRelativeTime(m.fechaHora)}
@@ -17708,9 +17740,12 @@ export default function App() {
   };
 
   const getOcupacionAlmacen = (almacenId: string) => {
-    return lotesStock
-      .filter(l => l.almacenId === almacenId)
-      .reduce((sum, l) => sum + (l.cantidad * getPesoEquivalente(l.productoId, l)), 0);
+    return safeRound(
+      lotesStock
+        .filter(l => l.almacenId === almacenId)
+        .reduce((sum, l) => sum + (l.cantidad * getPesoEquivalente(l.productoId, l)), 0),
+      3
+    );
   };
 
   const getStockSeguridad = (productoId: string, almacenId: string) => {
