@@ -446,13 +446,26 @@ const productoTieneEnvasesEtiquetados = (
   almacenId?: string
 ) => buildEnvaseRowsForProducto(productoId, lotesStock, lotesEtiquetados, lotesProduccion, lotesDespiece, almacenId).length > 0;
 
+/** N° de lote de stock a partir del código de envase (quita correlativo -NNN final). */
+const numeroLoteFromCodigoBarrasEnvase = (codigoBarras: string): string => {
+  const c = (codigoBarras || '').trim();
+  if (!c) return '';
+  const parts = c.split('-');
+  const last = parts[parts.length - 1];
+  if (/^\d{3}$/.test(last)) {
+    return parts.slice(0, -1).join('-');
+  }
+  return c;
+};
+
 /** Resuelve filas de envases por keys guardadas (sin depender del stock en lotesStock). */
 const resolveEnvaseRowsByKeys = (
   keys: string[],
   lotesEtiquetados: any[],
   lotesStock: any[],
   lotesProduccion: any[] = [],
-  lotesDespiece: any[] = []
+  lotesDespiece: any[] = [],
+  productoIdFiltro?: string
 ): any[] => {
   const keysSet = new Set(keys);
   const rows: any[] = [];
@@ -460,19 +473,38 @@ const resolveEnvaseRowsByKeys = (
     (le.envases || []).forEach((env: any) => {
       const key = buildEnvaseSelectionKey(le.loteId, env);
       if (!keysSet.has(key) || !isEnvaseVigente(env)) return;
-      const numeroLote = le.loteNumero || le.loteId;
+      const codigoRaw = env.codigoBarras || env.codigo || '';
+      const numeroDesdeCodigo = numeroLoteFromCodigoBarrasEnvase(codigoRaw);
+      const stockByCodigo =
+        productoIdFiltro && codigoRaw
+          ? lotesStock.find(
+              (ls: any) =>
+                ls.productoId === productoIdFiltro &&
+                codigoEnvasePerteneceALote(codigoRaw.toLowerCase(), ls.numeroLote)
+            )
+          : undefined;
+      const numeroLoteLe = le.loteNumero || le.loteId;
       const stockLote =
-        lotesStock.find((ls: any) => ls.numeroLote === numeroLote) ||
+        stockByCodigo ||
+        (numeroDesdeCodigo
+          ? lotesStock.find(
+              (ls: any) =>
+                (!productoIdFiltro || ls.productoId === productoIdFiltro) &&
+                ls.numeroLote.toLowerCase() === numeroDesdeCodigo.toLowerCase()
+            )
+          : undefined) ||
+        lotesStock.find((ls: any) => ls.numeroLote === numeroLoteLe) ||
         lotesStock.find(
           (ls: any) =>
+            (!productoIdFiltro || ls.productoId === productoIdFiltro) &&
             findLoteEtiquetadoForStockLote(ls, lotesEtiquetados, lotesProduccion, lotesDespiece)?.loteId ===
-            le.loteId
+              le.loteId
         );
       rows.push({
         key,
         leId: le.loteId,
         envase: env,
-        numeroLote: stockLote?.numeroLote || numeroLote,
+        numeroLote: stockLote?.numeroLote || numeroDesdeCodigo || numeroLoteLe,
         fechaVencimiento: stockLote?.fechaVencimiento || le.fechaVencimiento,
         almacenId: stockLote?.almacenId || le.almacenId,
       });
@@ -497,6 +529,7 @@ const aplicarBajaEnvasesEnEstado = (
       return {
         ...ev,
         estado: 'baja',
+        anulado: true,
         motivoBaja,
         fechaBaja: now,
         usuarioBaja: usuario,
@@ -809,6 +842,8 @@ interface LoteProduccion {
     almacenId?: string;
     /** Claves envase: leId::codigoBarras::numero */
     envasesSeleccionados?: string[];
+    /** Snapshot de filas al seleccionar envases (lote/almacén correctos). */
+    envasesSeleccionadosRows?: any[];
     /** Si true, finalizar usa FEFO genérico aunque haya envases */
     descuentoGenerico?: boolean;
   }[];
@@ -3783,6 +3818,7 @@ const SelectorEnvasesModal = ({
   lotesProduccion,
   lotesDespiece,
   initialSelectedKeys = [] as string[],
+  readOnly = false,
 }: any) => {
   const [selectedKeys, setSelectedKeys] = useState<Record<string, boolean>>({});
   const [filterLote, setFilterLote] = useState('');
@@ -3800,9 +3836,13 @@ const SelectorEnvasesModal = ({
 
   const filteredRows = useMemo(() => {
     const q = filterLote.trim().toLowerCase();
-    if (!q) return availableRows;
-    return availableRows.filter((r: any) => r.numeroLote.toLowerCase().includes(q));
-  }, [availableRows, filterLote]);
+    const base = !q ? availableRows : availableRows.filter((r: any) => r.numeroLote.toLowerCase().includes(q));
+    if (readOnly && initialSelectedKeys.length > 0) {
+      const keySet = new Set(initialSelectedKeys);
+      return base.filter((r: any) => keySet.has(r.key));
+    }
+    return base;
+  }, [availableRows, filterLote, readOnly, initialSelectedKeys]);
 
   const selectedRows = useMemo(
     () => availableRows.filter((r: any) => selectedKeys[r.key]),
@@ -3826,6 +3866,7 @@ const SelectorEnvasesModal = ({
   }, [isOpen, productoId, initialSelectedKeys.join('|')]);
 
   const toggleAll = () => {
+    if (readOnly) return;
     if (allFilteredSelected) {
       setSelectedKeys((prev) => {
         const next = { ...prev };
@@ -3857,7 +3898,12 @@ const SelectorEnvasesModal = ({
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={titulo || 'Selección de envases'} className="max-w-3xl">
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={readOnly ? 'Envases utilizados' : (titulo || 'Selección de envases')}
+      className="max-w-3xl"
+    >
       <div className="space-y-4">
         <input
           type="text"
@@ -3871,7 +3917,9 @@ const SelectorEnvasesModal = ({
             <thead className="bg-white border-b border-slate-200 sticky top-0 z-10">
               <tr>
                 <th className="px-3 py-2 w-10">
-                  <input type="checkbox" checked={allFilteredSelected} onChange={toggleAll} className="w-4 h-4 rounded" title="Seleccionar todos" />
+                  {!readOnly && (
+                    <input type="checkbox" checked={allFilteredSelected} onChange={toggleAll} className="w-4 h-4 rounded" title="Seleccionar todos" />
+                  )}
                 </th>
                 <th className="px-3 py-2 font-bold uppercase">Envase</th>
                 <th className="px-3 py-2 font-bold uppercase">Lote</th>
@@ -3893,14 +3941,16 @@ const SelectorEnvasesModal = ({
                       <input
                         type="checkbox"
                         checked={!!selectedKeys[row.key]}
-                        onChange={() =>
+                        disabled={readOnly}
+                        onChange={() => {
+                          if (readOnly) return;
                           setSelectedKeys((prev) => {
                             const next = { ...prev };
                             if (next[row.key]) delete next[row.key];
                             else next[row.key] = true;
                             return next;
-                          })
-                        }
+                          });
+                        }}
                         className="w-4 h-4 rounded"
                       />
                     </td>
@@ -3920,8 +3970,12 @@ const SelectorEnvasesModal = ({
           </p>
         </div>
         <div className="flex justify-end gap-3 pt-2">
-          <button type="button" onClick={onClose} className="px-6 py-2 text-xs font-bold uppercase text-slate-400">Cancelar</button>
-          <button type="button" onClick={handleConfirm} className="px-8 py-2 bg-sleek-accent text-white text-xs font-bold uppercase rounded-lg">Confirmar</button>
+          <button type="button" onClick={onClose} className="px-6 py-2 text-xs font-bold uppercase text-slate-400">
+            {readOnly ? 'Cerrar' : 'Cancelar'}
+          </button>
+          {!readOnly && (
+            <button type="button" onClick={handleConfirm} className="px-8 py-2 bg-sleek-accent text-white text-xs font-bold uppercase rounded-lg">Confirmar</button>
+          )}
         </div>
       </div>
     </Modal>
@@ -3945,7 +3999,10 @@ const LotesProduccionView = ({
   const [filterEstado, setFilterEstado] = useState('Todos');
   const [isFinalizing, setIsFinalizing] = useState(false);
   const [envaseModalInsumoIdx, setEnvaseModalInsumoIdx] = useState<number | null>(null);
+  const [envaseModalReadOnly, setEnvaseModalReadOnly] = useState(false);
   const [insumoEnvaseWarningIdx, setInsumoEnvaseWarningIdx] = useState<number | null>(null);
+  /** Insumos capturados al abrir finalizar (evita race con setFormData). */
+  const insumosFinalizeRef = useRef<any[] | null>(null);
 
   const todosLosLotes = useMemo(
     () => collectLotesExistentes(lotesProduccion, lotesDespiece, movimientos),
@@ -3974,8 +4031,64 @@ const LotesProduccionView = ({
     setFormData((prev: any) => {
       const insumos = [...prev.insumos];
       insumos[idx] = { ...insumos[idx], ...patch };
+      if (selectedLote) {
+        setSelectedLote((sl: any) => {
+          if (!sl) return sl;
+          const slInsumos = [...(sl.insumos || [])];
+          slInsumos[idx] = { ...slInsumos[idx], ...patch };
+          return { ...sl, insumos: slInsumos };
+        });
+        if (selectedLote.id && (patch.envasesSeleccionados || patch.envasesSeleccionadosRows)) {
+          setLotesProduccion((prev: any[]) =>
+            prev.map((l: any) => {
+              if (l.id !== selectedLote.id) return l;
+              const lInsumos = [...(l.insumos || [])];
+              lInsumos[idx] = { ...lInsumos[idx], ...patch };
+              return { ...l, insumos: lInsumos };
+            })
+          );
+        }
+      }
       return { ...prev, insumos };
     });
+  };
+
+  /** Insumos para finalizar: fusiona formData + persistido sin perder envasesSeleccionados. */
+  const capturarInsumosParaFinalizar = (): any[] => {
+    const persisted = selectedLote?.id
+      ? lotesProduccion.find((l: any) => l.id === selectedLote.id)?.insumos || []
+      : [];
+    const base = persisted.length ? persisted : selectedLote?.insumos || [];
+    const formMatches =
+      !selectedLote?.id ||
+      formData.id === selectedLote.id ||
+      formData.numeroLote === selectedLote.numeroLote;
+    const fromForm =
+      formData.insumos?.length > 0 && formMatches ? formData.insumos : null;
+    if (!fromForm) return base;
+    const len = Math.max(fromForm.length, base.length);
+    return Array.from({ length: len }, (_, i) => {
+      const persist = base[i] || {};
+      const form = fromForm[i] || {};
+      const merged = { ...persist, ...form };
+      if (!form.envasesSeleccionados?.length && persist.envasesSeleccionados?.length) {
+        merged.envasesSeleccionados = persist.envasesSeleccionados;
+      }
+      if (!form.envasesSeleccionadosRows?.length && persist.envasesSeleccionadosRows?.length) {
+        merged.envasesSeleccionadosRows = persist.envasesSeleccionadosRows;
+      }
+      if (!merged.envasesSeleccionados?.length && merged.envasesSeleccionadosRows?.length) {
+        merged.envasesSeleccionados = merged.envasesSeleccionadosRows.map((r: any) => r.key);
+      }
+      return merged;
+    });
+  };
+
+  const getInsumosParaFinalizar = (): any[] => {
+    if (insumosFinalizeRef.current?.length) {
+      return insumosFinalizeRef.current;
+    }
+    return capturarInsumosParaFinalizar();
   };
 
   const handleNewLote = () => {
@@ -4142,8 +4255,41 @@ const LotesProduccionView = ({
     setView(estado === 'Finalizado' && selectedLote ? 'detail' : 'list');
   };
 
-  const insumosParaFinalizar =
-    view === 'form' ? (formData.insumos || []) : (selectedLote?.insumos || formData.insumos || []);
+  const insumosParaFinalizar = getInsumosParaFinalizar();
+
+  const openEnvaseModalForInsumo = (idx: number, readOnlyMode: boolean) => {
+    setEnvaseModalReadOnly(readOnlyMode);
+    setEnvaseModalInsumoIdx(idx);
+  };
+
+  const applyInsumoEnvaseSelection = (idx: number, payload: { keys: string[]; cantidadReal: number; rows?: any[] }) => {
+    const rowsSnapshot = (payload.rows || []).map((r: any) => ({
+      key: r.key,
+      leId: r.leId,
+      numeroLote: r.numeroLote,
+      almacenId: r.almacenId,
+      fechaVencimiento: r.fechaVencimiento,
+      envase: r.envase,
+    }));
+    const patch = {
+      envasesSeleccionados: payload.keys,
+      envasesSeleccionadosRows: rowsSnapshot,
+      cantidadReal: payload.cantidadReal,
+      descuentoGenerico: false,
+    };
+    if (view === 'form') {
+      updateInsumoAt(idx, patch);
+      return;
+    }
+    if (!selectedLote) return;
+    const baseInsumos =
+      lotesProduccion.find((l: any) => l.id === selectedLote.id)?.insumos || selectedLote.insumos || [];
+    const insumos = [...baseInsumos];
+    insumos[idx] = { ...insumos[idx], ...patch };
+    const updatedLote = { ...selectedLote, insumos };
+    setSelectedLote(updatedLote);
+    setLotesProduccion(lotesProduccion.map((l: any) => (l.id === selectedLote.id ? updatedLote : l)));
+  };
 
   const insumoNecesitaSeleccionEnvases = (ins: any) => {
     if (!ins.materiaPrimaId || ins.descuentoGenerico) return false;
@@ -4163,7 +4309,11 @@ const LotesProduccionView = ({
       showNotification('Este lote ya fue finalizado.', 'error');
       return;
     }
-    const pendienteIdx = insumosParaFinalizar.findIndex((ins: any) => insumoNecesitaSeleccionEnvases(ins));
+
+    const insumosActuales = capturarInsumosParaFinalizar();
+    insumosFinalizeRef.current = insumosActuales;
+
+    const pendienteIdx = insumosActuales.findIndex((ins: any) => insumoNecesitaSeleccionEnvases(ins));
     if (pendienteIdx >= 0) {
       setInsumoEnvaseWarningIdx(pendienteIdx);
       return;
@@ -4187,9 +4337,11 @@ const LotesProduccionView = ({
     setIsFinalizing(true);
 
     const now = new Date().toISOString();
-    
+
+    const insumosParaFinalizar = insumosFinalizeRef.current || capturarInsumosParaFinalizar();
+
     // Check stock of all ingredients
-    const insufficientStockMP = selectedLote.insumos.filter((ins: any) => {
+    const insufficientStockMP = insumosParaFinalizar.filter((ins: any) => {
       const stock = lotesStock.filter((ls: any) => ls.productoId === ins.materiaPrimaId).reduce((sum: number, ls: any) => sum + ls.cantidad, 0);
       return stock < ins.cantidadReal;
     });
@@ -4212,7 +4364,7 @@ const LotesProduccionView = ({
       showNotification('Aviso: Stock insuficiente para algunos insumos. Se registró el descuento pendiente.', 'error');
     }
 
-    const totalRealKg = selectedLote.insumos.reduce((sum: number, ins: any) => sum + (ins.cantidadReal * getPesoEquivalente(ins.materiaPrimaId)), 0);
+    const totalRealKg = insumosParaFinalizar.reduce((sum: number, ins: any) => sum + (ins.cantidadReal * getPesoEquivalente(ins.materiaPrimaId)), 0);
     const rendimientoReal = (finalizeData.pesoNeto / totalRealKg) * 100;
     const mermaKg = totalRealKg - finalizeData.pesoNeto;
     const mermaPorcentaje = (mermaKg / totalRealKg) * 100;
@@ -4236,29 +4388,47 @@ const LotesProduccionView = ({
 
     let updatedLotesEtiquetados = lotesEtiquetados;
 
-    insumosParaFinalizar.forEach((ins: any) => {
+    for (const ins of insumosParaFinalizar) {
       const prodIns = productos.find((p: any) => p.id === ins.materiaPrimaId);
       const unitIns = unidades.find((u: any) => u.id === prodIns?.unidadMedidaId)?.abreviatura || 'kg';
       const isKgIns = prodIns?.unidadMedidaId === 'u1';
       const motivoBaja = `Consumo Producción Lote ${selectedLote.numeroLote}`;
 
-      if (ins.envasesSeleccionados?.length && !ins.descuentoGenerico) {
-        const rows = resolveEnvaseRowsByKeys(
-          ins.envasesSeleccionados,
-          updatedLotesEtiquetados,
-          lotesStock,
-          lotesProduccion,
-          lotesDespiece
-        );
+      const tieneEnvasesSel =
+        !ins.descuentoGenerico &&
+        ((ins.envasesSeleccionadosRows?.length ?? 0) > 0 || (ins.envasesSeleccionados?.length ?? 0) > 0);
 
-        if (rows.length > 0) {
-          updatedLotesEtiquetados = aplicarBajaEnvasesEnEstado(
-            rows,
+      if (tieneEnvasesSel) {
+        let rows: any[] = Array.isArray(ins.envasesSeleccionadosRows)
+          ? ins.envasesSeleccionadosRows
+          : [];
+        if (!rows.length && ins.envasesSeleccionados?.length) {
+          rows = resolveEnvaseRowsByKeys(
+            ins.envasesSeleccionados,
             updatedLotesEtiquetados,
-            motivoBaja,
-            currentUser.name
+            lotesStock,
+            lotesProduccion,
+            lotesDespiece,
+            ins.materiaPrimaId
           );
         }
+
+        if (rows.length === 0) {
+          showNotification(
+            `No se encontraron los envases seleccionados para ${prodIns?.nombre || 'insumo'}. Volvé a seleccionarlos.`,
+            'error'
+          );
+          setIsFinalizing(false);
+          insumosFinalizeRef.current = null;
+          return;
+        }
+
+        updatedLotesEtiquetados = aplicarBajaEnvasesEnEstado(
+          rows,
+          updatedLotesEtiquetados,
+          motivoBaja,
+          currentUser.name
+        );
 
         const byLote: Record<string, any[]> = {};
         rows.forEach((row: any) => {
@@ -4276,12 +4446,15 @@ const LotesProduccionView = ({
           const cantidadMov = isKgIns ? totalPeso : items.length;
           if (cantidadMov <= 0.0001) return;
 
+          const almacenId = items[0].almacenId || ins.almacenId;
+          if (!almacenId) return;
+
           const envNums = items.map((i: any) => `#${i.envase.numero}`).join(', ');
           addedMovimientos.push({
             id: `MOV-${Date.now()}-${Math.random()}`,
             tipo: 'salida',
             productoId: ins.materiaPrimaId,
-            almacenId: items[0].almacenId,
+            almacenId,
             cantidad: cantidadMov,
             unidad: unitIns,
             cantidadKg: totalPeso,
@@ -4297,11 +4470,11 @@ const LotesProduccionView = ({
             observaciones: `Envases: ${envNums}`,
           });
         });
-        return;
+        continue;
       }
 
       let remainingToDeduct = ins.cantidadReal;
-      if (remainingToDeduct <= 0.0001) return;
+      if (remainingToDeduct <= 0.0001) continue;
 
       const productLotes = [...lotesStock]
         .filter(
@@ -4340,7 +4513,7 @@ const LotesProduccionView = ({
           referencia: selectedLote.numeroLote,
         });
       });
-    });
+    }
 
     // Add finished product movement
     addedMovimientos.push({
@@ -4398,6 +4571,7 @@ const LotesProduccionView = ({
 
     setIsFinalizeModalOpen(false);
     setIsFinalizing(false);
+    insumosFinalizeRef.current = null;
     setSelectedLote(finalizedLote);
     setView('detail');
     showNotification('Lote finalizado correctamente', 'success');
@@ -4436,7 +4610,7 @@ const LotesProduccionView = ({
                   onClick={() => {
                     const idx = insumoEnvaseWarningIdx;
                     const insumos = [...insumosParaFinalizar];
-                    insumos[idx] = { ...insumos[idx], descuentoGenerico: true, envasesSeleccionados: [] };
+                    insumos[idx] = { ...insumos[idx], descuentoGenerico: true, envasesSeleccionados: [], envasesSeleccionadosRows: [] };
                     if (view === 'form') setFormData((p: any) => ({ ...p, insumos }));
                     if (selectedLote) setSelectedLote({ ...selectedLote, insumos });
                     setInsumoEnvaseWarningIdx(null);
@@ -4460,8 +4634,12 @@ const LotesProduccionView = ({
       </Modal>
       <SelectorEnvasesModal
         isOpen={envaseModalInsumoIdx !== null}
-        onClose={() => setEnvaseModalInsumoIdx(null)}
+        onClose={() => {
+          setEnvaseModalInsumoIdx(null);
+          setEnvaseModalReadOnly(false);
+        }}
         titulo="Seleccionar envases del insumo"
+        readOnly={envaseModalReadOnly}
         productoId={envaseModalInsumoIdx !== null ? (insumosParaFinalizar[envaseModalInsumoIdx]?.materiaPrimaId || '') : ''}
         productos={productos}
         almacenId={envaseModalInsumoIdx !== null ? insumosParaFinalizar[envaseModalInsumoIdx]?.almacenId : undefined}
@@ -4470,16 +4648,11 @@ const LotesProduccionView = ({
         lotesProduccion={lotesProduccion}
         lotesDespiece={lotesDespiece}
         initialSelectedKeys={envaseModalInsumoIdx !== null ? (insumosParaFinalizar[envaseModalInsumoIdx]?.envasesSeleccionados || []) : []}
-        onConfirm={({ keys, cantidadReal }: any) => {
-          if (envaseModalInsumoIdx === null) return;
-          const idx = envaseModalInsumoIdx;
-          updateInsumoAt(idx, { envasesSeleccionados: keys, cantidadReal, descuentoGenerico: false });
-          if (selectedLote) {
-            const insumos = [...insumosParaFinalizar];
-            insumos[idx] = { ...insumos[idx], envasesSeleccionados: keys, cantidadReal, descuentoGenerico: false };
-            setSelectedLote({ ...selectedLote, insumos });
-          }
+        onConfirm={({ keys, cantidadReal, rows }: any) => {
+          if (envaseModalInsumoIdx === null || envaseModalReadOnly) return;
+          applyInsumoEnvaseSelection(envaseModalInsumoIdx, { keys, cantidadReal, rows });
           setEnvaseModalInsumoIdx(null);
+          setEnvaseModalReadOnly(false);
           showNotification(`${keys.length} envase(s) seleccionado(s). Cantidad real actualizada.`, 'success');
         }}
       />
@@ -4712,9 +4885,14 @@ const LotesProduccionView = ({
                                 </button>
                               )}
                               {nEnvasesSel > 0 && (
-                                <span className="inline-flex items-center gap-1 text-[9px] font-black uppercase text-sleek-success">
+                                <button
+                                  type="button"
+                                  onClick={() => openEnvaseModalForInsumo(idx, isFinalizado)}
+                                  className="inline-flex items-center gap-1 text-[9px] font-black uppercase text-sleek-success cursor-pointer hover:bg-sleek-success/20 rounded px-1.5 py-0.5 transition-colors"
+                                  title={isFinalizado ? 'Ver envases seleccionados' : 'Editar envases seleccionados'}
+                                >
                                   <Package className="w-3 h-3" /> {nEnvasesSel} envases
-                                </span>
+                                </button>
                               )}
                               {pendienteEnvases && (
                                 <span className="text-[9px] font-black uppercase text-sleek-warning">Seleccionar envases</span>
@@ -4848,7 +5026,12 @@ const LotesProduccionView = ({
       const unit = unidades.find((u: any) => u.id === prod?.unidadMedidaId);
       const resp = users.find((u: any) => u.id === selectedLote.responsableId);
       const factorEquivalencia = getPesoEquivalente(selectedLote.productoId);
-      const totalRealInsumosKg = (selectedLote.insumos || []).reduce((sum: number, ins: any) => sum + ((ins.cantidadReal || 0) * getPesoEquivalente(ins.materiaPrimaId)), 0);
+      const insumosDetail =
+        lotesProduccion.find((l: any) => l.id === selectedLote.id)?.insumos || selectedLote.insumos || [];
+      const totalRealInsumosKg = insumosDetail.reduce(
+        (sum: number, ins: any) => sum + ((ins.cantidadReal || 0) * getPesoEquivalente(ins.materiaPrimaId)),
+        0
+      );
 
       // --- BUG 2 Logic: Separar Producido vs Stock ---
       const le = lotesEtiquetados.find((item: any) => item.loteId === selectedLote.numeroLote || item.loteId === selectedLote.id);
@@ -4902,6 +5085,13 @@ const LotesProduccionView = ({
             {selectedLote.estado === 'En Proceso' && (
               <button 
                 onClick={() => {
+                  insumosFinalizeRef.current = capturarInsumosParaFinalizar();
+                  setFormData((prev: any) => ({
+                    ...prev,
+                    ...(lotesProduccion.find((l: any) => l.id === selectedLote.id) || selectedLote),
+                    insumos: insumosFinalizeRef.current,
+                  }));
+
                   const etiquetado = lotesEtiquetados.find((le: any) => le.loteId === selectedLote.id);
                   const pesoManual = selectedLote.cantidadEstimada;
                   const pesoEtiquetado = etiquetado ? etiquetado.envases.reduce((sum: number, e: any) => sum + e.pesoNeto, 0) : 0;
@@ -5051,10 +5241,11 @@ const LotesProduccionView = ({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
-                    {selectedLote.insumos.map((ins: any, idx: number) => {
+                    {insumosDetail.map((ins: any, idx: number) => {
                       const mp = productos.find((p: any) => p.id === ins.materiaPrimaId);
                       const diff = ins.cantidadReal - ins.cantidadTeorica;
                       const diffPerc = (diff / ins.cantidadTeorica) * 100;
+                      const nEnvasesSel = ins.envasesSeleccionados?.length || 0;
                       
                       return (
                         <tr key={idx}>
@@ -5066,10 +5257,15 @@ const LotesProduccionView = ({
                           <td className="px-6 py-4">
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="text-sm text-sleek-dark font-bold font-mono">{formatNum(ins.cantidadReal)}</span>
-                              {(ins.envasesSeleccionados?.length || 0) > 0 && (
-                                <span className="inline-flex items-center gap-1 text-[9px] font-black uppercase text-sleek-success">
-                                  <Package className="w-3 h-3" /> {ins.envasesSeleccionados.length} envases
-                                </span>
+                              {nEnvasesSel > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => openEnvaseModalForInsumo(idx, selectedLote.estado === 'Finalizado')}
+                                  className="inline-flex items-center gap-1 text-[9px] font-black uppercase text-sleek-success cursor-pointer hover:bg-sleek-success/20 rounded px-1.5 py-0.5 transition-colors"
+                                  title={selectedLote.estado === 'Finalizado' ? 'Ver envases seleccionados' : 'Editar envases seleccionados'}
+                                >
+                                  <Package className="w-3 h-3" /> {nEnvasesSel} envases
+                                </button>
                               )}
                               {ins.descuentoGenerico && (
                                 <span className="text-[9px] font-black uppercase text-slate-400">FEFO genérico</span>
@@ -5092,7 +5288,7 @@ const LotesProduccionView = ({
                     <tr>
                       <td className="px-6 py-4 text-xs uppercase tracking-widest text-slate-400">Totales</td>
                       <td className="px-6 py-4 text-sm text-slate-400 font-mono">
-                        {formatNum((selectedLote.insumos || []).reduce((sum: number, ins: any) => sum + (ins.cantidadTeorica || 0), 0))}
+                        {formatNum(insumosDetail.reduce((sum: number, ins: any) => sum + (ins.cantidadTeorica || 0), 0))}
                       </td>
                       <td className="px-6 py-4 text-sm text-sleek-dark font-mono">
                         {formatNum(totalRealInsumosKg)}
@@ -7088,14 +7284,48 @@ const EtiquetasView = ({
 
   const finalizeEtiquetado = () => {
     if (!loteEtiquetado || loteEtiquetado.envases.length === 0) return;
+
     if (selectedLote?.tipo === 'despiece') {
       showNotification('Finalice el lote de despiece en Producción → Lotes de Despiece (botón «Finalizar lote de despiece»).', 'info');
       return;
     }
+
+    if (selectedLote?.tipo === 'produccion') {
+      const now = new Date().toISOString();
+      const leKey = loteEtiquetado.loteId;
+      setLotesEtiquetados(
+        lotesEtiquetados.map((le: any) =>
+          le.loteId === leKey ? { ...le, estado: 'finalizado' } : le
+        )
+      );
+      if (selectedLoteId) {
+        const histEntry = {
+          id: `lph-${Date.now()}`,
+          loteId: selectedLoteId,
+          fecha: now,
+          usuarioId: currentUser.id,
+          accion: 'Finalización Etiquetado' as const,
+          detalle: 'Etiquetado finalizado desde estación de etiquetas',
+        };
+        setLotesHistorial([histEntry, ...lotesHistorial]);
+      }
+      showNotification(
+        'Etiquetado finalizado. Para completar el lote, finalizalo desde Lotes de Producción.',
+        'success'
+      );
+      return;
+    }
+
     setIsFinalizeModalOpen(true);
   };
 
   const handleConfirmFinalize = () => {
+    if (selectedLote?.tipo === 'produccion') {
+      showNotification('Finalice el lote desde Producción → Lotes de Producción.', 'error');
+      setIsFinalizeModalOpen(false);
+      return;
+    }
+
     if (selectedLote?.tipo === 'despiece') {
       showNotification('La finalización del despiece solo se realiza en Lotes de Despiece.', 'error');
       setIsFinalizeModalOpen(false);
@@ -7593,7 +7823,7 @@ const EtiquetasView = ({
                   <p className="text-[8px] text-center text-slate-400 font-bold uppercase">
                     {selectedLote.tipo === 'despiece'
                       ? 'Nota: Finalice el lote en Lotes de Despiece para aplicar movimientos de inventario.'
-                      : 'Nota: Al finalizar el etiquetado total, el lote podrá ser cerrado definitivamente.'}
+                      : 'Nota: Finalice el lote en Lotes de Producción para aplicar movimientos de inventario.'}
                   </p>
                 )}
               </div>
