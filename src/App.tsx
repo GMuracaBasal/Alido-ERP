@@ -12717,17 +12717,17 @@ const RemitoView = ({ venta, cliente, productos, onBack }: any) => {
                 }
 
                 /* Header */
-                .border-b-4 { border-bottom: 4px solid #1A2B3C; }
-                .pb-8 { padding-bottom: 2rem; }
+                .border-b-4 { border-bottom: 2px solid #1A2B3C; }
+                .pb-8 { padding-bottom: 0.75rem; }
                 .flex { display: flex; }
                 .justify-between { justify-content: space-between; }
                 .items-start { align-items: flex-start; }
                 .items-center { align-items: center; }
-                .gap-10 { gap: 2.5rem; }
+                .gap-10 { gap: 1rem; }
                 
                 .logo-box {
-                    width: 96px;
-                    height: 96px;
+                    width: 48px;
+                    height: 48px;
                     background: #1A2B3C;
                     display: flex;
                     align-items: center;
@@ -12736,7 +12736,7 @@ const RemitoView = ({ venta, cliente, productos, onBack }: any) => {
                 }
 
                 .title-main {
-                    font-size: 2rem;
+                    font-size: 1.125rem;
                     font-weight: 900;
                     font-style: italic;
                     letter-spacing: -0.05em;
@@ -12744,44 +12744,45 @@ const RemitoView = ({ venta, cliente, productos, onBack }: any) => {
                 }
 
                 .subtitle {
-                    font-size: 10px;
+                    font-size: 9px;
                     font-weight: bold;
                     color: #64748b;
                     text-transform: uppercase;
-                    letter-spacing: 0.1em;
-                    margin-top: 0.5rem;
+                    letter-spacing: 0.08em;
+                    margin-top: 0.15rem;
+                    line-height: 1.3;
                 }
 
                 .text-right { text-align: right; }
                 .remito-box {
                     background: #1A2B3C;
                     color: white;
-                    padding: 0.75rem 2rem;
-                    margin-bottom: 1rem;
+                    padding: 0.25rem 0.75rem;
+                    margin-bottom: 0.35rem;
                     display: inline-block;
                 }
-                .remito-box h3 { font-size: 1.25rem; font-weight: 900; letter-spacing: 0.2em; }
+                .remito-box h3 { font-size: 0.875rem; font-weight: 900; letter-spacing: 0.15em; }
 
                 /* Info Grid */
                 .grid { display: grid; }
                 .grid-cols-2 { grid-template-columns: repeat(2, 1fr); }
-                .gap-12 { gap: 3rem; }
-                .py-10 { padding-top: 2.5rem; padding-bottom: 2.5rem; }
+                .gap-12 { gap: 1.5rem; }
+                .py-10 { padding-top: 1rem; padding-bottom: 1rem; }
                 .border-b { border-bottom: 1px solid #f1f5f9; }
 
                 .label-small {
-                    font-size: 10px;
+                    font-size: 9px;
                     font-weight: 900;
                     color: #F27D26;
                     text-transform: uppercase;
-                    letter-spacing: 0.1em;
+                    letter-spacing: 0.08em;
                     border-bottom: 1px solid rgba(242, 125, 38, 0.2);
-                    padding-bottom: 0.5rem;
-                    margin-bottom: 1.5rem;
+                    padding-bottom: 0.25rem;
+                    margin-bottom: 0.75rem;
                 }
 
-                .razon-social { font-size: 1.125rem; font-weight: 900; text-transform: uppercase; }
-                .text-secondary { font-size: 0.75rem; font-weight: bold; color: #64748b; margin-top: 0.25rem; }
+                .razon-social { font-size: 0.875rem; font-weight: 900; text-transform: uppercase; }
+                .text-secondary { font-size: 0.6875rem; font-weight: bold; color: #64748b; margin-top: 0.15rem; }
 
                 /* Table */
                 table { width: 100%; border-collapse: collapse; margin-top: 2.5rem; }
@@ -12903,41 +12904,41 @@ const RemitoView = ({ venta, cliente, productos, onBack }: any) => {
         </div>
 
         <div className="max-w-[210mm] mx-auto bg-white p-[15mm] mt-8 shadow-2xl print:shadow-none print:mt-0 print:p-[10mm] remito-container">
-           <div className="flex justify-between items-start border-b-4 border-sleek-dark pb-8">
-              <div className="flex items-center gap-10">
-                 <div className="w-24 h-24 bg-sleek-dark flex items-center justify-center">
-                   <Package className="w-12 h-12 text-white" />
+           <div className="flex justify-between items-start border-b-2 border-sleek-dark pb-3">
+              <div className="flex items-center gap-4">
+                 <div className="w-12 h-12 bg-sleek-dark flex items-center justify-center shrink-0">
+                   <Package className="w-6 h-6 text-white" />
                  </div>
                  <div>
-                    <h2 className="text-3xl font-black italic tracking-tighter text-sleek-dark">ALIDO - Gestión</h2>
-                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-2">Planta Elaboradora & Distribución</p>
-                    <p className="text-[10px] font-bold text-slate-400 mt-1">Av. Central 4520, CP 1430</p>
+                    <h2 className="text-lg font-black italic tracking-tighter text-sleek-dark leading-tight">ALIDO - Gestión</h2>
+                    <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mt-0.5 leading-snug">Planta Elaboradora & Distribución</p>
+                    <p className="text-[9px] font-bold text-slate-400 leading-snug">Av. Central 4520, CP 1430</p>
                  </div>
               </div>
               <div className="text-right">
-                 <div className="bg-sleek-dark text-white px-8 py-3 mb-4 inline-block">
-                    <h3 className="text-xl font-black uppercase tracking-[.2em]">REMITO</h3>
+                 <div className="bg-sleek-dark text-white px-3 py-1 mb-2 inline-block">
+                    <h3 className="text-sm font-black uppercase tracking-[.15em]">REMITO</h3>
                  </div>
-                 <p className="text-sm font-black text-sleek-dark">Nº {venta.comprobante}</p>
-                 <p className="text-xs font-bold text-slate-500 italic mt-1">Fecha: {safeFormat(venta.fecha, 'dd/MM/yyyy')}</p>
+                 <p className="text-xs font-black text-sleek-dark">Nº {venta.comprobante}</p>
+                 <p className="text-[10px] font-bold text-slate-500 italic mt-0.5">Fecha: {safeFormat(venta.fecha, 'dd/MM/yyyy')}</p>
               </div>
            </div>
 
-           <div className="grid grid-cols-2 gap-12 py-10 border-b border-slate-100">
-              <div className="space-y-6">
-                 <h4 className="text-[10px] font-black text-sleek-accent uppercase tracking-widest border-b border-sleek-accent/20 pb-2">Destinatario</h4>
+           <div className="grid grid-cols-2 gap-6 py-4 border-b border-slate-100">
+              <div className="space-y-3">
+                 <h4 className="text-[9px] font-black text-sleek-accent uppercase tracking-widest border-b border-sleek-accent/20 pb-1">Destinatario</h4>
                  <div>
-                    <p className="text-lg font-black text-sleek-dark uppercase">{cliente?.razonSocial}</p>
-                    <p className="text-xs font-bold text-slate-500 mt-1">CUIT: {cliente?.cuit || 'S/D'}</p>
+                    <p className="text-sm font-black text-sleek-dark uppercase">{cliente?.razonSocial}</p>
+                    <p className="text-[10px] font-bold text-slate-500 mt-0.5">CUIT: {cliente?.cuit || 'S/D'}</p>
                  </div>
-                 <div className="pt-2">
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Destino / Sucursal</p>
-                    <p className="text-sm font-black text-slate-600 uppercase">{sucursal?.nombre || 'S/D'}</p>
-                    <p className="text-xs font-bold text-slate-500 mt-1">{sucursal?.direccion || 'S/P'}</p>
+                 <div className="pt-1">
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Destino / Sucursal</p>
+                    <p className="text-xs font-black text-slate-600 uppercase">{sucursal?.nombre || 'S/D'}</p>
+                    <p className="text-[10px] font-bold text-slate-500 mt-0.5">{sucursal?.direccion || 'S/P'}</p>
                  </div>
               </div>
-              <div className="space-y-6 text-right">
-                 <h4 className="text-[10px] font-black text-sleek-accent uppercase tracking-widest border-b border-sleek-accent/20 pb-2">Información Comercial</h4>
+              <div className="space-y-3 text-right">
+                 <h4 className="text-[9px] font-black text-sleek-accent uppercase tracking-widest border-b border-sleek-accent/20 pb-1">Información Comercial</h4>
                  <div className="grid grid-cols-2 gap-4">
                     <div className="col-span-2">
                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Cond. Pago</p>
@@ -12947,16 +12948,16 @@ const RemitoView = ({ venta, cliente, productos, onBack }: any) => {
               </div>
            </div>
 
-           <div className="py-10">
+           <div className="py-6">
               <table className="w-full">
                  <thead>
                     <tr className="border-b-2 border-slate-100">
-                       <th className="text-left py-4 text-[10px] font-black uppercase text-slate-400">Producto / Descripción</th>
-                       <th className="text-center py-4 text-[10px] font-black uppercase text-slate-400">Bulto / ID</th>
-                       <th className="text-right py-4 text-[10px] font-black uppercase text-slate-400 font-black">Cant.</th>
-                       <th className="text-right py-4 text-[10px] font-black uppercase text-slate-400">Peso</th>
-                       <th className="text-right py-4 text-[10px] font-black uppercase text-slate-400">Precio Unit.</th>
-                       <th className="text-right py-4 text-[10px] font-black uppercase text-slate-400 tracking-widest">Subtotal</th>
+                       <th className="text-left py-2 text-[10px] font-black uppercase text-slate-400">Producto / Descripción</th>
+                       <th className="text-center py-2 text-[10px] font-black uppercase text-slate-400">Bulto / ID</th>
+                       <th className="text-right py-2 text-[10px] font-black uppercase text-slate-400 font-black">Cant.</th>
+                       <th className="text-right py-2 text-[10px] font-black uppercase text-slate-400">Peso</th>
+                       <th className="text-right py-2 text-[10px] font-black uppercase text-slate-400">Precio Unit.</th>
+                       <th className="text-right py-2 text-[10px] font-black uppercase text-slate-400 tracking-widest">Subtotal</th>
                     </tr>
                  </thead>
                  <tbody className="divide-y divide-slate-50">
@@ -13259,15 +13260,15 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
         <Modal isOpen={isReceiptModalOpen} onClose={() => setIsReceiptModalOpen(false)} title={selectedVoucher?.total ? "Detalle de Venta" : "Detalle de Cobro"}>
           {selectedVoucher && (
             <div className="space-y-8 p-4">
-              <div className="flex justify-between items-start border-b pb-6">
+              <div className="flex justify-between items-start border-b pb-3">
                 <div>
-                  <h4 className="text-xl font-black italic tracking-tighter text-sleek-dark">
+                  <h4 className="text-sm font-black italic tracking-tighter text-sleek-dark">
                     {selectedVoucher.total ? "REMITO DE VENTA" : "COMPROBANTE DE PAGO"}
                   </h4>
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Nº {selectedVoucher.comprobante}</p>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Nº {selectedVoucher.comprobante}</p>
                 </div>
                 <div className="text-right">
-                  <p className="text-xs font-bold text-slate-500 italic">Fecha: {safeFormat(selectedVoucher.fechaHora || selectedVoucher.fecha, 'dd/MM/yyyy HH:mm')}</p>
+                  <p className="text-[10px] font-bold text-slate-500 italic">Fecha: {safeFormat(selectedVoucher.fechaHora || selectedVoucher.fecha, 'dd/MM/yyyy HH:mm')}</p>
                   <Badge variant={selectedVoucher.estado === 'Anulado' ? 'danger' : 'success'} className="mt-2 text-[9px]">
                     {selectedVoucher.estado || 'VALIDADO'}
                   </Badge>
@@ -13351,25 +13352,29 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
                           <head>
                             <title>${isVenta ? 'Remito' : 'Recibo'} - ${selectedVoucher.comprobante}</title>
                             <style>
-                              body { font-family: sans-serif; padding: 40px; color: #1a2b3c; }
-                              .header { border-bottom: 2px solid #1a2b3c; padding-bottom: 20px; display: flex; justify-content: space-between; }
-                              .content { margin-top: 40px; }
-                              .amount-box { background: #f8fafc; padding: 30px; text-align: center; border: 1px solid #e2e8f0; border-radius: 10px; margin: 40px 0; }
-                              .footer { margin-top: 100px; border-top: 1px solid #e2e8f0; padding-top: 20px; text-align: center; color: #94a3b8; font-size: 10px; }
+                              body { font-family: sans-serif; padding: 24px; color: #1a2b3c; }
+                              .header { border-bottom: 2px solid #1a2b3c; padding-bottom: 10px; display: flex; justify-content: space-between; align-items: flex-start; }
+                              .header h1 { margin: 0; font-style: italic; font-size: 18px; font-weight: 900; }
+                              .header .doc-type { margin: 2px 0 0 0; font-size: 9px; font-weight: bold; color: #64748b; letter-spacing: 1px; text-transform: uppercase; }
+                              .header .comp-nro { margin: 0; font-size: 11px; font-weight: 900; }
+                              .header .comp-fecha { margin: 2px 0 0 0; font-size: 10px; color: #64748b; }
+                              .content { margin-top: 16px; }
+                              .amount-box { background: #f8fafc; padding: 20px; text-align: center; border: 1px solid #e2e8f0; border-radius: 8px; margin: 24px 0; }
+                              .footer { margin-top: 60px; border-top: 1px solid #e2e8f0; padding-top: 12px; text-align: center; color: #94a3b8; font-size: 9px; }
                               table { width: 100%; border-collapse: collapse; }
-                              th { text-align: left; padding: 10px; border-bottom: 1px solid #e2e8f0; font-size: 10px; text-transform: uppercase; }
-                              td { padding: 10px; border-bottom: 1px solid #f1f5f9; font-size: 12px; }
+                              th { text-align: left; padding: 6px; border-bottom: 1px solid #e2e8f0; font-size: 9px; text-transform: uppercase; }
+                              td { padding: 6px; border-bottom: 1px solid #f1f5f9; font-size: 11px; }
                             </style>
                           </head>
                           <body>
                             <div class="header">
                               <div>
-                                <h1 style="margin:0; font-style: italic;">ALIDO - Gestión</h1>
-                                <p style="margin:5px 0 0 0; font-size: 10px; font-bold; color: #64748b; letter-spacing: 2px;">${isVenta ? 'REMITO DE VENTA' : 'COMPROBANTE DE COBRO'}</p>
+                                <h1>ALIDO - Gestión</h1>
+                                <p class="doc-type">${isVenta ? 'REMITO DE VENTA' : 'COMPROBANTE DE COBRO'}</p>
                               </div>
                               <div style="text-align: right">
-                                <p style="margin:0; font-weight: bold;">Nº ${selectedVoucher.comprobante}</p>
-                                <p style="margin:5px 0 0 0; font-size: 12px; color: #64748b;">Fecha: ${safeFormat(selectedVoucher.fechaHora || selectedVoucher.fecha, 'dd/MM/yyyy')}</p>
+                                <p class="comp-nro">Nº ${selectedVoucher.comprobante}</p>
+                                <p class="comp-fecha">Fecha: ${safeFormat(selectedVoucher.fechaHora || selectedVoucher.fecha, 'dd/MM/yyyy')}</p>
                               </div>
                             </div>
                             <div class="content">
@@ -16097,34 +16102,35 @@ const printOrdenPago = (pago: PagoProveedor, proveedor: Proveedor) => {
       <head>
         <title>Comprobante de Pago - ${pago.comprobante}</title>
         <style>
-          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 40px; color: #334155; line-height: 1.5; }
-          .header { display: flex; justify-content: space-between; border-bottom: 2px solid #f1f5f9; padding-bottom: 24px; margin-bottom: 32px; }
-          .logo-text { font-size: 24px; font-weight: 900; color: #0f172a; letter-spacing: -0.025em; }
-          .doc-type { font-size: 14px; font-weight: 800; color: #64748b; text-transform: uppercase; letter-spacing: 0.1em; }
-          .comp-nro { font-size: 20px; font-weight: 900; color: #0f172a; }
-          .section { margin-bottom: 32px; }
-          .section-title { font-size: 10px; font-weight: 800; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 12px; border-bottom: 1px solid #f1f5f9; padding-bottom: 4px; }
-          .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; }
-          .label { font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 4px; }
-          .value { font-size: 14px; font-weight: 700; color: #1e293b; }
-          .box { padding: 20px; background: #f8fafc; border-radius: 12px; border: 1px solid #f1f5f9; }
-          .total-box { margin-top: 48px; padding: 32px; background: #0f172a; color: white; border-radius: 16px; text-align: right; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1); }
-          .total-label { font-size: 12px; font-weight: 700; text-transform: uppercase; opacity: 0.6; }
-          .total-value { font-size: 40px; font-weight: 900; letter-spacing: -0.05em; }
-          .footer { margin-top: 100px; display: flex; justify-content: space-between; gap: 60px; }
-          .signature { border-top: 2px solid #e2e8f0; flex: 1; text-align: center; padding-top: 16px; font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; }
+          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 24px; color: #334155; line-height: 1.35; }
+          .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #f1f5f9; padding-bottom: 10px; margin-bottom: 16px; }
+          .logo-text { font-size: 18px; font-weight: 900; color: #0f172a; letter-spacing: -0.025em; }
+          .doc-type { font-size: 9px; font-weight: 800; color: #64748b; text-transform: uppercase; letter-spacing: 0.08em; }
+          .comp-nro { font-size: 14px; font-weight: 900; color: #0f172a; }
+          .section { margin-bottom: 20px; }
+          .section-title { font-size: 9px; font-weight: 800; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; border-bottom: 1px solid #f1f5f9; padding-bottom: 3px; }
+          .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+          .label { font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 2px; }
+          .value { font-size: 12px; font-weight: 700; color: #1e293b; }
+          .box { padding: 12px; background: #f8fafc; border-radius: 8px; border: 1px solid #f1f5f9; }
+          .total-box { margin-top: 28px; padding: 20px; background: #0f172a; color: white; border-radius: 10px; text-align: right; box-shadow: 0 10px 15px -5px rgba(0,0,0,0.08); }
+          .total-label { font-size: 10px; font-weight: 700; text-transform: uppercase; opacity: 0.6; }
+          .total-value { font-size: 28px; font-weight: 900; letter-spacing: -0.05em; }
+          .footer { margin-top: 60px; display: flex; justify-content: space-between; gap: 40px; }
+          .signature { border-top: 2px solid #e2e8f0; flex: 1; text-align: center; padding-top: 10px; font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase; }
           @media print { .total-box { background: #0f172a !important; color: white !important; -webkit-print-color-adjust: exact; } }
         </style>
       </head>
       <body>
         <div class="header">
           <div>
-            <div class="comp-nro" style="font-size: 22px;">COMPROBANTE DE PAGO</div>
+            <div class="logo-text">ALIDO - Gestión</div>
+            <div class="doc-type" style="margin-top:2px">Comprobante de Pago</div>
           </div>
           <div style="text-align: right">
             <div class="doc-type">Nº Comprobante</div>
             <div class="comp-nro">${pago.comprobante}</div>
-            <div style="font-size: 12px; font-weight: 700; color: #64748b; margin-top: 4px;">Fecha: ${format(parseISO(pago.fecha), 'dd/MM/yyyy')}</div>
+            <div style="font-size: 10px; font-weight: 700; color: #64748b; margin-top: 2px;">Fecha: ${format(parseISO(pago.fecha), 'dd/MM/yyyy')}</div>
           </div>
         </div>
 
@@ -16185,33 +16191,35 @@ const printComprobanteCobro = (cobro: any, cliente: any) => {
       <head>
         <title>Comprobante de Cobro - ${cobro.comprobante}</title>
         <style>
-          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 40px; color: #334155; line-height: 1.5; }
-          .header { display: flex; justify-content: space-between; border-bottom: 2px solid #f1f5f9; padding-bottom: 24px; margin-bottom: 32px; }
-          .doc-type { font-size: 14px; font-weight: 800; color: #64748b; text-transform: uppercase; letter-spacing: 0.1em; }
-          .comp-nro { font-size: 20px; font-weight: 900; color: #0f172a; }
-          .section { margin-bottom: 32px; }
-          .section-title { font-size: 10px; font-weight: 800; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 12px; border-bottom: 1px solid #f1f5f9; padding-bottom: 4px; }
-          .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; }
-          .label { font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 4px; }
-          .value { font-size: 14px; font-weight: 700; color: #1e293b; }
-          .box { padding: 20px; background: #f8fafc; border-radius: 12px; border: 1px solid #f1f5f9; }
-          .total-box { margin-top: 48px; padding: 32px; background: #0f172a; color: white; border-radius: 16px; text-align: right; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1); }
-          .total-label { font-size: 12px; font-weight: 700; text-transform: uppercase; opacity: 0.6; }
-          .total-value { font-size: 40px; font-weight: 900; letter-spacing: -0.05em; }
-          .footer { margin-top: 100px; display: flex; justify-content: space-between; gap: 60px; }
-          .signature { border-top: 2px solid #e2e8f0; flex: 1; text-align: center; padding-top: 16px; font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; }
+          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 24px; color: #334155; line-height: 1.35; }
+          .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #f1f5f9; padding-bottom: 10px; margin-bottom: 16px; }
+          .logo-text { font-size: 18px; font-weight: 900; color: #0f172a; letter-spacing: -0.025em; }
+          .doc-type { font-size: 9px; font-weight: 800; color: #64748b; text-transform: uppercase; letter-spacing: 0.08em; }
+          .comp-nro { font-size: 14px; font-weight: 900; color: #0f172a; }
+          .section { margin-bottom: 20px; }
+          .section-title { font-size: 9px; font-weight: 800; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; border-bottom: 1px solid #f1f5f9; padding-bottom: 3px; }
+          .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+          .label { font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 2px; }
+          .value { font-size: 12px; font-weight: 700; color: #1e293b; }
+          .box { padding: 12px; background: #f8fafc; border-radius: 8px; border: 1px solid #f1f5f9; }
+          .total-box { margin-top: 28px; padding: 20px; background: #0f172a; color: white; border-radius: 10px; text-align: right; box-shadow: 0 10px 15px -5px rgba(0,0,0,0.08); }
+          .total-label { font-size: 10px; font-weight: 700; text-transform: uppercase; opacity: 0.6; }
+          .total-value { font-size: 28px; font-weight: 900; letter-spacing: -0.05em; }
+          .footer { margin-top: 60px; display: flex; justify-content: space-between; gap: 40px; }
+          .signature { border-top: 2px solid #e2e8f0; flex: 1; text-align: center; padding-top: 10px; font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase; }
           @media print { .total-box { background: #0f172a !important; color: white !important; -webkit-print-color-adjust: exact; } }
         </style>
       </head>
       <body>
         <div class="header">
           <div>
-            <div class="comp-nro" style="font-size: 22px;">COMPROBANTE DE COBRO</div>
+            <div class="logo-text">ALIDO - Gestión</div>
+            <div class="doc-type" style="margin-top:2px">Comprobante de Cobro</div>
           </div>
           <div style="text-align: right">
             <div class="doc-type">Nº Comprobante</div>
             <div class="comp-nro">${cobro.comprobante}</div>
-            <div style="font-size: 12px; font-weight: 700; color: #64748b; margin-top: 4px;">Fecha: ${format(parseISO(cobro.fecha), 'dd/MM/yyyy')}</div>
+            <div style="font-size: 10px; font-weight: 700; color: #64748b; margin-top: 2px;">Fecha: ${format(parseISO(cobro.fecha), 'dd/MM/yyyy')}</div>
           </div>
         </div>
 
