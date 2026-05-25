@@ -18394,15 +18394,21 @@ export default function App() {
     <div className="flex h-screen overflow-hidden bg-sleek-bg">
       {/* Sidebar */}
       <aside className={cn(
-        "bg-sleek-dark text-white transition-all duration-300 flex flex-col",
+        "bg-sleek-dark text-white transition-all duration-300 flex flex-col h-screen shrink-0",
         sidebarExpanded ? "w-[260px]" : "w-20"
       )}>
-        <div className="p-8 flex flex-col items-center gap-4 border-b border-white/10">
-          <img src="/alido-logo.png" alt="Logo" className="h-12" />
-          {sidebarExpanded && <span className="font-bold text-lg uppercase tracking-[0.2em]">Alido</span>}
+        <div className="p-2 py-2 flex flex-col items-center gap-1 border-b border-white/10 shrink-0">
+          <img
+            src="/alido-logo.png"
+            alt="Logo"
+            className={cn(sidebarExpanded ? "h-10" : "h-8")}
+          />
+          {sidebarExpanded && (
+            <span className="font-bold text-sm uppercase tracking-[0.2em] leading-none">Alido</span>
+          )}
         </div>
 
-        <nav className="flex-1 py-4 overflow-y-auto">
+        <nav className="flex-1 min-h-0 py-2 overflow-y-auto custom-scrollbar">
           <SidebarHomeItem
             activeModule={activeModule}
             setActiveModule={setActiveModule}
@@ -18482,18 +18488,18 @@ export default function App() {
           />
         </nav>
 
-        <div className="p-6 border-t border-white/10 space-y-8">
+        <div className="mt-auto shrink-0 p-2 border-t border-white/10 space-y-2">
           {sidebarExpanded && (
-            <div className="flex flex-col items-center gap-3 opacity-40 hover:opacity-100 transition-opacity">
-              <p className="text-[8px] font-bold uppercase tracking-widest text-white/60">Desarrollado por</p>
-              <img src="/basal-logo.png" alt="Basal Logo" className="h-6 brightness-0 invert" />
+            <div className="flex flex-col items-center gap-1 py-1 opacity-40 hover:opacity-100 transition-opacity">
+              <p className="text-[9px] font-bold uppercase tracking-widest text-white/60 leading-none">Desarrollado por</p>
+              <img src="/basal-logo.png" alt="Basal Logo" className="h-5 brightness-0 invert" />
             </div>
           )}
           <button 
             onClick={handleLogout}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded bg-white/5 text-white/60 hover:bg-sleek-danger hover:text-white transition-all text-xs font-bold uppercase tracking-widest"
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded bg-white/5 text-white/60 hover:bg-sleek-danger hover:text-white transition-all text-[10px] font-bold uppercase tracking-widest"
           >
-            <LogOut className="w-4 h-4" />
+            <LogOut className="w-4 h-4 shrink-0" />
             {sidebarExpanded && <span>Cerrar Sesión</span>}
           </button>
         </div>
