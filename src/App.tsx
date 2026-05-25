@@ -2928,17 +2928,16 @@ const RecetasProduccionView = ({
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="md:col-span-2">
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Producto Terminado *</label>
-              <select 
+              <SearchableSelect
                 disabled={!!editingReceta}
-                value={formData.productoTerminadoId || ''} 
-                onChange={e => setFormData({ ...formData, productoTerminadoId: e.target.value })}
-                className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded text-sm focus:outline-none focus:border-sleek-accent disabled:opacity-50"
-              >
-                <option value="">Seleccionar Producto</option>
-                {productos.filter((p: any) => p.tipo === 'Producto Terminado' && p.origen === 'Producción propia').map((p: any) => (
-                  <option key={p.id} value={p.id}>{p.nombre} ({p.codigo})</option>
-                ))}
-              </select>
+                value={formData.productoTerminadoId || ''}
+                onChange={(v) => setFormData({ ...formData, productoTerminadoId: v })}
+                placeholder="Seleccionar Producto"
+                options={buildProductoSelectOptions(
+                  productos,
+                  (p: any) => p.tipo === 'Producto Terminado' && p.origen === 'Producción propia'
+                )}
+              />
               {recetas.some(r => r.productoTerminadoId === formData.productoTerminadoId && (!editingReceta || r.id !== editingReceta.id)) && (
                 <p className="text-[10px] text-sleek-danger font-bold mt-1 uppercase">Este producto ya tiene una receta asignada</p>
               )}
@@ -2997,16 +2996,15 @@ const RecetasProduccionView = ({
                     return (
                       <tr key={idx}>
                         <td className="px-4 py-2">
-                          <select 
+                          <SearchableSelect
                             value={ins.materiaPrimaId || ''}
-                            onChange={e => handleInsumoChange(idx, 'materiaPrimaId', e.target.value)}
-                            className="w-full bg-transparent text-sm focus:outline-none"
-                          >
-                            <option value="">Seleccionar MP</option>
-                            {productos.filter((p: any) => p.tipo === 'Materia Prima' || p.usoCruzado).map((p: any) => (
-                              <option key={p.id} value={p.id}>{p.nombre}</option>
-                            ))}
-                          </select>
+                            onChange={(v) => handleInsumoChange(idx, 'materiaPrimaId', v)}
+                            placeholder="Seleccionar MP"
+                            options={buildProductoSelectOptions(
+                              productos,
+                              (p: any) => p.tipo === 'Materia Prima' || p.usoCruzado
+                            )}
+                          />
                         </td>
                         <td className="px-4 py-2">
                           <input 
@@ -3748,17 +3746,13 @@ const PlantillasDespieceView = ({
         <div className="space-y-8">
           <div>
             <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Materia Prima de Origen *</label>
-            <select 
+            <SearchableSelect
               disabled={!!editingPlantilla}
-              value={formData.materiaPrimaId || ''} 
-              onChange={e => setFormData({ ...formData, materiaPrimaId: e.target.value })}
-              className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded text-sm focus:outline-none focus:border-sleek-accent disabled:opacity-50"
-            >
-              <option value="">Seleccionar Materia Prima</option>
-              {productos.filter((p: any) => p.tipo === 'Materia Prima').map((p: any) => (
-                <option key={p.id} value={p.id}>{p.nombre} ({p.codigo})</option>
-              ))}
-            </select>
+              value={formData.materiaPrimaId || ''}
+              onChange={(v) => setFormData({ ...formData, materiaPrimaId: v })}
+              placeholder="Seleccionar Materia Prima"
+              options={buildProductoSelectOptions(productos, (p: any) => p.tipo === 'Materia Prima')}
+            />
           </div>
 
           <div className="space-y-4">
@@ -3785,16 +3779,15 @@ const PlantillasDespieceView = ({
                   {formData.cortes.map((c: any, idx: number) => (
                     <tr key={idx}>
                       <td className="px-4 py-2">
-                        <select 
+                        <SearchableSelect
                           value={c.productoId || ''}
-                          onChange={e => handleCorteChange(idx, 'productoId', e.target.value)}
-                          className="w-full bg-transparent text-sm focus:outline-none"
-                        >
-                          <option value="">Seleccionar Producto</option>
-                          {productos.filter((p: any) => (p.tipo === 'Producto Terminado' && p.origen === 'Despiece') || p.usoCruzado).map((p: any) => (
-                            <option key={p.id} value={p.id}>{p.nombre}</option>
-                          ))}
-                        </select>
+                          onChange={(v) => handleCorteChange(idx, 'productoId', v)}
+                          placeholder="Seleccionar Producto"
+                          options={buildProductoSelectOptions(
+                            productos,
+                            (p: any) => (p.tipo === 'Producto Terminado' && p.origen === 'Despiece') || p.usoCruzado
+                          )}
+                        />
                       </td>
                       <td className="px-4 py-2">
                         <input 
@@ -4758,16 +4751,15 @@ const LotesProduccionView = ({
                 </div>
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Producto a Elaborar *</label>
-                  <select 
-                    value={formData.productoId || ''} 
-                    onChange={e => handleProductoChange(e.target.value)}
-                    className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded text-sm focus:outline-none focus:border-sleek-accent"
-                  >
-                    <option value="">Seleccionar Producto</option>
-                    {productos.filter((p: any) => p.tipo === 'Producto Terminado' && p.origen === 'Producción propia').map((p: any) => (
-                      <option key={p.id} value={p.id}>{p.nombre}</option>
-                    ))}
-                  </select>
+                  <SearchableSelect
+                    value={formData.productoId || ''}
+                    onChange={(v) => handleProductoChange(v)}
+                    placeholder="Seleccionar Producto"
+                    options={buildProductoSelectOptions(
+                      productos,
+                      (p: any) => p.tipo === 'Producto Terminado' && p.origen === 'Producción propia'
+                    )}
+                  />
                 </div>
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Cantidad Estimada (kg) *</label>
@@ -4894,26 +4886,25 @@ const LotesProduccionView = ({
                       return (
                         <tr key={idx}>
                           <td className="px-8 py-4">
-                            <select
+                            <SearchableSelect
                               value={ins.materiaPrimaId || ''}
                               disabled={isFinalizado}
-                              onChange={e => {
+                              onChange={(v) => {
                                 const newInsumos = [...formData.insumos];
                                 newInsumos[idx] = {
                                   ...newInsumos[idx],
-                                  materiaPrimaId: e.target.value,
+                                  materiaPrimaId: v,
                                   envasesSeleccionados: [],
                                   descuentoGenerico: false,
                                 };
                                 setFormData({ ...formData, insumos: newInsumos });
                               }}
-                              className="w-full bg-transparent text-sm font-bold text-sleek-dark focus:outline-none focus:border-sleek-accent border-b border-transparent hover:border-slate-200 py-1 disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              <option value="">Seleccionar insumo...</option>
-                              {productos.filter((p: any) => p.tipo === 'Materia Prima' || p.usoCruzado).map((p: any) => (
-                                <option key={p.id} value={p.id}>{p.nombre} ({p.codigo})</option>
-                              ))}
-                            </select>
+                              placeholder="Seleccionar insumo..."
+                              options={buildProductoSelectOptions(
+                                productos,
+                                (p: any) => p.tipo === 'Materia Prima' || p.usoCruzado
+                              )}
+                            />
                           </td>
                           <td className="px-8 py-4 text-sm text-slate-400 font-mono">{formatNum(ins.cantidadTeorica)}</td>
                           <td className="px-8 py-4">
@@ -5033,16 +5024,12 @@ const LotesProduccionView = ({
                   </div>
                   <div>
                     <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Almacén de destino</label>
-                    <select
+                    <SearchableSelect
                       value={formData.almacenDestinoId || ''}
-                      onChange={e => setFormData({ ...formData, almacenDestinoId: e.target.value })}
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold focus:outline-none focus:border-sleek-accent"
-                    >
-                      <option value="">Seleccionar…</option>
-                      {almacenes.map((a: any) => (
-                        <option key={a.id} value={a.id}>{a.nombre}</option>
-                      ))}
-                    </select>
+                      onChange={(v) => setFormData({ ...formData, almacenDestinoId: v })}
+                      placeholder="Seleccionar…"
+                      options={buildAlmacenSelectOptions(almacenes)}
+                    />
                   </div>
                   <button 
                     onClick={() => handleSaveLote('Finalizado')}
@@ -5541,14 +5528,12 @@ const LotesProduccionView = ({
 
               <div className="md:col-span-2">
                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Almacén de Destino *</label>
-                <select 
+                <SearchableSelect
                   value={finalizeData.almacenDestinoId || ''}
-                  onChange={e => setFinalizeData({ ...finalizeData, almacenDestinoId: e.target.value })}
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-sleek-accent"
-                >
-                  <option value="">Seleccionar Almacén</option>
-                  {almacenes.map((a: any) => <option key={a.id} value={a.id}>{a.nombre}</option>)}
-                </select>
+                  onChange={(v) => setFinalizeData({ ...finalizeData, almacenDestinoId: v })}
+                  placeholder="Seleccionar Almacén"
+                  options={buildAlmacenSelectOptions(almacenes)}
+                />
               </div>
             </div>
 
@@ -6365,16 +6350,15 @@ const handleFinalize = () => {
                 </div>
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Materia Prima a Despostar *</label>
-                  <select 
-                    value={formData.materiaPrimaId || ''} 
-                    onChange={e => handleMateriaPrimaChange(e.target.value)}
-                    className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded text-sm focus:outline-none focus:border-sleek-accent"
-                  >
-                    <option value="">Seleccionar Materia Prima</option>
-                    {productos.filter((p: any) => p.tipo === 'Materia Prima' && plantillasDespiece.some((pl: any) => pl.materiaPrimaId === p.id)).map((p: any) => (
-                      <option key={p.id} value={p.id}>{p.nombre}</option>
-                    ))}
-                  </select>
+                  <SearchableSelect
+                    value={formData.materiaPrimaId || ''}
+                    onChange={(v) => handleMateriaPrimaChange(v)}
+                    placeholder="Seleccionar Materia Prima"
+                    options={buildProductoSelectOptions(
+                      productos,
+                      (p: any) => p.tipo === 'Materia Prima' && plantillasDespiece.some((pl: any) => pl.materiaPrimaId === p.id)
+                    )}
+                  />
                 </div>
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Cantidad Ingresada (kg) *</label>
@@ -6503,18 +6487,16 @@ const handleFinalize = () => {
                             )}
                           </td>
                           <td className="px-8 py-4">
-                            <select 
+                            <SearchableSelect
                               value={c.almacenDestinoId || ''}
-                              onChange={e => {
+                              onChange={(v) => {
                                 const newCortes = [...formData.cortes];
-                                newCortes[idx].almacenDestinoId = e.target.value;
+                                newCortes[idx].almacenDestinoId = v;
                                 setFormData({ ...formData, cortes: newCortes });
                               }}
-                              className="w-full bg-transparent text-xs focus:outline-none"
-                            >
-                              <option value="">Seleccionar</option>
-                              {almacenes.map((a: any) => <option key={a.id} value={a.id}>{a.nombre}</option>)}
-                            </select>
+                              placeholder="Seleccionar"
+                              options={buildAlmacenSelectOptions(almacenes)}
+                            />
                           </td>
                         </tr>
                       );
@@ -8352,16 +8334,12 @@ const EtiquetasView = ({
           <div className="space-y-4">
             <div>
               <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Almacén Destino (Obligatorio)</label>
-              <select 
+              <SearchableSelect
                 value={finalizeForm.almacenDestinoId}
-                onChange={(e) => setFinalizeForm({ ...finalizeForm, almacenDestinoId: e.target.value })}
-                className="w-full bg-slate-50 border-2 border-slate-100 rounded-xl px-4 py-3 text-xs font-bold text-sleek-dark focus:border-sleek-accent transition-all outline-none"
-              >
-                <option value="">Seleccione Almacén...</option>
-                {almacenes.map((a: any) => (
-                  <option key={a.id} value={a.id}>{a.nombre}</option>
-                ))}
-              </select>
+                onChange={(v) => setFinalizeForm({ ...finalizeForm, almacenDestinoId: v })}
+                placeholder="Seleccione Almacén..."
+                options={buildAlmacenSelectOptions(almacenes)}
+              />
             </div>
 
             <div className="grid grid-cols-1 gap-4">
@@ -9405,13 +9383,11 @@ const MovimientosView = ({
                           </div>
                           <div className="w-full md:w-48">
                              <label className="text-[8px] font-black text-slate-400 uppercase mb-1 block">Destino</label>
-                             <select 
+                             <SearchableSelect
                                value={selectedMapping[item.id] || ''}
-                               onChange={(e) => setSelectedMapping({ ...selectedMapping, [item.id]: e.target.value })}
-                               className="w-full px-3 py-2 bg-white border border-slate-200 rounded text-[10px] font-bold uppercase"
-                             >
-                               {almacenes.map((a: any) => <option key={a.id} value={a.id}>{a.nombre}</option>)}
-                             </select>
+                               onChange={(v) => setSelectedMapping({ ...selectedMapping, [item.id]: v })}
+                               options={buildAlmacenSelectOptions(almacenes)}
+                             />
                           </div>
                        </div>
                      )
@@ -9622,7 +9598,6 @@ const EntradaForm = ({
     observaciones: ''
   });
 
-  const [searchTerm, setSearchTerm] = useState('');
   const [showRegulizeAlert, setShowRegulizeAlert] = useState(false);
   const [currentPendientes, setCurrentPendientes] = useState<any[]>([]);
   const [loteEditadoManual, setLoteEditadoManual] = useState(false);
@@ -9630,11 +9605,6 @@ const EntradaForm = ({
   const todosLosLotes = useMemo(
     () => collectLotesExistentes(lotesProduccion, lotesDespiece, movimientos),
     [lotesProduccion, lotesDespiece, movimientos]
-  );
-
-  const filteredProducts = productos.filter((p: any) => 
-    p.nombre.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    p.codigo.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const selectedProd = productos.find((p: any) => p.id === formData.productoId);
@@ -9702,46 +9672,29 @@ const EntradaForm = ({
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="md:col-span-2 space-y-4">
-          <div className="relative">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input 
-              type="text"
-              placeholder="Escriba para buscar producto..."
-              value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
-              className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-sleek-accent"
-            />
-          </div>
-          <select 
+        <div className="md:col-span-2">
+          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Producto *</label>
+          <SearchableSelect
             required
             value={formData.productoId || ''}
-            onChange={e => {
+            onChange={(v) => {
               setLoteEditadoManual(false);
-              setFormData({ ...formData, productoId: e.target.value });
+              setFormData({ ...formData, productoId: v });
             }}
-            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none"
-          >
-            <option value="">-- Seleccionar Producto * --</option>
-            {filteredProducts.map((p: any) => (
-              <option key={p.id} value={p.id}>{p.nombre} ({p.codigo})</option>
-            ))}
-          </select>
+            placeholder="-- Seleccionar Producto * --"
+            options={buildProductoSelectOptions(productos)}
+          />
         </div>
 
         <div>
           <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Almacén Destino *</label>
-          <select 
+          <SearchableSelect
             required
             value={formData.almacenId || ''}
-            onChange={e => setFormData({ ...formData, almacenId: e.target.value })}
-            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none"
-          >
-            <option value="">Seleccionar...</option>
-            {almacenes.map((a: any) => (
-              <option key={a.id} value={a.id}>{a.nombre}</option>
-            ))}
-          </select>
+            onChange={(v) => setFormData({ ...formData, almacenId: v })}
+            placeholder="Seleccionar..."
+            options={buildAlmacenSelectOptions(almacenes)}
+          />
         </div>
 
         <div>
@@ -9914,15 +9867,9 @@ const SalidaForm = ({
     observaciones: ''
   });
 
-  const [searchTerm, setSearchTerm] = useState('');
   const [availableLotes, setAvailableLotes] = useState<any[]>([]);
   const [selectedEnvKeys, setSelectedEnvKeys] = useState<Record<string, boolean>>({});
   const [filterLoteEnv, setFilterLoteEnv] = useState('');
-
-  const filteredProducts = productos.filter((p: any) => 
-    p.nombre.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    p.codigo.toLowerCase().includes(searchTerm.toLowerCase())
-  );
 
   const selectedProd = productos.find((p: any) => p.id === formData.productoId);
   const pesoEq = selectedProd ? getPesoEquivalente(selectedProd.id) : 1;
@@ -10193,45 +10140,39 @@ const SalidaForm = ({
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="md:col-span-2 space-y-4">
-          <div className="relative">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input 
-              type="text"
-              placeholder="Escriba para buscar producto..."
-              value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
-              className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-sleek-accent"
-            />
-          </div>
-          <select 
+        <div className="md:col-span-2">
+          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Producto *</label>
+          <SearchableSelect
             required
             value={formData.productoId || ''}
-            onChange={e => setFormData({ ...formData, productoId: e.target.value, almacenId: '' })}
-            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none"
-          >
-            <option value="">-- Seleccionar Producto * --</option>
-            {filteredProducts.map((p: any) => (
-              <option key={p.id} value={p.id}>{p.nombre} ({p.codigo})</option>
-            ))}
-          </select>
+            onChange={(v) => setFormData({ ...formData, productoId: v, almacenId: '' })}
+            placeholder="-- Seleccionar Producto * --"
+            options={buildProductoSelectOptions(productos)}
+          />
         </div>
 
         <div>
           <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Almacén Origen *</label>
-          <select 
+          <SearchableSelect
             required
+            disabled={!formData.productoId}
             value={formData.almacenId || ''}
-            onChange={e => setFormData({ ...formData, almacenId: e.target.value })}
-            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none"
-          >
-            <option value="">Seleccionar...</option>
-            {almacenes.map((a: any) => {
-              const stockInA = lotesStock.filter((l: any) => l.productoId === formData.productoId && l.almacenId === a.id).reduce((sum: number, l: any) => sum + l.cantidad, 0);
-              if (stockInA <= 0) return null;
-              return <option key={a.id} value={a.id}>{a.nombre} (Dispo: {formatNumber(stockInA)})</option>
-            })}
-          </select>
+            onChange={(v) => setFormData({ ...formData, almacenId: v })}
+            placeholder="Seleccionar..."
+            options={almacenes
+              .map((a: any) => {
+                const stockInA = lotesStock
+                  .filter((l: any) => l.productoId === formData.productoId && l.almacenId === a.id)
+                  .reduce((sum: number, l: any) => sum + l.cantidad, 0);
+                return { a, stockInA };
+              })
+              .filter(({ stockInA }) => stockInA > 0)
+              .map(({ a, stockInA }) => ({
+                value: a.id,
+                label: `${a.nombre} (Dispo: ${formatNumber(stockInA)})`,
+                sublabel: a.tipo,
+              }))}
+          />
         </div>
 
         {modoSoloSinEtiquetas && (
@@ -10504,13 +10445,7 @@ const TransferenciaForm = ({ productos, almacenes, unidades, lotesStock, getPeso
     observaciones: ''
   });
 
-  const [searchTerm, setSearchTerm] = useState('');
   const [availableLotes, setAvailableLotes] = useState<any[]>([]);
-
-  const filteredProducts = productos.filter((p: any) => 
-    p.nombre.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    p.codigo.toLowerCase().includes(searchTerm.toLowerCase())
-  );
 
   const selectedProd = productos.find((p: any) => p.id === formData.productoId);
   const pesoEq = selectedProd ? getPesoEquivalente(selectedProd.id) : 1;
@@ -10580,60 +10515,51 @@ const TransferenciaForm = ({ productos, almacenes, unidades, lotesStock, getPeso
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="md:col-span-2 space-y-4">
-          <div className="relative">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input 
-              type="text"
-              placeholder="Buscar producto..."
-              value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
-              className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none"
-            />
-          </div>
-          <select 
+        <div className="md:col-span-2">
+          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Producto *</label>
+          <SearchableSelect
             required
             value={formData.productoId || ''}
-            onChange={e => setFormData({ ...formData, productoId: e.target.value, almacenId: '' })}
-            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none"
-          >
-            <option value="">-- Seleccionar Producto * --</option>
-            {filteredProducts.map((p: any) => (
-              <option key={p.id} value={p.id}>{p.nombre}</option>
-            ))}
-          </select>
+            onChange={(v) => setFormData({ ...formData, productoId: v, almacenId: '', almacenDestinoId: '' })}
+            placeholder="-- Seleccionar Producto * --"
+            options={buildProductoSelectOptions(productos)}
+          />
         </div>
 
         <div>
           <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Origen *</label>
-          <select 
+          <SearchableSelect
             required
+            disabled={!formData.productoId}
             value={formData.almacenId || ''}
-            onChange={e => setFormData({ ...formData, almacenId: e.target.value, almacenDestinoId: '' })}
-            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none"
-          >
-            <option value="">Seleccionar...</option>
-            {almacenes.map((a: any) => {
-              const stockInA = lotesStock.filter((l: any) => l.productoId === formData.productoId && l.almacenId === a.id).reduce((sum: number, l: any) => sum + l.cantidad, 0);
-              if (stockInA <= 0) return null;
-              return <option key={a.id} value={a.id}>{a.nombre} ({formatNumber(stockInA)})</option>
-            })}
-          </select>
+            onChange={(v) => setFormData({ ...formData, almacenId: v, almacenDestinoId: '' })}
+            placeholder="Seleccionar..."
+            options={almacenes
+              .map((a: any) => {
+                const stockInA = lotesStock
+                  .filter((l: any) => l.productoId === formData.productoId && l.almacenId === a.id)
+                  .reduce((sum: number, l: any) => sum + l.cantidad, 0);
+                return { a, stockInA };
+              })
+              .filter(({ stockInA }) => stockInA > 0)
+              .map(({ a, stockInA }) => ({
+                value: a.id,
+                label: `${a.nombre} (${formatNumber(stockInA)})`,
+                sublabel: a.tipo,
+              }))}
+          />
         </div>
 
         <div>
           <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Destino *</label>
-          <select 
+          <SearchableSelect
             required
+            disabled={!formData.almacenId}
             value={formData.almacenDestinoId || ''}
-            onChange={e => setFormData({ ...formData, almacenDestinoId: e.target.value })}
-            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none"
-          >
-            <option value="">Seleccionar...</option>
-            {almacenes.map((a: any) => (
-              a.id !== formData.almacenId && <option key={a.id} value={a.id}>{a.nombre}</option>
-            ))}
-          </select>
+            onChange={(v) => setFormData({ ...formData, almacenDestinoId: v })}
+            placeholder="Seleccionar..."
+            options={buildAlmacenSelectOptions(almacenes.filter((a: any) => a.id !== formData.almacenId))}
+          />
         </div>
 
         <div>
@@ -10696,12 +10622,6 @@ const TransferenciaForm = ({ productos, almacenes, unidades, lotesStock, getPeso
 const AsignarProductoForm = ({ almacenId, productos, onSave, onClose }: any) => {
   const [productoId, setProductoId] = useState('');
   const [cantidad, setCantidad] = useState(0);
-  const [searchTerm, setSearchTerm] = useState('');
-
-  const filteredProducts = productos.filter((p: any) => 
-    p.nombre.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    p.codigo.toLowerCase().includes(searchTerm.toLowerCase())
-  );
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -10712,29 +10632,14 @@ const AsignarProductoForm = ({ almacenId, productos, onSave, onClose }: any) => 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       <div>
-        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Buscar Producto</label>
-        <div className="relative mb-4">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-          <input 
-            type="text"
-            placeholder="Nombre o código..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sleek-accent outline-none transition-all"
-          />
-        </div>
         <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Seleccionar Producto</label>
-        <select 
+        <SearchableSelect
           required
           value={productoId}
-          onChange={e => setProductoId(e.target.value)}
-          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sleek-accent outline-none transition-all"
-        >
-          <option value="">Seleccione un producto...</option>
-          {filteredProducts.map((p: any) => (
-            <option key={p.id} value={p.id}>{p.nombre} ({p.codigo})</option>
-          ))}
-        </select>
+          onChange={setProductoId}
+          placeholder="Seleccione un producto..."
+          options={buildProductoSelectOptions(productos)}
+        />
       </div>
       <div>
         <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Stock de Seguridad Inicial</label>
@@ -11655,14 +11560,15 @@ const VentasPedidosView = ({
           </div>
           <div className="space-y-1">
              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Cliente</label>
-             <select 
+             <SearchableSelect
                value={filterCliente}
-               onChange={(e) => setFilterCliente(e.target.value)}
-               className="w-full px-4 py-3 bg-white border border-slate-100 rounded-xl focus:ring-2 focus:ring-sleek-accent outline-none text-xs font-black uppercase text-slate-500"
-             >
-               <option value="Todos">Todos los Clientes</option>
-               {clientes.map((c: any) => <option key={c.id} value={c.id}>{c.razonSocial}</option>)}
-             </select>
+               onChange={(v) => setFilterCliente(v)}
+               placeholder="Todos los Clientes"
+               options={[
+                 { value: 'Todos', label: 'Todos los Clientes' },
+                 ...buildClienteSelectOptions(clientes),
+               ]}
+             />
           </div>
           <div className="space-y-1">
              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-1">Estado</label>
@@ -12225,33 +12131,34 @@ const VentaForm = ({
                        </div>
                        <div className="space-y-2">
                           <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Cliente *</label>
-                          <select 
-                            value={form.clienteId} 
-                            onChange={(e) => {
-                              const c = clientes.find((cli: any) => cli.id === e.target.value);
-                              setForm({ 
-                                ...form, 
-                                clienteId: e.target.value, 
-                                sucursalId: c?.sucursales.length === 1 ? c.sucursales[0].id : ''
+                          <SearchableSelect
+                            required
+                            value={form.clienteId}
+                            onChange={(v) => {
+                              const c = clientes.find((cli: any) => cli.id === v);
+                              setForm({
+                                ...form,
+                                clienteId: v,
+                                sucursalId: c?.sucursales?.length === 1 ? c.sucursales[0].id : '',
                               });
-                            }} 
-                            className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg outline-none font-black text-sleek-dark"
-                          >
-                             <option value="">Seleccionar Cliente...</option>
-                             {clientes.filter((c: any) => c.estado === 'Activo').map((c: any) => <option key={c.id} value={c.id}>{c.razonSocial}</option>)}
-                          </select>
+                            }}
+                            placeholder="Seleccionar Cliente..."
+                            options={buildClienteSelectOptions(clientes, (c: any) => c.estado === 'Activo')}
+                          />
                        </div>
                        <div className="space-y-2">
                           <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Sucursal *</label>
-                          <select 
+                          <SearchableSelect
                             disabled={!form.clienteId}
-                            value={form.sucursalId} 
-                            onChange={(e) => setForm({ ...form, sucursalId: e.target.value })} 
-                            className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg outline-none font-bold text-slate-600 disabled:opacity-50"
-                          >
-                             <option value="">Seleccionar Sucursal...</option>
-                             {selectedCliente?.sucursales.map((s: any) => <option key={s.id} value={s.id}>{s.nombre}</option>)}
-                          </select>
+                            value={form.sucursalId}
+                            onChange={(v) => setForm({ ...form, sucursalId: v })}
+                            placeholder="Seleccionar Sucursal..."
+                            options={(selectedCliente?.sucursales || []).map((s: any) => ({
+                              value: s.id,
+                              label: s.nombre || s.direccion || s.id,
+                              sublabel: s.direccion,
+                            }))}
+                          />
                        </div>
                        <div className="space-y-2">
                           <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Fecha</label>
@@ -12637,16 +12544,12 @@ const VentaForm = ({
 
                 <div className="space-y-4 mb-10">
                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">Almacén Destino</label>
-                   <select 
+                   <SearchableSelect
                      value={returnAlmacenId}
-                     onChange={(e) => setReturnAlmacenId(e.target.value)}
-                     className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-4 focus:ring-amber-500/10 outline-none text-xs font-black uppercase text-sleek-dark transition-all"
-                   >
-                     <option value="">Seleccionar Almacén...</option>
-                     {almacenes.map((a: any) => (
-                       <option key={a.id} value={a.id}>{a.nombre}</option>
-                     ))}
-                   </select>
+                     onChange={setReturnAlmacenId}
+                     placeholder="Seleccionar Almacén..."
+                     options={buildAlmacenSelectOptions(almacenes)}
+                   />
                 </div>
 
                 <div className="flex flex-col gap-3">
@@ -13072,14 +12975,18 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
   // Form State
   const [formCliente, setFormCliente] = useState<any>(null);
 
-  const filteredClientes = clientes.filter((c: any) => {
-    const matchesSearch = c.razonSocial.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                         (c.cuit && c.cuit.includes(searchTerm));
-    const matchesCanal = filterCanal === 'Todos' || c.canal === filterCanal;
-    const matchesPago = filterPago === 'Todos' || c.condicionPago === filterPago;
-    const matchesEstado = filterEstado === 'Todos' || c.estado === filterEstado;
-    return matchesSearch && matchesCanal && matchesPago && matchesEstado;
-  });
+  const filteredClientes = clientes
+    .filter((c: any) => {
+      const matchesSearch = c.razonSocial.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                           (c.cuit && c.cuit.includes(searchTerm));
+      const matchesCanal = filterCanal === 'Todos' || c.canal === filterCanal;
+      const matchesPago = filterPago === 'Todos' || c.condicionPago === filterPago;
+      const matchesEstado = filterEstado === 'Todos' || c.estado === filterEstado;
+      return matchesSearch && matchesCanal && matchesPago && matchesEstado;
+    })
+    .sort((a: any, b: any) =>
+      (a.razonSocial || a.nombre || '').localeCompare(b.razonSocial || b.nombre || '', 'es', { sensitivity: 'base' })
+    );
 
   const getSaldoPendiente = (clienteId: string) => {
     const totalVentas = ventas
@@ -13845,15 +13752,11 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
                     </button>
                     <div className="space-y-1">
                       <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Producto</label>
-                      <select 
+                      <SearchableSelect
                         value={d.productoId}
-                        onChange={(e) => updateDescuento(idx, 'productoId', e.target.value)}
-                        className="w-full px-2 py-2 bg-white border border-slate-200 rounded text-[11px] font-bold"
-                      >
-                        {productos.map((p: any) => (
-                          <option key={p.id} value={p.id}>{p.nombre}</option>
-                        ))}
-                      </select>
+                        onChange={(v) => updateDescuento(idx, 'productoId', v)}
+                        options={buildProductoSelectOptions(productos)}
+                      />
                     </div>
                     <div className="space-y-1">
                       <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Desto. %</label>
@@ -15555,11 +15458,15 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
     setEditingPagoId(null);
   };
 
-  const filtered = proveedores.filter((p: any) => 
-    p.razonSocial.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    p.rubro.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (p.cuit && p.cuit.includes(searchTerm))
-  );
+  const filtered = proveedores
+    .filter((p: any) =>
+      p.razonSocial.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      p.rubro.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (p.cuit && p.cuit.includes(searchTerm))
+    )
+    .sort((a: any, b: any) =>
+      (a.razonSocial || a.nombre || '').localeCompare(b.razonSocial || b.nombre || '', 'es', { sensitivity: 'base' })
+    );
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
@@ -15928,34 +15835,30 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Tipo de Egreso por defecto</label>
-                  <select 
+                  <SearchableSelect
                     value={editingItem?.tipoEgresoDefectoId || ''}
-                    onChange={(e) => {
-                      const tipo = tiposEgreso.find((t: any) => t.id === e.target.value);
-                      setEditingItem({ 
-                        ...editingItem, 
-                        tipoEgresoDefectoId: e.target.value,
-                        cuentaContableDefectoId: tipo?.cuentaContableDefectoId || editingItem.cuentaContableDefectoId
+                    onChange={(v) => {
+                      const tipo = tiposEgreso.find((t: any) => t.id === v);
+                      setEditingItem({
+                        ...editingItem,
+                        tipoEgresoDefectoId: v,
+                        cuentaContableDefectoId: tipo?.cuentaContableDefectoId || editingItem.cuentaContableDefectoId,
                       });
                     }}
-                    className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
-                  >
-                    <option value="">Ninguno</option>
-                    {tiposEgreso.map((t: any) => <option key={t.id} value={t.id}>{t.nombre}</option>)}
-                  </select>
+                    placeholder="Ninguno"
+                    options={tiposEgreso.map((t: any) => ({ value: t.id, label: t.nombre }))}
+                  />
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Cuenta Contable por defecto</label>
-                  <select 
+                  <SearchableSelect
                     value={editingItem?.cuentaContableDefectoId || ''}
-                    onChange={(e) => setEditingItem({ ...editingItem, cuentaContableDefectoId: e.target.value })}
-                    className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
-                  >
-                    <option value="">Ninguna</option>
-                    {planCuentas.filter((pc: any) => pc.nivel === 3).map((pc: any) => (
-                      <option key={pc.id} value={pc.id}>{pc.nombre}</option>
-                    ))}
-                  </select>
+                    onChange={(v) => setEditingItem({ ...editingItem, cuentaContableDefectoId: v })}
+                    placeholder="Ninguna"
+                    options={planCuentas
+                      .filter((pc: any) => pc.nivel === 3)
+                      .map((pc: any) => ({ value: pc.id, label: pc.nombre, sublabel: pc.codigo }))}
+                  />
                 </div>
              </div>
              <p className="text-[9px] text-slate-400">Esta configuración se aplicará automáticamente al seleccionar este proveedor en un nuevo egreso.</p>
@@ -16693,26 +16596,22 @@ const EgresosView = ({
 
                 <div className="space-y-2">
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Proveedor / Beneficiario</label>
-                  <select 
+                  <SearchableSelect
                     value={editingItem?.proveedorId || ''}
-                    onChange={(e) => {
-                      const prov = proveedores.find((p: any) => p.id === e.target.value);
+                    onChange={(v) => {
+                      const prov = proveedores.find((p: any) => p.id === v);
                       const tipoId = prov?.tipoEgresoDefectoId || editingItem.tipoEgresoId;
                       const tipo = tiposEgreso.find((t: any) => t.id === tipoId);
                       const cuentaId = prov?.cuentaContableDefectoId || tipo?.cuentaContableDefectoId || editingItem.cuentaContableId;
-                      
-                      setEditingItem({ 
-                        ...editingItem, 
-                        proveedorId: e.target.value,
+                      setEditingItem({
+                        ...editingItem,
+                        proveedorId: v,
                         tipoEgresoId: tipoId,
-                        cuentaContableId: cuentaId
+                        cuentaContableId: cuentaId,
                       });
                     }}
-                    className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg text-sm font-bold focus:ring-2 focus:ring-sleek-accent outline-none"
-                  >
-                    <option value="">Ocasional / Sin proveedor</option>
-                    {proveedores.map((p: any) => <option key={p.id} value={p.id}>{p.razonSocial}</option>)}
-                  </select>
+                    options={buildProveedorSelectOptions(proveedores)}
+                  />
                 </div>
 
                 <div className="space-y-2">
@@ -16732,30 +16631,27 @@ const EgresosView = ({
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2">
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Tipo de Egreso *</label>
-                    <select 
+                    <SearchableSelect
+                      required
                       value={editingItem?.tipoEgresoId || ''}
-                      onChange={(e) => {
-                        const tipo = tiposEgreso.find((t: any) => t.id === e.target.value);
-                        setEditingItem({ ...editingItem, tipoEgresoId: e.target.value, cuentaContableId: tipo?.cuentaContableDefectoId || editingItem.cuentaContableId });
+                      onChange={(v) => {
+                        const tipo = tiposEgreso.find((t: any) => t.id === v);
+                        setEditingItem({ ...editingItem, tipoEgresoId: v, cuentaContableId: tipo?.cuentaContableDefectoId || editingItem.cuentaContableId });
                       }}
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg text-sm font-bold focus:ring-2 focus:ring-sleek-accent outline-none"
-                    >
-                      <option value="">Seleccionar Tipo...</option>
-                      {tiposEgreso.map((t: any) => <option key={t.id} value={t.id}>{t.nombre}</option>)}
-                    </select>
+                      placeholder="Seleccionar Tipo..."
+                      options={tiposEgreso.map((t: any) => ({ value: t.id, label: t.nombre }))}
+                    />
                   </div>
                   <div className="space-y-2">
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Cuenta Contable (Detalle)</label>
-                    <select 
+                    <SearchableSelect
                       value={editingItem?.cuentaContableId || ''}
-                      onChange={(e) => setEditingItem({ ...editingItem, cuentaContableId: e.target.value })}
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg text-sm font-bold focus:ring-2 focus:ring-sleek-accent outline-none"
-                    >
-                      <option value="">Seleccionar Cuenta...</option>
-                      {planCuentas.filter((pc: any) => pc.nivel === 3).map((pc: any) => (
-                        <option key={pc.id} value={pc.id}>{pc.nombre}</option>
-                      ))}
-                    </select>
+                      onChange={(v) => setEditingItem({ ...editingItem, cuentaContableId: v })}
+                      placeholder="Seleccionar Cuenta..."
+                      options={planCuentas
+                        .filter((pc: any) => pc.nivel === 3)
+                        .map((pc: any) => ({ value: pc.id, label: pc.nombre, sublabel: pc.codigo }))}
+                    />
                   </div>
                 </div>
 
@@ -16820,14 +16716,12 @@ const EgresosView = ({
                           <>
                             <div className="col-span-12 md:col-span-3 space-y-1">
                                <label className="text-[8px] font-black text-slate-400 uppercase">Producto/Ingrediente</label>
-                               <select 
+                               <SearchableSelect
                                  value={item.productoId || ''}
-                                 onChange={(e) => updateItem(idx, 'productoId', e.target.value)}
-                                 className="w-full px-3 py-2 bg-white border border-slate-200 rounded text-xs font-bold"
-                               >
-                                 <option value="">Seleccionar...</option>
-                                 {productos.map((p: any) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
-                               </select>
+                                 onChange={(v) => updateItem(idx, 'productoId', v)}
+                                 placeholder="Seleccionar..."
+                                 options={buildProductoSelectOptions(productos)}
+                               />
                             </div>
                             <div className="col-span-4 md:col-span-1 space-y-1">
                                <label className="text-[8px] font-black text-slate-400 uppercase">Cant.</label>
@@ -16878,14 +16772,12 @@ const EgresosView = ({
                             </div>
                             <div className="col-span-6 md:col-span-2 space-y-1">
                                <label className="text-[8px] font-black text-slate-400 uppercase">Almacén Destino</label>
-                               <select 
+                               <SearchableSelect
                                  value={item.almacenDestinoId || ''}
-                                 onChange={(e) => updateItem(idx, 'almacenDestinoId', e.target.value)}
-                                 className="w-full px-3 py-2 bg-white border border-slate-200 rounded text-[10px] font-bold"
-                               >
-                                 <option value="">Seleccionar...</option>
-                                 {almacenes.map((a: any) => <option key={a.id} value={a.id}>{a.nombre}</option>)}
-                               </select>
+                                 onChange={(v) => updateItem(idx, 'almacenDestinoId', v)}
+                                 placeholder="Seleccionar..."
+                                 options={buildAlmacenSelectOptions(almacenes)}
+                               />
                             </div>
                             <div className="col-span-12 md:col-span-1 flex justify-end">
                                <button onClick={() => removeItem(idx)} type="button" className="p-2 text-slate-300 hover:text-rose-500 transition-colors"><Trash2 className="w-4 h-4" /></button>
@@ -17847,6 +17739,210 @@ const SidebarItem = ({ icon: Icon, label, module, activeModule, activeSubSection
     </div>
   );
 };
+
+// --- Searchable select (combobox) ---
+
+const normalizeText = (text: string) =>
+  (text || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+interface SearchableSelectOption {
+  value: string;
+  label: string;
+  sublabel?: string;
+}
+
+interface SearchableSelectProps {
+  options: SearchableSelectOption[];
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  disabled?: boolean;
+  required?: boolean;
+  className?: string;
+}
+
+const SearchableSelect = ({
+  options,
+  value,
+  onChange,
+  placeholder = 'Seleccionar...',
+  disabled = false,
+  required = false,
+  className = '',
+}: SearchableSelectProps) => {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+
+  const sortedOptions = useMemo(
+    () =>
+      [...options].sort((a, b) => {
+        if (!a.value && b.value) return -1;
+        if (a.value && !b.value) return 1;
+        return a.label.localeCompare(b.label, 'es', { sensitivity: 'base' });
+      }),
+    [options]
+  );
+
+  const selected = useMemo(
+    () => sortedOptions.find((o) => o.value === value),
+    [sortedOptions, value]
+  );
+
+  useEffect(() => {
+    if (!open) {
+      setQuery(selected?.label || '');
+    }
+  }, [value, selected?.label, open]);
+
+  useEffect(() => {
+    const onDocMouseDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        setOpen(false);
+        setQuery(selected?.label || '');
+      }
+    };
+    document.addEventListener('mousedown', onDocMouseDown);
+    return () => document.removeEventListener('mousedown', onDocMouseDown);
+  }, [selected?.label]);
+
+  const filteredOptions = useMemo(() => {
+    const q = normalizeText(query.trim());
+    if (!q) return sortedOptions;
+    return sortedOptions.filter(
+      (o) =>
+        normalizeText(o.label).includes(q) ||
+        (o.sublabel && normalizeText(o.sublabel).includes(q))
+    );
+  }, [sortedOptions, query]);
+
+  const pickOption = (opt: SearchableSelectOption) => {
+    onChange(opt.value);
+    setQuery(opt.label);
+    setOpen(false);
+  };
+
+  const onInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && filteredOptions.length > 0) {
+      e.preventDefault();
+      pickOption(filteredOptions[0]);
+    }
+    if (e.key === 'Escape') {
+      setOpen(false);
+      setQuery(selected?.label || '');
+    }
+  };
+
+  return (
+    <div ref={rootRef} className={cn('relative', className)}>
+      {required && (
+        <input
+          tabIndex={-1}
+          required
+          value={value || ''}
+          onChange={() => {}}
+          className="sr-only absolute w-0 h-0 opacity-0 pointer-events-none"
+          aria-hidden
+        />
+      )}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+        <input
+          ref={inputRef}
+          type="text"
+          disabled={disabled}
+          value={open ? query : (selected?.label || '')}
+          placeholder={placeholder}
+          onFocus={() => {
+            if (disabled) return;
+            setOpen(true);
+            setQuery(selected?.label || '');
+          }}
+          onChange={(e) => {
+            const v = e.target.value;
+            setQuery(v);
+            setOpen(true);
+            if (!v.trim()) onChange('');
+          }}
+          onKeyDown={onInputKeyDown}
+          className="w-full border border-slate-200 rounded-lg pl-9 pr-9 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#F27D26] focus:border-[#F27D26] disabled:opacity-50 disabled:cursor-not-allowed bg-white"
+        />
+        <ChevronDown
+          className={cn(
+            'absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none transition-transform',
+            open && 'rotate-180'
+          )}
+        />
+      </div>
+      {open && !disabled && (
+        <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-[250px] overflow-y-auto custom-scrollbar">
+          {filteredOptions.length === 0 ? (
+            <div className="px-3 py-2 text-slate-400 text-sm italic">Sin resultados</div>
+          ) : (
+            filteredOptions.map((opt) => (
+              <button
+                key={opt.value || `opt-${opt.label}`}
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => pickOption(opt)}
+                className={cn(
+                  'w-full text-left px-3 py-2 cursor-pointer hover:bg-slate-100 text-sm',
+                  opt.value === value && 'bg-blue-50'
+                )}
+              >
+                <div className="font-medium text-sleek-dark">{opt.label}</div>
+                {opt.sublabel ? (
+                  <div className="text-xs text-slate-400">{opt.sublabel}</div>
+                ) : null}
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const buildProductoSelectOptions = (
+  productos: any[],
+  filter?: (p: any) => boolean
+): SearchableSelectOption[] => {
+  const list = filter ? productos.filter(filter) : productos;
+  return list.map((p: any) => ({
+    value: p.id,
+    label: p.nombre || p.codigo || p.id,
+    sublabel: p.codigo,
+  }));
+};
+
+const buildClienteSelectOptions = (
+  clientes: any[],
+  filter?: (c: any) => boolean
+): SearchableSelectOption[] => {
+  const list = filter ? clientes.filter(filter) : clientes;
+  return list.map((c: any) => ({
+    value: c.id,
+    label: c.razonSocial || c.nombre || c.id,
+    sublabel: c.cuit ? `CUIT: ${c.cuit}` : 'Sin CUIT',
+  }));
+};
+
+const buildProveedorSelectOptions = (proveedores: any[]): SearchableSelectOption[] => [
+  { value: '', label: 'Ocasional / Sin proveedor', sublabel: '' },
+  ...proveedores.map((p: any) => ({
+    value: p.id,
+    label: p.razonSocial || p.nombre || p.id,
+    sublabel: p.cuit ? `CUIT: ${p.cuit}` : 'S/C',
+  })),
+];
+
+const buildAlmacenSelectOptions = (almacenes: any[]): SearchableSelectOption[] =>
+  almacenes.map((a: any) => ({
+    value: a.id,
+    label: a.nombre || a.id,
+    sublabel: a.tipo || a.tipoAlmacenamiento,
+  }));
 
 // --- Main Application ---
 
