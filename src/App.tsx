@@ -270,6 +270,67 @@ const isEnvaseVigente = (e: any): boolean => {
   return e.estado === 'en_stock' || !e.estado;
 };
 
+const normalizeEtiquetaCodigo = (id: string): string => (id || '').trim().toLowerCase();
+
+/** Códigos de barras de bultos ya asignados a ventas/pedidos no anulados (excluye venta en edición). */
+const getCodigosEtiquetasUsadasEnVentas = (ventas: any[], ventaActualId?: string): Set<string> => {
+  const usados = new Set<string>();
+  (ventas || []).forEach((v: any) => {
+    if (v.id === ventaActualId || v.estado === 'Anulado') return;
+    (v.productos || []).forEach((p: any) => {
+      if (p.codigoBarras) usados.add(normalizeEtiquetaCodigo(p.codigoBarras));
+    });
+  });
+  return usados;
+};
+
+/** True si el bulto ya está en otra venta no anulada, vendido en sistema, o dado de baja/anulado. */
+const isEtiquetaUsada = (
+  etiquetaId: string,
+  ventas: any[],
+  lotesEtiquetados: any[],
+  ventaActualId?: string
+): boolean => {
+  const codigo = normalizeEtiquetaCodigo(etiquetaId);
+  if (!codigo) return false;
+
+  if (getCodigosEtiquetasUsadasEnVentas(ventas, ventaActualId).has(codigo)) return true;
+
+  for (const le of lotesEtiquetados || []) {
+    const env = (le.envases || []).find(
+      (e: any) => normalizeEtiquetaCodigo(e.codigoBarras || e.codigo || '') === codigo
+    );
+    if (!env) continue;
+    if (env.anulado === true || env.anulado === 'true') return true;
+    if (env.estado === 'baja' || env.estado === 'Baja' || env.estado === 'anulado') return true;
+    if (env.estado === 'Vendido' && env.ventaId !== ventaActualId) return true;
+    break;
+  }
+  return false;
+};
+
+/** Valida unicidad y disponibilidad de etiquetas antes de guardar/finalizar venta. */
+const validateEtiquetasEnVenta = (
+  productos: VentaProducto[],
+  ventas: any[],
+  lotesEtiquetados: any[],
+  ventaActualId?: string
+): string | null => {
+  const vistos = new Set<string>();
+  for (const p of productos) {
+    if (!p.codigoBarras) continue;
+    const norm = normalizeEtiquetaCodigo(p.codigoBarras);
+    if (vistos.has(norm)) {
+      return `La etiqueta ${p.codigoBarras} está repetida en esta venta.`;
+    }
+    vistos.add(norm);
+    if (isEtiquetaUsada(p.codigoBarras, ventas, lotesEtiquetados, ventaActualId)) {
+      return 'Esta etiqueta ya fue utilizada en otra venta y no puede volver a usarse.';
+    }
+  }
+  return null;
+};
+
 const filterEnvasesPorNumeroLote = (envases: any[], numeroLote: string): any[] =>
   (envases || []).filter(
     (e) =>
@@ -6733,7 +6794,8 @@ const EtiquetasView = ({
   getPesoEquivalente,
   lotesEtiquetados,
   setLotesEtiquetados,
-  setDescuentosPendientes
+  setDescuentosPendientes,
+  ventas = []
 }: any) => {
   const [selectedLoteId, setSelectedLoteId] = useState<string | null>(null);
   const [selectedCorteId, setSelectedCorteId] = useState<string | null>(null);
@@ -8088,15 +8150,25 @@ const EtiquetasView = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {envasesParaMostrar.map((e: any, idx: number) => (
-                    <tr key={idx} className={cn("transition-colors", e.anulado ? "bg-rose-50/30 opacity-60" : "hover:bg-slate-50/30")}>
+                  {envasesParaMostrar.map((e: any, idx: number) => {
+                    const vendida =
+                      e.estado === 'Vendido' ||
+                      getCodigosEtiquetasUsadasEnVentas(ventas).has(normalizeEtiquetaCodigo(e.codigoBarras || ''));
+                    return (
+                    <tr key={idx} className={cn(
+                      "transition-colors",
+                      e.anulado ? "bg-rose-50/30 opacity-60" : vendida ? "bg-slate-50/80 opacity-70" : "hover:bg-slate-50/30"
+                    )}>
                       <td className="px-8 py-3 text-[10px] font-black text-slate-400">#{e.numero}</td>
                       {selectedLote?.tipo === 'despiece' && (
                         <td className="px-8 py-3 text-[10px] font-bold text-sleek-dark uppercase truncate max-w-[120px]">
                            {e.corteNombre}
                         </td>
                       )}
-                      <td className="px-8 py-3 font-mono text-[10px] font-bold text-sleek-dark lowercase">{e.codigoBarras}</td>
+                      <td className={cn(
+                        "px-8 py-3 font-mono text-[10px] font-bold lowercase",
+                        vendida ? "text-slate-400" : "text-sleek-dark"
+                      )}>{e.codigoBarras}</td>
                       <td className="px-8 py-3">
                         {editingPesoBarras === e.codigoBarras ? (
                           <input
@@ -8120,7 +8192,7 @@ const EtiquetasView = ({
                         ) : (
                           <button
                             type="button"
-                            disabled={e.anulado === true || e.anulado === 'true' || e.estado === 'baja'}
+                            disabled={e.anulado === true || e.anulado === 'true' || e.estado === 'baja' || vendida}
                             onClick={() => {
                               setEditingPesoBarras(e.codigoBarras);
                               setEditingPesoDraft(String(e.pesoNeto ?? ''));
@@ -8135,7 +8207,12 @@ const EtiquetasView = ({
                         {safeFormat(e.fechaHora, 'HH:mm:ss')}
                       </td>
                       <td className="px-8 py-3 text-right">
-                        {!(e.anulado === true || e.anulado === 'true') && e.estado !== 'baja' && (
+                        {vendida && (
+                          <div className="flex flex-col items-end">
+                            <Badge variant="default" className="text-[8px] uppercase bg-slate-200 text-slate-500">Vendida</Badge>
+                          </div>
+                        )}
+                        {!(e.anulado === true || e.anulado === 'true') && e.estado !== 'baja' && !vendida && (
                           <div className="flex justify-end gap-2">
                             <button 
                               onClick={() => handlePrintLabel(e)}
@@ -8153,7 +8230,7 @@ const EtiquetasView = ({
                             </button>
                           </div>
                         )}
-                        {(e.anulado || e.estado === 'baja') && (
+                        {(e.anulado || e.estado === 'baja') && !vendida && (
                           <div className="flex flex-col items-end">
                             <Badge variant="danger" className="text-[8px] uppercase">Baja</Badge>
                             <p className="text-[8px] text-slate-400 font-bold mt-1 max-w-[120px] truncate" title={e.motivoBaja}>{e.motivoBaja}</p>
@@ -8161,7 +8238,8 @@ const EtiquetasView = ({
                         )}
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                   {envasesParaMostrar.length === 0 && (
                     <tr>
                       <td colSpan={selectedLote?.tipo === 'despiece' ? 6 : 5} className="px-8 py-12 text-center text-slate-300 italic text-[10px] font-bold uppercase tracking-widest">
@@ -11360,6 +11438,17 @@ const VentasPedidosView = ({
         venta={editingVenta}
         onClose={() => setView('list')}
         onSave={(savedVenta: any, shouldFinalize: boolean) => {
+          const etiquetaError = validateEtiquetasEnVenta(
+            savedVenta.productos || [],
+            ventas,
+            lotesEtiquetados,
+            savedVenta.id
+          );
+          if (etiquetaError) {
+            showNotification(etiquetaError, 'error');
+            return;
+          }
+
           // If editing a finalized sale, we must annul old moves first
           let finalMovimientos = [...movimientos];
           const oldVenta = ventas.find((v: any) => v.id === savedVenta.id);
@@ -11880,6 +11969,8 @@ const VentaForm = ({
       const p: any = foundPackage;
       if (p.estado === 'Baja' || p.anulado) {
         showNotification('Este envase fue dado de baja o anulado', 'error');
+      } else if (isEtiquetaUsada(barcodeInput, ventas, lotesEtiquetados, form.id)) {
+        showNotification('Esta etiqueta ya fue utilizada en otra venta y no puede volver a usarse.', 'error');
       } else if (form.productos.some((item: any) => item.codigoBarras === barcodeInput)) {
         showNotification('Este envase ya está en la venta', 'error');
       } else {
@@ -12072,11 +12163,23 @@ const VentaForm = ({
       showNotification('Todos los productos deben tener cantidad mayor a 0', 'error');
       return;
     }
+
+    const etiquetaError = validateEtiquetasEnVenta(form.productos, ventas, lotesEtiquetados, form.id);
+    if (etiquetaError) {
+      showNotification(etiquetaError, 'error');
+      return;
+    }
     
     setIsConfirmModalOpen(true);
   };
 
   const executeSave = (isFinal: boolean) => {
+    const etiquetaError = validateEtiquetasEnVenta(form.productos, ventas, lotesEtiquetados, form.id);
+    if (etiquetaError) {
+      showNotification(etiquetaError, 'error');
+      setIsConfirmModalOpen(false);
+      return;
+    }
     setIsSubmitting(true);
     onSave({ ...form, estado: isFinal ? 'Finalizado' : 'En Proceso' }, isFinal);
     // Modal will close because list view is updated or step ends
@@ -12426,6 +12529,11 @@ const VentaForm = ({
                           onClick={() => {
                             if (!form.clienteId || form.productos.length === 0) {
                               showNotification('Datos incompletos para guardar borrador', 'error');
+                              return;
+                            }
+                            const etiquetaError = validateEtiquetasEnVenta(form.productos, ventas, lotesEtiquetados, form.id);
+                            if (etiquetaError) {
+                              showNotification(etiquetaError, 'error');
                               return;
                             }
                             executeSave(false);
@@ -18573,6 +18681,7 @@ export default function App() {
                 lotesEtiquetados={lotesEtiquetados}
                 setLotesEtiquetados={setLotesEtiquetados}
                 setDescuentosPendientes={setDescuentosPendientes}
+                ventas={ventas}
               />
             )}
             {activeModule === 'PRODUCCIÓN' && activeSubSection === 'Etiquetas' && (
@@ -18601,6 +18710,7 @@ export default function App() {
                 lotesEtiquetados={lotesEtiquetados}
                 setLotesEtiquetados={setLotesEtiquetados}
                 setDescuentosPendientes={setDescuentosPendientes}
+                ventas={ventas}
               />
             )}
     {activeModule === 'INVENTARIO' && activeSubSection === 'Movimientos' && (
