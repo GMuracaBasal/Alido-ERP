@@ -69,18 +69,84 @@
         visibility: visible !important;
     }
 
-    /* Position the remito at the absolute top of the page */
+    /* Remito A4 — layout de impresión (clases semánticas, sin depender de Tailwind) */
     .remito-container {
         position: absolute !important;
         left: 0 !important;
         top: 0 !important;
         width: 100% !important;
-        margin: 0 !important;
-        padding: 10mm !important;
+        max-width: 210mm !important;
+        margin: 0 auto !important;
+        padding: 0 !important;
         box-shadow: none !important;
         border: none !important;
-        display: block !important;
+        min-height: 100vh !important;
+        display: flex !important;
+        flex-direction: column !important;
     }
+    .remito-content { flex: 1 1 auto !important; display: flex !important; flex-direction: column !important; }
+    .remito-header {
+        display: grid !important;
+        grid-template-columns: 1fr 0.3fr 1fr !important;
+        gap: 4mm !important;
+        padding-bottom: 3mm !important;
+        margin-bottom: 4mm !important;
+        border-bottom: 2px solid #1A2B3C !important;
+    }
+    .remito-header-brand { display: flex !important; align-items: flex-start !important; gap: 3mm !important; }
+    .remito-header-logo {
+        width: 12mm !important;
+        height: 12mm !important;
+        min-width: 12mm !important;
+        background: #1A2B3C !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+    }
+    .remito-title { font-size: 14pt !important; font-weight: 900 !important; font-style: italic !important; color: #1A2B3C !important; }
+    .remito-subtitle { font-size: 8pt !important; font-weight: 700 !important; color: #64748b !important; text-transform: uppercase !important; }
+    .remito-header-doc { text-align: right !important; }
+    .remito-badge { display: inline-block !important; background: #1A2B3C !important; color: #fff !important; padding: 1mm 3mm !important; font-size: 12pt !important; font-weight: 900 !important; }
+    .remito-nro { font-size: 9pt !important; font-weight: 900 !important; }
+    .remito-fecha { font-size: 8pt !important; color: #64748b !important; }
+    .remito-info {
+        display: grid !important;
+        grid-template-columns: 1fr 1fr !important;
+        gap: 6mm !important;
+        padding: 4mm 0 !important;
+        margin-bottom: 4mm !important;
+        border-bottom: 1px solid #f1f5f9 !important;
+    }
+    .remito-info-col-right { text-align: right !important; }
+    .remito-section-label { font-size: 8pt !important; font-weight: 900 !important; color: #F27D26 !important; text-transform: uppercase !important; }
+    .remito-cliente-nombre { font-size: 10pt !important; font-weight: 900 !important; }
+    .remito-cliente-meta, .remito-field-label { font-size: 8pt !important; }
+    .remito-field-value { font-size: 10pt !important; font-weight: 900 !important; }
+    .remito-table-block { page-break-inside: avoid !important; }
+    .remito-table-block table { width: 100% !important; border-collapse: collapse !important; table-layout: fixed !important; }
+    .remito-table-block thead th { font-size: 8pt !important; font-weight: 900 !important; text-transform: uppercase !important; color: #94a3b8 !important; padding: 2mm 1mm !important; border-bottom: 2px solid #f1f5f9 !important; }
+    .remito-table-block tbody td { font-size: 9pt !important; padding: 2mm 1mm !important; border-bottom: 1px solid #f8fafc !important; vertical-align: top !important; }
+    .remito-table-block thead th:nth-child(2),
+    .remito-table-block tbody td:nth-child(2) { text-align: center !important; }
+    .remito-table-block thead th:nth-child(n+3),
+    .remito-table-block tbody td:nth-child(n+3) { text-align: right !important; }
+    .remito-totals { margin-top: 4mm !important; padding-top: 3mm !important; border-top: 2px solid #1A2B3C !important; page-break-inside: avoid !important; }
+    .remito-totals-inner { width: 72mm !important; margin-left: auto !important; }
+    .remito-total-row { display: flex !important; justify-content: space-between !important; font-size: 9pt !important; font-weight: 700 !important; margin-bottom: 2mm !important; }
+    .remito-total-final { display: flex !important; justify-content: space-between !important; font-size: 10pt !important; font-weight: 900 !important; padding-top: 2mm !important; border-top: 1px solid #f1f5f9 !important; }
+    .remito-firmas {
+        margin-top: auto !important;
+        padding-top: 12mm !important;
+        display: grid !important;
+        grid-template-columns: 1fr 1fr !important;
+        gap: 10mm !important;
+        page-break-inside: avoid !important;
+        flex-shrink: 0 !important;
+    }
+    .remito-firma-col { text-align: center !important; }
+    .remito-firma-line { min-height: 20mm !important; border-top: 1px solid #cbd5e1 !important; }
+    .remito-firma-label { font-size: 9pt !important; font-weight: 900 !important; margin-top: 2mm !important; }
+    .remito-firma-sub { font-size: 9pt !important; color: #cbd5e1 !important; margin-top: 1mm !important; }
 
     /* Preserve colors and background styles for professional print */
     * {
@@ -89,8 +155,8 @@
     }
 
     @page {
-        size: auto;
-        margin: 0mm; /* Browser will apply default margins or use our container padding */
+        size: A4;
+        margin: 15mm;
     }
 }
 

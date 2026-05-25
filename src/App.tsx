@@ -12672,252 +12672,221 @@ const VentaForm = ({
   );
 };
 
+/** Estilos de impresión A4 para remito (sin Tailwind; ventana popup y @media print en index.css). */
+const REMITO_PRINT_STYLES = `
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    color: #1A2B3C;
+    background: #fff;
+    line-height: 1.35;
+  }
+  @page { size: A4; margin: 15mm; }
+  .no-print {
+    text-align: center;
+    margin-bottom: 16px;
+    padding: 12px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+  }
+  .btn-print {
+    padding: 10px 28px;
+    background: #1A2B3C;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 900;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .remito-wrapper { width: 210mm; max-width: 100%; margin: 0 auto; }
+  .remito-container {
+    width: 100%;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  .remito-content { flex: 1 1 auto; display: flex; flex-direction: column; }
+  .remito-header {
+    display: grid;
+    grid-template-columns: 1fr 0.3fr 1fr;
+    align-items: start;
+    gap: 4mm;
+    padding-bottom: 3mm;
+    margin-bottom: 4mm;
+    border-bottom: 2px solid #1A2B3C;
+  }
+  .remito-header-brand { display: flex; align-items: flex-start; gap: 3mm; }
+  .remito-header-logo {
+    width: 12mm;
+    height: 12mm;
+    min-width: 12mm;
+    background: #1A2B3C;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+  }
+  .remito-header-logo svg { width: 6mm; height: 6mm; stroke: #fff; }
+  .remito-title { font-size: 14pt; font-weight: 900; font-style: italic; color: #1A2B3C; line-height: 1.2; }
+  .remito-subtitle { font-size: 8pt; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 0.5mm; }
+  .remito-header-spacer { min-height: 1px; }
+  .remito-header-doc { text-align: right; }
+  .remito-badge {
+    display: inline-block;
+    background: #1A2B3C;
+    color: #fff;
+    padding: 1mm 3mm;
+    margin-bottom: 1.5mm;
+    font-size: 12pt;
+    font-weight: 900;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .remito-nro { font-size: 9pt; font-weight: 900; color: #1A2B3C; }
+  .remito-fecha { font-size: 8pt; font-weight: 700; color: #64748b; font-style: italic; margin-top: 0.5mm; }
+  .remito-info {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6mm;
+    padding: 4mm 0;
+    margin-bottom: 4mm;
+    border-bottom: 1px solid #f1f5f9;
+  }
+  .remito-info-col-right { text-align: right; }
+  .remito-section-label {
+    font-size: 8pt;
+    font-weight: 900;
+    color: #F27D26;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    border-bottom: 1px solid rgba(242, 125, 38, 0.25);
+    padding-bottom: 1mm;
+    margin-bottom: 2mm;
+  }
+  .remito-cliente-nombre { font-size: 10pt; font-weight: 900; text-transform: uppercase; color: #1A2B3C; }
+  .remito-cliente-meta { font-size: 9pt; font-weight: 700; color: #64748b; margin-top: 1mm; }
+  .remito-field-label { font-size: 8pt; font-weight: 900; color: #94a3b8; text-transform: uppercase; margin-top: 2mm; }
+  .remito-field-value { font-size: 10pt; font-weight: 900; color: #475569; text-transform: uppercase; }
+  .remito-table-block { page-break-inside: avoid; flex: 0 0 auto; }
+  .remito-table-block table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  .remito-table-block thead th {
+    font-size: 8pt;
+    font-weight: 900;
+    text-transform: uppercase;
+    color: #94a3b8;
+    text-align: left;
+    padding: 2mm 1mm;
+    border-bottom: 2px solid #f1f5f9;
+    vertical-align: bottom;
+  }
+  .remito-table-block thead th:nth-child(1) { width: 32%; }
+  .remito-table-block thead th:nth-child(2) { width: 18%; text-align: center; }
+  .remito-table-block thead th:nth-child(3),
+  .remito-table-block thead th:nth-child(4),
+  .remito-table-block thead th:nth-child(5),
+  .remito-table-block thead th:nth-child(6) { text-align: right; }
+  .remito-table-block tbody td {
+    font-size: 9pt;
+    padding: 2mm 1mm;
+    border-bottom: 1px solid #f8fafc;
+    vertical-align: top;
+    word-break: break-word;
+  }
+  .remito-table-block tbody td:nth-child(2) { text-align: center; }
+  .remito-table-block tbody td:nth-child(n+3) { text-align: right; }
+  .remito-product-name { font-weight: 900; text-transform: uppercase; font-size: 9pt; display: block; }
+  .remito-product-code { font-size: 8pt; font-weight: 700; color: #94a3b8; text-transform: uppercase; display: block; margin-top: 0.5mm; }
+  .remito-totals {
+    margin-top: 4mm;
+    padding-top: 3mm;
+    border-top: 2px solid #1A2B3C;
+    page-break-inside: avoid;
+  }
+  .remito-totals-inner { width: 72mm; margin-left: auto; }
+  .remito-total-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 9pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: #94a3b8;
+    margin-bottom: 2mm;
+  }
+  .remito-total-final {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 2mm;
+    border-top: 1px solid #f1f5f9;
+    margin-top: 2mm;
+  }
+  .remito-total-final-label { font-size: 9pt; font-weight: 900; text-transform: uppercase; color: #1A2B3C; }
+  .remito-total-final-value { font-size: 10pt; font-weight: 900; color: #1A2B3C; }
+  .remito-firmas {
+    margin-top: auto;
+    padding-top: 12mm;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10mm;
+    page-break-inside: avoid;
+    flex-shrink: 0;
+  }
+  .remito-firma-col { text-align: center; }
+  .remito-firma-line { min-height: 20mm; border-top: 1px solid #cbd5e1; }
+  .remito-firma-label { font-size: 9pt; font-weight: 900; text-transform: uppercase; letter-spacing: 0.1em; color: #94a3b8; margin-top: 2mm; }
+  .remito-firma-sub { font-size: 9pt; font-weight: 700; color: #cbd5e1; margin-top: 1mm; }
+  @media print {
+    .no-print { display: none !important; }
+    body { padding: 0; }
+    .remito-container { min-height: 100vh; }
+    .remito-table-block, .remito-firmas { page-break-inside: avoid; }
+  }
+`;
+
+const openRemitoPrintWindow = (remitoHTML: string, comprobante: string) => {
+  const ventanaImpresion = window.open('', '_blank', 'width=1000,height=800');
+  if (!ventanaImpresion) {
+    globalAlert('Fallo al abrir ventana de impresión. Por favor verifique si los popups están bloqueados.');
+    return;
+  }
+  ventanaImpresion.document.write(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <title>Remito - Alido Gestión - ${comprobante}</title>
+      <style>${REMITO_PRINT_STYLES}</style>
+    </head>
+    <body>
+      <div class="no-print">
+        <button class="btn-print" type="button" onclick="window.print()">🖨️ IMPRIMIR COMPROBANTE</button>
+        <p style="margin-top: 10px; font-size: 9px; color: #64748b; font-weight: bold; text-transform: uppercase;">
+          Haga clic en el botón superior o use Ctrl + P para imprimir
+        </p>
+      </div>
+      <div class="remito-wrapper">
+        ${remitoHTML}
+      </div>
+    </body>
+    </html>
+  `);
+  ventanaImpresion.document.close();
+  setTimeout(() => ventanaImpresion.focus(), 500);
+};
+
 const RemitoView = ({ venta, cliente, productos, onBack }: any) => {
    const sucursal = cliente?.sucursales.find((s: any) => s.id === venta.sucursalId);
    
    const imprimirRemito = () => {
-    // 1. Obtener el HTML del remito
     const remitoContainer = document.querySelector('.remito-container');
-    
     if (!remitoContainer) {
         globalAlert('No se encontró el contenido del remito');
         return;
     }
-    
-    const remitoHTML = remitoContainer.innerHTML;
-    
-    // 2. Abrir una ventana nueva
-    const ventanaImpresion = window.open('', '_blank', 'width=1000,height=800');
-    
-    if (!ventanaImpresion) {
-        globalAlert('Fallo al abrir ventana de impresión. Por favor verifique si los popups están bloqueados.');
-        return;
-    }
-
-    // 3. Escribir el contenido del remito en la ventana nueva con estilos profesionales
-    ventanaImpresion.document.write(`
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Remito - Alido Gestión - ${venta.comprobante}</title>
-            <style>
-                /* Reset básico y Tipografía */
-                * { margin: 0; padding: 0; box-sizing: border-box; }
-                body {
-                    font-family: 'Helvetica Neue', Arial, sans-serif;
-                    background: white;
-                    color: #1A2B3C;
-                    line-height: 1.4;
-                }
-                
-                .remito-wrapper {
-                    max-width: 210mm;
-                    margin: 0 auto;
-                    padding: 15mm;
-                }
-
-                /* Header */
-                .border-b-4 { border-bottom: 2px solid #1A2B3C; }
-                .pb-8 { padding-bottom: 0.75rem; }
-                .flex { display: flex; }
-                .justify-between { justify-content: space-between; }
-                .items-start { align-items: flex-start; }
-                .items-center { align-items: center; }
-                .gap-10 { gap: 1rem; }
-                
-                .logo-box {
-                    width: 48px;
-                    height: 48px;
-                    background: #1A2B3C;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    color: white;
-                }
-
-                .title-main {
-                    font-size: 1.125rem;
-                    font-weight: 900;
-                    font-style: italic;
-                    letter-spacing: -0.05em;
-                    color: #1A2B3C;
-                }
-
-                .subtitle {
-                    font-size: 9px;
-                    font-weight: bold;
-                    color: #64748b;
-                    text-transform: uppercase;
-                    letter-spacing: 0.08em;
-                    margin-top: 0.15rem;
-                    line-height: 1.3;
-                }
-
-                .text-right { text-align: right; }
-                .remito-box {
-                    background: #1A2B3C;
-                    color: white;
-                    padding: 0.25rem 0.75rem;
-                    margin-bottom: 0.35rem;
-                    display: inline-block;
-                }
-                .remito-box h3 { font-size: 0.875rem; font-weight: 900; letter-spacing: 0.15em; }
-
-                /* Info Grid */
-                .grid { display: grid; }
-                .grid-cols-2 { grid-template-columns: repeat(2, 1fr); }
-                .gap-12 { gap: 1.5rem; }
-                .py-10 { padding-top: 1rem; padding-bottom: 1rem; }
-                .border-b { border-bottom: 1px solid #f1f5f9; }
-
-                .label-small {
-                    font-size: 9px;
-                    font-weight: 900;
-                    color: #F27D26;
-                    text-transform: uppercase;
-                    letter-spacing: 0.08em;
-                    border-bottom: 1px solid rgba(242, 125, 38, 0.2);
-                    padding-bottom: 0.25rem;
-                    margin-bottom: 0.75rem;
-                }
-
-                .razon-social { font-size: 0.875rem; font-weight: 900; text-transform: uppercase; }
-                .text-secondary { font-size: 0.6875rem; font-weight: bold; color: #64748b; margin-top: 0.15rem; }
-
-                /* Table */
-                table { width: 100%; border-collapse: collapse; margin-top: 2.5rem; }
-                th {
-                    text-align: left;
-                    padding: 1rem 0;
-                    font-size: 10px;
-                    font-weight: 900;
-                    text-transform: uppercase;
-                    color: #94a3b8;
-                    border-bottom: 2px solid #f1f5f9;
-                }
-                td {
-                    padding: 1.5rem 0;
-                    border-bottom: 1px solid #f8fafc;
-                    vertical-align: middle;
-                }
-                .p-name { font-size: 0.75rem; font-weight: 900; text-transform: uppercase; }
-                .p-code { font-size: 9px; font-weight: bold; color: #94a3b8; text-transform: uppercase; }
-                .text-center { text-align: center; }
-                .text-right-aligned { text-align: right; }
-
-                /* Totals */
-                .totals-container {
-                    margin-top: 3rem;
-                    padding-top: 2rem;
-                    border-top: 4px solid #1A2B3C;
-                }
-                .total-row {
-                    display: flex;
-                    justify-content: flex-end;
-                    gap: 4rem;
-                }
-                .total-final {
-                    font-size: 1.75rem;
-                    font-weight: 900;
-                }
-
-                /* Botón y Previsualización */
-                .no-print {
-                    text-align: center;
-                    margin-bottom: 30px;
-                    padding: 20px;
-                    background: #f8fafc;
-                    border-radius: 12px;
-                    border: 1px solid #e2e8f0;
-                }
-                
-                .btn-print {
-                    display: inline-block;
-                    padding: 14px 40px;
-                    background: #1A2B3C;
-                    color: white;
-                    border: none;
-                    border-radius: 8px;
-                    font-size: 14px;
-                    font-weight: 900;
-                    text-transform: uppercase;
-                    letter-spacing: 0.1em;
-                    cursor: pointer;
-                    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-                    transition: all 0.2s;
-                }
-                .btn-print:hover { background: #0f172a; transform: translateY(-1px); }
-                
-                .remito-container {
-                    display: flex;
-                    flex-direction: column;
-                    min-height: calc(100vh - 2rem);
-                }
-                .remito-content { flex: 1 1 auto; }
-                .remito-firmas {
-                    margin-top: auto;
-                    padding-top: 48px;
-                    display: grid;
-                    grid-template-columns: 1fr 1fr;
-                    gap: 3rem;
-                    width: 100%;
-                    flex-shrink: 0;
-                }
-                .remito-firma-col { text-align: center; }
-                .remito-firma-line {
-                    min-height: 72px;
-                    border-top: 1px solid #e2e8f0;
-                }
-                .remito-firma-label {
-                    font-size: 10px;
-                    font-weight: 900;
-                    text-transform: uppercase;
-                    letter-spacing: 0.2em;
-                    color: #94a3b8;
-                    margin-top: 8px;
-                }
-                .remito-firma-sub {
-                    font-size: 10px;
-                    font-weight: 700;
-                    color: #cbd5e1;
-                    margin-top: 8px;
-                }
-
-                @media print {
-                    .no-print { display: none !important; }
-                    body { padding: 0; }
-                    @page { margin: 10mm; }
-                    .remito-wrapper { width: 100%; margin: 0; padding: 0; }
-                    .remito-container { min-height: 100vh; }
-                    .remito-firmas { padding-top: 48px; page-break-inside: avoid; }
-                }
-
-                /* Utility helper for font weights in the table */
-                .font-black { font-weight: 900; }
-            </style>
-        </head>
-        <body>
-            <div class="no-print">
-                <button class="btn-print" onclick="window.print()">🖨️ IMPRIMIR COMPROBANTE</button>
-                <p style="margin-top: 10px; font-size: 11px; color: #64748b; font-weight: bold; text-transform: uppercase; letter-spacing: 0.05em;">
-                    Haga clic en el botón superior o use Ctrl + P para imprimir
-                </p>
-            </div>
-            <div class="remito-wrapper">
-                ${remitoHTML}
-            </div>
-        </body>
-        </html>
-    `);
-    
-    // 4. Cerrar el documento para que se renderice
-    ventanaImpresion.document.close();
-    
-    // 5. Intentar imprimir después de un breve delay para asegurar renderizado
-    setTimeout(() => {
-        ventanaImpresion.focus();
-        // window.print() es síncrono y bloquea el hilo, pero en la ventana nueva es más seguro
-    }, 500);
+    openRemitoPrintWindow(remitoContainer.innerHTML, venta.comprobante);
    };
 
    return (
@@ -12942,124 +12911,127 @@ const RemitoView = ({ venta, cliente, productos, onBack }: any) => {
 
         <div className="max-w-[210mm] mx-auto bg-white p-[15mm] mt-8 shadow-2xl print:shadow-none print:mt-0 print:p-[10mm] remito-container flex flex-col min-h-[calc(100vh-3rem)] print:min-h-[100vh]">
            <div className="remito-content flex-1 flex flex-col">
-           <div className="flex justify-between items-start border-b-2 border-sleek-dark pb-3">
-              <div className="flex items-center gap-4">
-                 <div className="w-12 h-12 bg-sleek-dark flex items-center justify-center shrink-0">
-                   <Package className="w-6 h-6 text-white" />
+              {/* Bloque 1 — Header */}
+              <div className="remito-header grid grid-cols-[1fr_0.25fr_1fr] gap-4 items-start border-b-2 border-sleek-dark pb-3">
+                 <div className="remito-header-brand flex items-center gap-4">
+                    <div className="remito-header-logo w-12 h-12 bg-sleek-dark flex items-center justify-center shrink-0">
+                      <Package className="w-6 h-6 text-white" />
+                    </div>
+                    <div>
+                       <h2 className="remito-title text-lg font-black italic tracking-tighter text-sleek-dark leading-tight">ALIDO - Gestión</h2>
+                       <p className="remito-subtitle text-[9px] font-bold text-slate-500 uppercase tracking-widest mt-0.5 leading-snug">Planta Elaboradora & Distribución</p>
+                       <p className="remito-subtitle text-[9px] font-bold text-slate-400 leading-snug">Av. Central 4520, CP 1430</p>
+                    </div>
                  </div>
-                 <div>
-                    <h2 className="text-lg font-black italic tracking-tighter text-sleek-dark leading-tight">ALIDO - Gestión</h2>
-                    <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mt-0.5 leading-snug">Planta Elaboradora & Distribución</p>
-                    <p className="text-[9px] font-bold text-slate-400 leading-snug">Av. Central 4520, CP 1430</p>
+                 <div className="remito-header-spacer" aria-hidden="true" />
+                 <div className="remito-header-doc text-right">
+                    <div className="remito-badge bg-sleek-dark text-white px-3 py-1 mb-2 inline-block">
+                       <span className="text-sm font-black uppercase tracking-[.15em]">REMITO</span>
+                    </div>
+                    <p className="remito-nro text-xs font-black text-sleek-dark">Nº {venta.comprobante}</p>
+                    <p className="remito-fecha text-[10px] font-bold text-slate-500 italic mt-0.5">Fecha: {safeFormat(venta.fecha, 'dd/MM/yyyy')}</p>
                  </div>
               </div>
-              <div className="text-right">
-                 <div className="bg-sleek-dark text-white px-3 py-1 mb-2 inline-block">
-                    <h3 className="text-sm font-black uppercase tracking-[.15em]">REMITO</h3>
-                 </div>
-                 <p className="text-xs font-black text-sleek-dark">Nº {venta.comprobante}</p>
-                 <p className="text-[10px] font-bold text-slate-500 italic mt-0.5">Fecha: {safeFormat(venta.fecha, 'dd/MM/yyyy')}</p>
-              </div>
-           </div>
 
-           <div className="grid grid-cols-2 gap-6 py-4 border-b border-slate-100">
-              <div className="space-y-3">
-                 <h4 className="text-[9px] font-black text-sleek-accent uppercase tracking-widest border-b border-sleek-accent/20 pb-1">Destinatario</h4>
-                 <div>
-                    <p className="text-sm font-black text-sleek-dark uppercase">{cliente?.razonSocial}</p>
-                    <p className="text-[10px] font-bold text-slate-500 mt-0.5">CUIT: {cliente?.cuit || 'S/D'}</p>
+              {/* Bloque 2 — Destinatario e info comercial */}
+              <div className="remito-info grid grid-cols-2 gap-6 py-4 border-b border-slate-100">
+                 <div className="remito-info-col space-y-3">
+                    <h4 className="remito-section-label text-[9px] font-black text-sleek-accent uppercase tracking-widest border-b border-sleek-accent/20 pb-1">Destinatario</h4>
+                    <div>
+                       <p className="remito-cliente-nombre text-sm font-black text-sleek-dark uppercase">{cliente?.razonSocial}</p>
+                       <p className="remito-cliente-meta text-[10px] font-bold text-slate-500 mt-0.5">CUIT: {cliente?.cuit || 'S/D'}</p>
+                    </div>
+                    <div className="pt-1">
+                       <p className="remito-field-label text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Destino / Sucursal</p>
+                       <p className="remito-field-value text-xs font-black text-slate-600 uppercase">{sucursal?.nombre || 'S/D'}</p>
+                       <p className="remito-cliente-meta text-[10px] font-bold text-slate-500 mt-0.5">{sucursal?.direccion || 'S/P'}</p>
+                    </div>
                  </div>
-                 <div className="pt-1">
-                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Destino / Sucursal</p>
-                    <p className="text-xs font-black text-slate-600 uppercase">{sucursal?.nombre || 'S/D'}</p>
-                    <p className="text-[10px] font-bold text-slate-500 mt-0.5">{sucursal?.direccion || 'S/P'}</p>
+                 <div className="remito-info-col remito-info-col-right space-y-3 text-right">
+                    <h4 className="remito-section-label text-[9px] font-black text-sleek-accent uppercase tracking-widest border-b border-sleek-accent/20 pb-1">Información Comercial</h4>
+                    <div>
+                       <p className="remito-field-label text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Cond. Pago</p>
+                       <p className="remito-field-value text-sm font-black text-slate-600 uppercase">{cliente?.condicionPago}</p>
+                    </div>
                  </div>
               </div>
-              <div className="space-y-3 text-right">
-                 <h4 className="text-[9px] font-black text-sleek-accent uppercase tracking-widest border-b border-sleek-accent/20 pb-1">Información Comercial</h4>
-                 <div className="grid grid-cols-2 gap-4">
-                    <div className="col-span-2">
-                       <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Cond. Pago</p>
-                       <p className="text-sm font-black text-slate-600 uppercase">{cliente?.condicionPago}</p>
+
+              {/* Bloque 3 — Tabla y totales */}
+              <div className="remito-table-block py-6">
+                 <table>
+                    <thead>
+                       <tr>
+                          <th>Producto / Descripción</th>
+                          <th>Bulto / ID</th>
+                          <th>Cant.</th>
+                          <th>Peso</th>
+                          <th>Precio Unit.</th>
+                          <th>Subtotal</th>
+                       </tr>
+                    </thead>
+                    <tbody>
+                       {venta.productos.map((item: any, idx: number) => {
+                          const p = productos.find((prod: any) => prod.id === item.productoId);
+                          const isKg = p?.unidadMedidaId === 'u1';
+                          return (
+                            <tr key={idx}>
+                               <td>
+                                  <span className="remito-product-name text-xs font-black text-sleek-dark uppercase">{p?.nombre}</span>
+                                  <span className="remito-product-code text-[9px] font-bold text-slate-400 uppercase">{p?.codigo}</span>
+                               </td>
+                               <td className="text-xs font-black text-slate-500">
+                                  {item.codigoBarras || '-'}
+                               </td>
+                               <td className="font-black text-xs text-sleek-dark">
+                                  {isKg ? `${formatNum(item.cantidad, 2)} kg` : `${item.cantidad} un`}
+                               </td>
+                               <td className="font-bold text-[10px] text-slate-400">
+                                  {isKg ? '-' : `${formatNum(item.pesoKg || (item.cantidad * (p?.pesoNetoUnidad || 0)), 2)} kg`}
+                               </td>
+                               <td className="font-bold text-xs text-slate-500">
+                                  $ {formatCurrency(item.precioUnitario)}
+                               </td>
+                               <td className="font-black text-xs text-sleek-dark">
+                                  $ {formatCurrency(item.subtotal)}
+                               </td>
+                            </tr>
+                          );
+                       })}
+                    </tbody>
+                 </table>
+
+                 <div className="remito-totals mt-12 pt-8 border-t-4 border-sleek-dark">
+                    <div className="remito-totals-inner w-80 ml-auto space-y-4">
+                       <div className="remito-total-row flex justify-between items-center text-xs font-bold uppercase tracking-widest text-slate-400">
+                          <span>Subtotal</span>
+                          <span>$ {formatCurrency(venta.subtotal)}</span>
+                       </div>
+                       {venta.descuentoGeneral > 0 && (
+                         <div className="remito-total-row flex justify-between items-center text-xs font-bold uppercase tracking-widest text-slate-400">
+                            <span>Descuentos Aplicados</span>
+                            <span>- $ {formatCurrency(venta.descuentoGeneral)}</span>
+                         </div>
+                       )}
+                       <div className="remito-total-final flex justify-between items-center pt-4 border-t border-slate-100">
+                          <span className="remito-total-final-label text-xs font-black uppercase tracking-widest text-sleek-dark">Monto Total</span>
+                          <span className="remito-total-final-value text-2xl font-black text-sleek-dark leading-none">$ {formatCurrency(venta.total)}</span>
+                       </div>
                     </div>
                  </div>
               </div>
            </div>
 
-           <div className="py-6">
-              <table className="w-full">
-                 <thead>
-                    <tr className="border-b-2 border-slate-100">
-                       <th className="text-left py-2 text-[10px] font-black uppercase text-slate-400">Producto / Descripción</th>
-                       <th className="text-center py-2 text-[10px] font-black uppercase text-slate-400">Bulto / ID</th>
-                       <th className="text-right py-2 text-[10px] font-black uppercase text-slate-400 font-black">Cant.</th>
-                       <th className="text-right py-2 text-[10px] font-black uppercase text-slate-400">Peso</th>
-                       <th className="text-right py-2 text-[10px] font-black uppercase text-slate-400">Precio Unit.</th>
-                       <th className="text-right py-2 text-[10px] font-black uppercase text-slate-400 tracking-widest">Subtotal</th>
-                    </tr>
-                 </thead>
-                 <tbody className="divide-y divide-slate-50">
-                    {venta.productos.map((item: any, idx: number) => {
-                       const p = productos.find((prod: any) => prod.id === item.productoId);
-                       const isKg = p?.unidadMedidaId === 'u1';
-                       return (
-                         <tr key={idx}>
-                            <td className="py-6 pr-8">
-                               <p className="text-xs font-black text-sleek-dark uppercase">{p?.nombre}</p>
-                               <p className="text-[9px] font-bold text-slate-400 uppercase">{p?.codigo}</p>
-                            </td>
-                            <td className="py-6 text-center text-xs font-black text-slate-500">
-                               {item.codigoBarras || '-'}
-                            </td>
-                            <td className="py-6 text-right font-black text-xs text-sleek-dark">
-                               {isKg ? `${formatNum(item.cantidad, 2)} kg` : `${item.cantidad} un`}
-                            </td>
-                            <td className="py-6 text-right font-bold text-[10px] text-slate-400">
-                               {isKg ? '-' : `${formatNum(item.pesoKg || (item.cantidad * (p?.pesoNetoUnidad || 0)), 2)} kg`}
-                            </td>
-                            <td className="py-6 text-right font-bold text-xs text-slate-500">
-                               $ {formatCurrency(item.precioUnitario)}
-                            </td>
-                            <td className="py-6 text-right font-black text-xs text-sleek-dark">
-                               $ {formatCurrency(item.subtotal)}
-                            </td>
-                         </tr>
-                       );
-                    })}
-                 </tbody>
-              </table>
-
-              <div className="mt-12 pt-8 border-t-4 border-sleek-dark flex justify-end">
-                 <div className="w-80 space-y-4">
-                    <div className="flex justify-between items-center text-xs font-bold uppercase tracking-widest text-slate-400">
-                       <span>Subtotal</span>
-                       <span>$ {formatCurrency(venta.subtotal)}</span>
-                    </div>
-                    {venta.descuentoGeneral > 0 && (
-                      <div className="flex justify-between items-center text-xs font-bold uppercase tracking-widest text-slate-400">
-                         <span>Descuentos Aplicados</span>
-                         <span>- $ {formatCurrency(venta.descuentoGeneral)}</span>
-                      </div>
-                    )}
-                    <div className="flex justify-between items-center pt-4 border-t border-slate-100">
-                       <span className="text-xs font-black uppercase tracking-widest text-sleek-dark">Monto Total</span>
-                       <span className="text-2xl font-black text-sleek-dark leading-none">$ {formatCurrency(venta.total)}</span>
-                    </div>
-                 </div>
-              </div>
-           </div>
-           </div>
-
+           {/* Bloque 4 — Firmas al pie */}
            <div className="remito-firmas mt-auto shrink-0 grid grid-cols-2 gap-12 pt-12">
               <div className="remito-firma-col">
                  <div className="remito-firma-line min-h-[72px] border-t border-slate-200" />
-                 <p className="text-[10px] font-black uppercase tracking-[.2em] text-slate-400 mt-2">Firma Recibido</p>
-                 <p className="text-[10px] font-bold text-slate-300 mt-2">Aclaración y DNI</p>
+                 <p className="remito-firma-label text-[10px] font-black uppercase tracking-[.2em] text-slate-400 mt-2">Firma Recibido</p>
+                 <p className="remito-firma-sub text-[10px] font-bold text-slate-300 mt-2">Aclaración y DNI</p>
               </div>
               <div className="remito-firma-col">
                  <div className="remito-firma-line min-h-[72px] border-t border-slate-200" />
-                 <p className="text-[10px] font-black uppercase tracking-[.2em] text-slate-400 mt-2">Despacho Alido</p>
-                 <p className="text-[10px] font-bold text-slate-300 mt-2">Control de Calidad</p>
+                 <p className="remito-firma-label text-[10px] font-black uppercase tracking-[.2em] text-slate-400 mt-2">Despacho Alido</p>
+                 <p className="remito-firma-sub text-[10px] font-bold text-slate-300 mt-2">Control de Calidad</p>
               </div>
            </div>
         </div>
@@ -16134,6 +16106,49 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
 
 // --- EGRESOS HELPER ---
 
+/** Estilos A4 para comprobantes de pago/cobro (egreso/compra). */
+const DOC_PRINT_STYLES = `
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { font-family: 'Helvetica Neue', Arial, sans-serif; color: #1A2B3C; background: #fff; line-height: 1.35; }
+  @page { size: A4; margin: 15mm; }
+  .doc-page { width: 210mm; max-width: 100%; min-height: 100vh; display: flex; flex-direction: column; margin: 0 auto; }
+  .doc-content { flex: 1 1 auto; display: flex; flex-direction: column; }
+  .doc-header {
+    display: grid;
+    grid-template-columns: 1fr 0.3fr 1fr;
+    align-items: start;
+    gap: 4mm;
+    padding-bottom: 3mm;
+    margin-bottom: 4mm;
+    border-bottom: 2px solid #1A2B3C;
+  }
+  .doc-logo-text { font-size: 14pt; font-weight: 900; font-style: italic; color: #1A2B3C; }
+  .doc-type-sub { font-size: 8pt; font-weight: 700; color: #64748b; text-transform: uppercase; margin-top: 1mm; }
+  .doc-header-doc { text-align: right; }
+  .doc-type-label { font-size: 8pt; font-weight: 800; color: #64748b; text-transform: uppercase; }
+  .comp-nro { font-size: 9pt; font-weight: 900; color: #1A2B3C; margin-top: 1mm; }
+  .comp-fecha { font-size: 8pt; font-weight: 700; color: #64748b; margin-top: 1mm; }
+  .section { margin-bottom: 4mm; page-break-inside: avoid; }
+  .section-title { font-size: 8pt; font-weight: 900; color: #F27D26; text-transform: uppercase; border-bottom: 1px solid rgba(242,125,38,0.25); padding-bottom: 1mm; margin-bottom: 2mm; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6mm; }
+  .label { font-size: 8pt; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 1mm; }
+  .value { font-size: 10pt; font-weight: 700; color: #1e293b; }
+  .box { padding: 3mm; background: #f8fafc; border: 1px solid #f1f5f9; border-radius: 4px; }
+  .meta { font-size: 9pt; color: #64748b; margin-top: 1mm; }
+  .total-box { margin-top: 6mm; padding: 4mm; background: #1A2B3C; color: #fff; text-align: right; page-break-inside: avoid; }
+  .total-label { font-size: 8pt; font-weight: 700; text-transform: uppercase; opacity: 0.75; }
+  .total-value { font-size: 14pt; font-weight: 900; margin-top: 2mm; }
+  .footer { margin-top: auto; padding-top: 12mm; display: grid; grid-template-columns: 1fr 1fr; gap: 10mm; flex-shrink: 0; page-break-inside: avoid; }
+  .signature { text-align: center; }
+  .signature-line { min-height: 20mm; border-top: 1px solid #cbd5e1; }
+  .signature-text { padding-top: 2mm; font-size: 9pt; font-weight: 700; color: #64748b; text-transform: uppercase; }
+  @media print {
+    .doc-page { min-height: 100vh; }
+    .total-box { background: #1A2B3C !important; color: #fff !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .footer { page-break-inside: avoid; }
+  }
+`;
+
 const printOrdenPago = (pago: PagoProveedor, proveedor: Proveedor) => {
   const printWindow = window.open('', '_blank');
   if (!printWindow) return;
@@ -16141,47 +16156,23 @@ const printOrdenPago = (pago: PagoProveedor, proveedor: Proveedor) => {
   const content = `
     <html>
       <head>
+        <meta charset="utf-8" />
         <title>Comprobante de Pago - ${pago.comprobante}</title>
-        <style>
-          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 24px; color: #334155; line-height: 1.35; }
-          .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #f1f5f9; padding-bottom: 10px; margin-bottom: 16px; }
-          .logo-text { font-size: 18px; font-weight: 900; color: #0f172a; letter-spacing: -0.025em; }
-          .doc-type { font-size: 9px; font-weight: 800; color: #64748b; text-transform: uppercase; letter-spacing: 0.08em; }
-          .comp-nro { font-size: 14px; font-weight: 900; color: #0f172a; }
-          .section { margin-bottom: 20px; }
-          .section-title { font-size: 9px; font-weight: 800; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; border-bottom: 1px solid #f1f5f9; padding-bottom: 3px; }
-          .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-          .label { font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 2px; }
-          .value { font-size: 12px; font-weight: 700; color: #1e293b; }
-          .box { padding: 12px; background: #f8fafc; border-radius: 8px; border: 1px solid #f1f5f9; }
-          .total-box { margin-top: 28px; padding: 20px; background: #0f172a; color: white; border-radius: 10px; text-align: right; box-shadow: 0 10px 15px -5px rgba(0,0,0,0.08); }
-          .total-label { font-size: 10px; font-weight: 700; text-transform: uppercase; opacity: 0.6; }
-          .total-value { font-size: 28px; font-weight: 900; letter-spacing: -0.05em; }
-          .doc-page { min-height: 100vh; display: flex; flex-direction: column; }
-          .doc-content { flex: 1 1 auto; }
-          .footer { margin-top: auto; padding-top: 48px; display: flex; justify-content: space-between; gap: 40px; flex-shrink: 0; }
-          .signature { flex: 1; text-align: center; }
-          .signature-line { min-height: 72px; border-top: 2px solid #e2e8f0; }
-          .signature-text { padding-top: 10px; font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase; }
-          @media print {
-            .total-box { background: #0f172a !important; color: white !important; -webkit-print-color-adjust: exact; }
-            .doc-page { min-height: 100vh; }
-            .footer { page-break-inside: avoid; }
-          }
-        </style>
+        <style>${DOC_PRINT_STYLES}</style>
       </head>
       <body>
         <div class="doc-page">
         <div class="doc-content">
-        <div class="header">
-          <div>
-            <div class="logo-text">ALIDO - Gestión</div>
-            <div class="doc-type" style="margin-top:2px">Comprobante de Pago</div>
+        <div class="doc-header">
+          <div class="doc-header-brand">
+            <div class="doc-logo-text">ALIDO - Gestión</div>
+            <div class="doc-type-sub">Comprobante de Pago</div>
           </div>
-          <div style="text-align: right">
-            <div class="doc-type">Nº Comprobante</div>
+          <div></div>
+          <div class="doc-header-doc">
+            <div class="doc-type-label">Nº Comprobante</div>
             <div class="comp-nro">${pago.comprobante}</div>
-            <div style="font-size: 10px; font-weight: 700; color: #64748b; margin-top: 2px;">Fecha: ${format(parseISO(pago.fecha), 'dd/MM/yyyy')}</div>
+            <div class="comp-fecha">Fecha: ${format(parseISO(pago.fecha), 'dd/MM/yyyy')}</div>
           </div>
         </div>
 
@@ -16191,7 +16182,7 @@ const printOrdenPago = (pago: PagoProveedor, proveedor: Proveedor) => {
               <div class="section-title">Destinatario</div>
               <div class="label">Proveedor</div>
               <div class="value">${proveedor.razonSocial}</div>
-              <div style="font-size: 12px; color: #64748b; margin-top: 4px; font-weight: 500;">CUIT: ${proveedor.cuit || 'N/A'}</div>
+              <div class="meta">CUIT: ${proveedor.cuit || 'N/A'}</div>
             </div>
             <div class="box">
               <div class="section-title">Detalles de Pago</div>
@@ -16248,47 +16239,23 @@ const printComprobanteCobro = (cobro: any, cliente: any) => {
   const content = `
     <html>
       <head>
+        <meta charset="utf-8" />
         <title>Comprobante de Cobro - ${cobro.comprobante}</title>
-        <style>
-          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 24px; color: #334155; line-height: 1.35; }
-          .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #f1f5f9; padding-bottom: 10px; margin-bottom: 16px; }
-          .logo-text { font-size: 18px; font-weight: 900; color: #0f172a; letter-spacing: -0.025em; }
-          .doc-type { font-size: 9px; font-weight: 800; color: #64748b; text-transform: uppercase; letter-spacing: 0.08em; }
-          .comp-nro { font-size: 14px; font-weight: 900; color: #0f172a; }
-          .section { margin-bottom: 20px; }
-          .section-title { font-size: 9px; font-weight: 800; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; border-bottom: 1px solid #f1f5f9; padding-bottom: 3px; }
-          .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-          .label { font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 2px; }
-          .value { font-size: 12px; font-weight: 700; color: #1e293b; }
-          .box { padding: 12px; background: #f8fafc; border-radius: 8px; border: 1px solid #f1f5f9; }
-          .total-box { margin-top: 28px; padding: 20px; background: #0f172a; color: white; border-radius: 10px; text-align: right; box-shadow: 0 10px 15px -5px rgba(0,0,0,0.08); }
-          .total-label { font-size: 10px; font-weight: 700; text-transform: uppercase; opacity: 0.6; }
-          .total-value { font-size: 28px; font-weight: 900; letter-spacing: -0.05em; }
-          .doc-page { min-height: 100vh; display: flex; flex-direction: column; }
-          .doc-content { flex: 1 1 auto; }
-          .footer { margin-top: auto; padding-top: 48px; display: flex; justify-content: space-between; gap: 40px; flex-shrink: 0; }
-          .signature { flex: 1; text-align: center; }
-          .signature-line { min-height: 72px; border-top: 2px solid #e2e8f0; }
-          .signature-text { padding-top: 10px; font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase; }
-          @media print {
-            .total-box { background: #0f172a !important; color: white !important; -webkit-print-color-adjust: exact; }
-            .doc-page { min-height: 100vh; }
-            .footer { page-break-inside: avoid; }
-          }
-        </style>
+        <style>${DOC_PRINT_STYLES}</style>
       </head>
       <body>
         <div class="doc-page">
         <div class="doc-content">
-        <div class="header">
-          <div>
-            <div class="logo-text">ALIDO - Gestión</div>
-            <div class="doc-type" style="margin-top:2px">Comprobante de Cobro</div>
+        <div class="doc-header">
+          <div class="doc-header-brand">
+            <div class="doc-logo-text">ALIDO - Gestión</div>
+            <div class="doc-type-sub">Comprobante de Cobro</div>
           </div>
-          <div style="text-align: right">
-            <div class="doc-type">Nº Comprobante</div>
+          <div></div>
+          <div class="doc-header-doc">
+            <div class="doc-type-label">Nº Comprobante</div>
             <div class="comp-nro">${cobro.comprobante}</div>
-            <div style="font-size: 10px; font-weight: 700; color: #64748b; margin-top: 2px;">Fecha: ${format(parseISO(cobro.fecha), 'dd/MM/yyyy')}</div>
+            <div class="comp-fecha">Fecha: ${format(parseISO(cobro.fecha), 'dd/MM/yyyy')}</div>
           </div>
         </div>
 
@@ -16298,7 +16265,7 @@ const printComprobanteCobro = (cobro: any, cliente: any) => {
               <div class="section-title">Destinatario</div>
               <div class="label">Cliente</div>
               <div class="value">${cliente.razonSocial}</div>
-              ${cliente.cuit ? `<div style="font-size: 12px; color: #64748b; margin-top: 4px; font-weight: 500;">CUIT: ${cliente.cuit}</div>` : ''}
+              ${cliente.cuit ? `<div class="meta">CUIT: ${cliente.cuit}</div>` : ''}
             </div>
             <div class="box">
               <div class="section-title">Detalles de Cobro</div>
@@ -18325,53 +18292,9 @@ export default function App() {
           return;
         }
 
-        const remitoHTML = remitoContainer.innerHTML;
-        const ventanaImpresion = window.open('', '_blank', 'width=1000,height=800');
-        
-        if (!ventanaImpresion) {
-          globalAlert('Por favor habilite los popups para imprimir.');
-          return;
-        }
-
-        ventanaImpresion.document.write(`
-          <!DOCTYPE html>
-          <html>
-          <head>
-              <title>Remito - Alido Gestión</title>
-              <style>
-                  * { margin: 0; padding: 0; box-sizing: border-box; }
-                  body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 20px; background: white; color: #333; }
-                  .remito-wrapper { max-width: 210mm; margin: 0 auto; padding: 15mm; }
-                  .remito-container { display: flex; flex-direction: column; min-height: 100vh; }
-                  .remito-content { flex: 1 1 auto; }
-                  .remito-firmas { margin-top: auto; padding-top: 48px; display: grid; grid-template-columns: 1fr 1fr; gap: 3rem; width: 100%; flex-shrink: 0; }
-                  .remito-firma-col { text-align: center; }
-                  .remito-firma-line { min-height: 72px; border-top: 1px solid #e2e8f0; }
-                  table { width: 100%; border-collapse: collapse; margin: 15px 0; }
-                  th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #ddd; }
-                  th { background-color: #f8fafc; font-weight: bold; font-size: 10px; color: #64748b; text-transform: uppercase; }
-                  .no-print { display: block; text-align: center; margin-bottom: 20px; padding: 15px; background: #fff3cd; border-radius: 8px; }
-                  .btn-print { padding: 10px 25px; background: #1A2B3C; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 900; text-transform: uppercase; }
-                  @media print {
-                    .no-print { display: none !important; }
-                    body { padding: 0; }
-                    .remito-container { min-height: 100vh; }
-                    .remito-firmas { page-break-inside: avoid; }
-                  }
-              </style>
-          </head>
-          <body>
-              <div class="no-print">
-                  <button class="btn-print" onclick="window.print()">🖨️ IMPRIMIR AHORA</button>
-              </div>
-              <div class="remito-wrapper">${remitoHTML}</div>
-          </body>
-          </html>
-        `);
-        ventanaImpresion.document.close();
-        setTimeout(() => {
-          ventanaImpresion.focus();
-        }, 500);
+        const comprobante =
+          remitoContainer.querySelector('.remito-nro')?.textContent?.replace(/^Nº\s*/i, '').trim() || 'Remito';
+        openRemitoPrintWindow(remitoContainer.innerHTML, comprobante);
       }
     };
 
@@ -18498,9 +18421,6 @@ export default function App() {
             alt="Logo"
             className={cn(sidebarExpanded ? "h-10" : "h-8")}
           />
-          {sidebarExpanded && (
-            <span className="font-bold text-sm uppercase tracking-[0.2em] leading-none">Alido</span>
-          )}
         </div>
 
         <nav className="flex-1 min-h-0 py-2 overflow-y-auto custom-scrollbar">
