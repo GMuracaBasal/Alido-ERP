@@ -12848,11 +12848,48 @@ const RemitoView = ({ venta, cliente, productos, onBack }: any) => {
                 }
                 .btn-print:hover { background: #0f172a; transform: translateY(-1px); }
                 
+                .remito-container {
+                    display: flex;
+                    flex-direction: column;
+                    min-height: calc(100vh - 2rem);
+                }
+                .remito-content { flex: 1 1 auto; }
+                .remito-firmas {
+                    margin-top: auto;
+                    padding-top: 48px;
+                    display: grid;
+                    grid-template-columns: 1fr 1fr;
+                    gap: 3rem;
+                    width: 100%;
+                    flex-shrink: 0;
+                }
+                .remito-firma-col { text-align: center; }
+                .remito-firma-line {
+                    min-height: 72px;
+                    border-top: 1px solid #e2e8f0;
+                }
+                .remito-firma-label {
+                    font-size: 10px;
+                    font-weight: 900;
+                    text-transform: uppercase;
+                    letter-spacing: 0.2em;
+                    color: #94a3b8;
+                    margin-top: 8px;
+                }
+                .remito-firma-sub {
+                    font-size: 10px;
+                    font-weight: 700;
+                    color: #cbd5e1;
+                    margin-top: 8px;
+                }
+
                 @media print {
                     .no-print { display: none !important; }
                     body { padding: 0; }
                     @page { margin: 10mm; }
                     .remito-wrapper { width: 100%; margin: 0; padding: 0; }
+                    .remito-container { min-height: 100vh; }
+                    .remito-firmas { padding-top: 48px; page-break-inside: avoid; }
                 }
 
                 /* Utility helper for font weights in the table */
@@ -12903,7 +12940,8 @@ const RemitoView = ({ venta, cliente, productos, onBack }: any) => {
            </Card>
         </div>
 
-        <div className="max-w-[210mm] mx-auto bg-white p-[15mm] mt-8 shadow-2xl print:shadow-none print:mt-0 print:p-[10mm] remito-container">
+        <div className="max-w-[210mm] mx-auto bg-white p-[15mm] mt-8 shadow-2xl print:shadow-none print:mt-0 print:p-[10mm] remito-container flex flex-col min-h-[calc(100vh-3rem)] print:min-h-[100vh]">
+           <div className="remito-content flex-1 flex flex-col">
            <div className="flex justify-between items-start border-b-2 border-sleek-dark pb-3">
               <div className="flex items-center gap-4">
                  <div className="w-12 h-12 bg-sleek-dark flex items-center justify-center shrink-0">
@@ -13010,14 +13048,17 @@ const RemitoView = ({ venta, cliente, productos, onBack }: any) => {
                  </div>
               </div>
            </div>
+           </div>
 
-           <div className="mt-20 grid grid-cols-2 gap-20 pt-20 border-t border-slate-100">
-              <div className="text-center pt-8 border-t border-slate-200">
-                 <p className="text-[10px] font-black uppercase tracking-[.2em] text-slate-400">Firma Recibido</p>
+           <div className="remito-firmas mt-auto shrink-0 grid grid-cols-2 gap-12 pt-12">
+              <div className="remito-firma-col">
+                 <div className="remito-firma-line min-h-[72px] border-t border-slate-200" />
+                 <p className="text-[10px] font-black uppercase tracking-[.2em] text-slate-400 mt-2">Firma Recibido</p>
                  <p className="text-[10px] font-bold text-slate-300 mt-2">Aclaración y DNI</p>
               </div>
-              <div className="text-center pt-8 border-t border-slate-200">
-                 <p className="text-[10px] font-black uppercase tracking-[.2em] text-slate-400">Despacho Alido</p>
+              <div className="remito-firma-col">
+                 <div className="remito-firma-line min-h-[72px] border-t border-slate-200" />
+                 <p className="text-[10px] font-black uppercase tracking-[.2em] text-slate-400 mt-2">Despacho Alido</p>
                  <p className="text-[10px] font-bold text-slate-300 mt-2">Control de Calidad</p>
               </div>
            </div>
@@ -16116,12 +16157,22 @@ const printOrdenPago = (pago: PagoProveedor, proveedor: Proveedor) => {
           .total-box { margin-top: 28px; padding: 20px; background: #0f172a; color: white; border-radius: 10px; text-align: right; box-shadow: 0 10px 15px -5px rgba(0,0,0,0.08); }
           .total-label { font-size: 10px; font-weight: 700; text-transform: uppercase; opacity: 0.6; }
           .total-value { font-size: 28px; font-weight: 900; letter-spacing: -0.05em; }
-          .footer { margin-top: 60px; display: flex; justify-content: space-between; gap: 40px; }
-          .signature { border-top: 2px solid #e2e8f0; flex: 1; text-align: center; padding-top: 10px; font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase; }
-          @media print { .total-box { background: #0f172a !important; color: white !important; -webkit-print-color-adjust: exact; } }
+          .doc-page { min-height: 100vh; display: flex; flex-direction: column; }
+          .doc-content { flex: 1 1 auto; }
+          .footer { margin-top: auto; padding-top: 48px; display: flex; justify-content: space-between; gap: 40px; flex-shrink: 0; }
+          .signature { flex: 1; text-align: center; }
+          .signature-line { min-height: 72px; border-top: 2px solid #e2e8f0; }
+          .signature-text { padding-top: 10px; font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase; }
+          @media print {
+            .total-box { background: #0f172a !important; color: white !important; -webkit-print-color-adjust: exact; }
+            .doc-page { min-height: 100vh; }
+            .footer { page-break-inside: avoid; }
+          }
         </style>
       </head>
       <body>
+        <div class="doc-page">
+        <div class="doc-content">
         <div class="header">
           <div>
             <div class="logo-text">ALIDO - Gestión</div>
@@ -16162,10 +16213,18 @@ const printOrdenPago = (pago: PagoProveedor, proveedor: Proveedor) => {
           <div class="total-label">Importe Total Pagado</div>
           <div class="total-value">$ ${formatCurrency(pago.monto)}</div>
         </div>
+        </div>
 
         <div class="footer">
-          <div class="signature">Firma Autorizada Alido</div>
-          <div class="signature">Recibí Conforme Proveedor</div>
+          <div class="signature">
+            <div class="signature-line"></div>
+            <div class="signature-text">Firma Autorizada Alido</div>
+          </div>
+          <div class="signature">
+            <div class="signature-line"></div>
+            <div class="signature-text">Recibí Conforme Proveedor</div>
+          </div>
+        </div>
         </div>
 
         <script>
@@ -16205,12 +16264,22 @@ const printComprobanteCobro = (cobro: any, cliente: any) => {
           .total-box { margin-top: 28px; padding: 20px; background: #0f172a; color: white; border-radius: 10px; text-align: right; box-shadow: 0 10px 15px -5px rgba(0,0,0,0.08); }
           .total-label { font-size: 10px; font-weight: 700; text-transform: uppercase; opacity: 0.6; }
           .total-value { font-size: 28px; font-weight: 900; letter-spacing: -0.05em; }
-          .footer { margin-top: 60px; display: flex; justify-content: space-between; gap: 40px; }
-          .signature { border-top: 2px solid #e2e8f0; flex: 1; text-align: center; padding-top: 10px; font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase; }
-          @media print { .total-box { background: #0f172a !important; color: white !important; -webkit-print-color-adjust: exact; } }
+          .doc-page { min-height: 100vh; display: flex; flex-direction: column; }
+          .doc-content { flex: 1 1 auto; }
+          .footer { margin-top: auto; padding-top: 48px; display: flex; justify-content: space-between; gap: 40px; flex-shrink: 0; }
+          .signature { flex: 1; text-align: center; }
+          .signature-line { min-height: 72px; border-top: 2px solid #e2e8f0; }
+          .signature-text { padding-top: 10px; font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase; }
+          @media print {
+            .total-box { background: #0f172a !important; color: white !important; -webkit-print-color-adjust: exact; }
+            .doc-page { min-height: 100vh; }
+            .footer { page-break-inside: avoid; }
+          }
         </style>
       </head>
       <body>
+        <div class="doc-page">
+        <div class="doc-content">
         <div class="header">
           <div>
             <div class="logo-text">ALIDO - Gestión</div>
@@ -16251,10 +16320,18 @@ const printComprobanteCobro = (cobro: any, cliente: any) => {
           <div class="total-label">Importe Total Cobrado</div>
           <div class="total-value">$ ${formatCurrency(cobro.monto)}</div>
         </div>
+        </div>
 
         <div class="footer">
-          <div class="signature">Firma Autorizada Alido</div>
-          <div class="signature">Recibí Conforme Cliente</div>
+          <div class="signature">
+            <div class="signature-line"></div>
+            <div class="signature-text">Firma Autorizada Alido</div>
+          </div>
+          <div class="signature">
+            <div class="signature-line"></div>
+            <div class="signature-text">Recibí Conforme Cliente</div>
+          </div>
+        </div>
         </div>
 
         <script>
@@ -18265,12 +18342,22 @@ export default function App() {
                   * { margin: 0; padding: 0; box-sizing: border-box; }
                   body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 20px; background: white; color: #333; }
                   .remito-wrapper { max-width: 210mm; margin: 0 auto; padding: 15mm; }
+                  .remito-container { display: flex; flex-direction: column; min-height: 100vh; }
+                  .remito-content { flex: 1 1 auto; }
+                  .remito-firmas { margin-top: auto; padding-top: 48px; display: grid; grid-template-columns: 1fr 1fr; gap: 3rem; width: 100%; flex-shrink: 0; }
+                  .remito-firma-col { text-align: center; }
+                  .remito-firma-line { min-height: 72px; border-top: 1px solid #e2e8f0; }
                   table { width: 100%; border-collapse: collapse; margin: 15px 0; }
                   th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #ddd; }
                   th { background-color: #f8fafc; font-weight: bold; font-size: 10px; color: #64748b; text-transform: uppercase; }
                   .no-print { display: block; text-align: center; margin-bottom: 20px; padding: 15px; background: #fff3cd; border-radius: 8px; }
                   .btn-print { padding: 10px 25px; background: #1A2B3C; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 900; text-transform: uppercase; }
-                  @media print { .no-print { display: none !important; } body { padding: 0; } }
+                  @media print {
+                    .no-print { display: none !important; }
+                    body { padding: 0; }
+                    .remito-container { min-height: 100vh; }
+                    .remito-firmas { page-break-inside: avoid; }
+                  }
               </style>
           </head>
           <body>
