@@ -226,11 +226,102 @@ const codigoEnvasePerteneceALote = (codigoEnvase: string, numeroLote: string): b
   return codigo.startsWith(loteNum + '-');
 };
 
+const isEnvaseEnBaja = (e: any): boolean => {
+  if (e.estado === 'baja' || e.estado === 'Baja' || e.estado === 'Vendido') return true;
+  const isAnulado = e.anulado === true || e.anulado === 'true';
+  return isAnulado && e.estado !== 'en_stock' && e.estado !== 'EN STOCK';
+};
+
 const isEnvaseVigente = (e: any): boolean => {
   const isAnulado = e.anulado === true || e.anulado === 'true';
   if (isAnulado) return false;
-  if (e.estado === 'baja' || e.estado === 'anulado' || e.estado === 'Vendido') return false;
-  return e.estado === 'en_stock' || !e.estado;
+  if (isEnvaseEnBaja(e) || e.estado === 'anulado') return false;
+  return e.estado === 'en_stock' || e.estado === 'EN STOCK' || !e.estado;
+};
+
+const findEnvasePorCodigo = (
+  codigo: string,
+  lotesEtiquetados: any[]
+): { env: any; le: any } | null => {
+  const norm = normalizeEtiquetaCodigo(codigo);
+  if (!norm) return null;
+  for (const le of lotesEtiquetados || []) {
+    const env = (le.envases || []).find(
+      (e: any) => normalizeEtiquetaCodigo(e.codigoBarras || e.codigo || '') === norm
+    );
+    if (env) return { env, le };
+  }
+  return null;
+};
+
+const recalcularPesoEtiquetadoLote = (le: any) => {
+  const active = (le.envases || []).filter(isEnvaseVigente);
+  return {
+    ...le,
+    pesoTotalEtiquetado: active.reduce((s: number, ev: any) => s + (parseFloat(ev.pesoNeto) || 0), 0),
+  };
+};
+
+/** Marca envases vendidos en baja (no cuentan en stock). */
+const aplicarBajaEnvasesPorVenta = (
+  lotesEtiquetados: any[],
+  productosVenta: VentaProducto[],
+  venta: { id: string; comprobante: string }
+): any[] => {
+  const barcodes = new Set(
+    (productosVenta || [])
+      .filter((p) => p.codigoBarras)
+      .map((p) => normalizeEtiquetaCodigo(p.codigoBarras!))
+  );
+  if (!barcodes.size) return lotesEtiquetados;
+  const now = new Date().toISOString();
+  return lotesEtiquetados.map((le) => {
+    const updatedEnvases = (le.envases || []).map((env: any) => {
+      const codigo = normalizeEtiquetaCodigo(env.codigoBarras || env.codigo || '');
+      if (!barcodes.has(codigo)) return env;
+      if (!isEnvaseVigente(env) && env.ventaId === venta.id) return env;
+      if (!isEnvaseVigente(env)) return env;
+      return {
+        ...env,
+        estado: 'baja',
+        motivoBaja: `Venta ${venta.comprobante}`,
+        referenciaBaja: venta.id,
+        fechaBaja: now,
+        ventaId: venta.id,
+        anulado: false,
+      };
+    });
+    return recalcularPesoEtiquetadoLote({ ...le, envases: updatedEnvases });
+  });
+};
+
+/** Revierte baja por venta al anular o editar venta finalizada. */
+const revertirBajaEnvasesPorVenta = (
+  lotesEtiquetados: any[],
+  venta: { id: string; comprobante: string },
+  productosVenta: VentaProducto[]
+): any[] => {
+  const barcodes = new Set(
+    (productosVenta || [])
+      .filter((p) => p.codigoBarras)
+      .map((p) => normalizeEtiquetaCodigo(p.codigoBarras!))
+  );
+  if (!barcodes.size) return lotesEtiquetados;
+  return lotesEtiquetados.map((le) => {
+    const updatedEnvases = (le.envases || []).map((env: any) => {
+      const codigo = normalizeEtiquetaCodigo(env.codigoBarras || env.codigo || '');
+      if (!barcodes.has(codigo)) return env;
+      const refVenta =
+        env.referenciaBaja === venta.id ||
+        env.ventaId === venta.id ||
+        env.motivoBaja === `Venta ${venta.comprobante}`;
+      if (!refVenta) return env;
+      if (!isEnvaseEnBaja(env) && env.estado !== 'Vendido') return env;
+      const { motivoBaja, referenciaBaja, fechaBaja, ventaId, usuarioBaja, ...rest } = env;
+      return { ...rest, estado: 'en_stock', anulado: false };
+    });
+    return recalcularPesoEtiquetadoLote({ ...le, envases: updatedEnvases });
+  });
 };
 
 const normalizeEtiquetaCodigo = (id: string): string => (id || '').trim().toLowerCase();
@@ -264,9 +355,12 @@ const isEtiquetaUsada = (
       (e: any) => normalizeEtiquetaCodigo(e.codigoBarras || e.codigo || '') === codigo
     );
     if (!env) continue;
-    if (env.anulado === true || env.anulado === 'true') return true;
-    if (env.estado === 'baja' || env.estado === 'Baja' || env.estado === 'anulado') return true;
-    if (env.estado === 'Vendido' && env.ventaId !== ventaActualId) return true;
+    if (env.anulado === true || env.anulado === 'true') {
+      if (!env.motivoBaja?.toLowerCase().includes('venta')) return true;
+    }
+    if (isEnvaseEnBaja(env) || env.estado === 'anulado') {
+      if (env.referenciaBaja !== ventaActualId && env.ventaId !== ventaActualId) return true;
+    }
     break;
   }
   return false;
@@ -289,6 +383,19 @@ const validateEtiquetasEnVenta = (
     vistos.add(norm);
     if (isEtiquetaUsada(p.codigoBarras, ventas, lotesEtiquetados, ventaActualId)) {
       return 'Esta etiqueta ya fue utilizada en otra venta y no puede volver a usarse.';
+    }
+    const found = findEnvasePorCodigo(p.codigoBarras, lotesEtiquetados);
+    if (!found) {
+      return `La etiqueta ${p.codigoBarras} no fue encontrada en el sistema.`;
+    }
+    const { env } = found;
+    if (isEnvaseEnBaja(env) || env.estado === 'Vendido') {
+      if (env.referenciaBaja !== ventaActualId && env.ventaId !== ventaActualId) {
+        return `La etiqueta ${p.codigoBarras} ya fue dada de baja en otra venta. No se puede finalizar.`;
+      }
+    }
+    if (!isEnvaseVigente(env)) {
+      return `La etiqueta ${p.codigoBarras} no está disponible (estado: ${env.estado || 'N/A'}).`;
     }
   }
   return null;
@@ -5048,18 +5155,21 @@ const LotesProduccionView = ({
       const le = lotesEtiquetados.find((item: any) => item.loteId === selectedLote.numeroLote || item.loteId === selectedLote.id);
       const envases = le?.envases || [];
       
-      const pesoNetoProducido = formatNum(envases
-        .filter((e: any) => e.estado === 'en_stock' || 
-                 (e.estado === 'baja' && e.motivoBaja && e.motivoBaja.toLowerCase().includes('vendido')))
-        .reduce((sum: number, e: any) => sum + (parseFloat(e.pesoNeto) || 0), 0));
+      const pesoNetoProducido = formatNum(
+        envases.reduce((sum: number, e: any) => sum + (parseFloat(e.pesoNeto) || 0), 0)
+      );
 
-      const stockActual = formatNum(envases
-        .filter((e: any) => e.estado === 'en_stock')
-        .reduce((sum: number, e: any) => sum + (parseFloat(e.pesoNeto) || 0), 0));
+      const stockActual = formatNum(
+        envases
+          .filter((e: any) => isEnvaseVigente(e))
+          .reduce((sum: number, e: any) => sum + (parseFloat(e.pesoNeto) || 0), 0)
+      );
 
-      const despachado = formatNum(envases
-        .filter((e: any) => e.estado === 'baja' && e.motivoBaja && e.motivoBaja.toLowerCase().includes('vendido'))
-        .reduce((sum: number, e: any) => sum + (parseFloat(e.pesoNeto) || 0), 0));
+      const despachado = formatNum(
+        envases
+          .filter((e: any) => isEnvaseEnBaja(e))
+          .reduce((sum: number, e: any) => sum + (parseFloat(e.pesoNeto) || 0), 0)
+      );
 
       // Si no hay envases, usamos los datos guardados en el lote como fallback (compatibilidad)
       const displayProducido = envases.length > 0 ? pesoNetoProducido : (selectedLote.pesoNeto || 0);
@@ -5319,11 +5429,8 @@ const LotesProduccionView = ({
                 {(() => {
                   const le = lotesEtiquetados.find((item: any) => item.loteId === selectedLote.numeroLote || item.loteId === selectedLote.id);
                   const envs = le?.envases || [];
-                  const active = envs.filter((e: any) => {
-                    const isAnulado = e.anulado === true || e.anulado === 'true';
-                    return !isAnulado && e.estado !== 'baja';
-                  });
-                  const baja = envs.filter((e: any) => e.anulado || e.estado === 'baja');
+                  const active = envs.filter((e: any) => isEnvaseVigente(e));
+                  const baja = envs.filter((e: any) => isEnvaseEnBaja(e));
                   
                   return (
                     <div className="flex gap-6">
@@ -5370,9 +5477,10 @@ const LotesProduccionView = ({
                       }
 
                       return envs.slice().reverse().map((env: any, eidx: number) => {
-                        const isBaja = env.anulado || env.estado === 'baja';
+                        const isBaja = isEnvaseEnBaja(env);
+                        const enStock = isEnvaseVigente(env);
                         return (
-                          <tr key={eidx} className={cn("transition-colors", isBaja ? "bg-rose-50/20 opacity-60" : "hover:bg-slate-50/50")}>
+                          <tr key={eidx} className={cn("transition-colors", isBaja ? "opacity-50 bg-slate-50" : "hover:bg-slate-50/50")}>
                             <td className="px-6 py-3 font-bold text-slate-400">#{env.numero}</td>
                             <td className="px-6 py-3 font-mono font-bold text-sleek-dark lowercase">{env.codigoBarras}</td>
                             <td className="px-6 py-3 font-black text-sleek-dark">{displayNum(env.pesoNeto)} kg</td>
@@ -5381,11 +5489,15 @@ const LotesProduccionView = ({
                             </td>
                             <td className="px-6 py-3 text-right">
                               <div className="flex flex-col items-end gap-1">
-                                <Badge variant={isBaja ? 'danger' : 'success'}>
-                                  {isBaja ? 'BAJA' : 'EN STOCK'}
-                                </Badge>
+                                {enStock ? (
+                                  <span className="text-green-600 font-bold text-xs uppercase tracking-wider">EN STOCK</span>
+                                ) : isBaja ? (
+                                  <span className="text-red-500 font-bold text-xs uppercase tracking-wider">BAJA</span>
+                                ) : (
+                                  <Badge variant="danger">BAJA</Badge>
+                                )}
                                 {isBaja && env.motivoBaja && (
-                                  <span className="text-[8px] font-bold text-rose-500 uppercase block max-w-[150px] truncate" title={env.motivoBaja}>
+                                  <span className="text-[8px] text-slate-400 uppercase block max-w-[150px] truncate" title={env.motivoBaja}>
                                     {env.motivoBaja}
                                   </span>
                                 )}
@@ -5642,15 +5754,15 @@ const LotesProduccionView = ({
                            
                            // Stock Actual = solo en_stock (Bug 2 Table logic)
                            const stockActualKg = formatNum(envases
-                             .filter((e: any) => e.estado === 'en_stock')
+                             .filter((e: any) => isEnvaseVigente(e))
                              .reduce((sum: number, e: any) => sum + (parseFloat(e.pesoNeto) || 0), 0));
                            
                            // Fallback para lotes viejos o sin etiquetas
                            const displayStockKg = envases.length > 0 ? stockActualKg : (l.estado === 'Finalizado' ? l.pesoNeto : 0);
                            
-                           // Peso Neto Producido para rendimiento
+                           // Peso Neto Producido para rendimiento (stock + bajas, sin anulados por error)
                            const pesoProducidoKg = formatNum(envases
-                             .filter((e: any) => e.estado === 'en_stock' || (e.estado === 'baja' && e.motivoBaja?.toLowerCase().includes('vendido')))
+                             .filter((e: any) => isEnvaseVigente(e) || isEnvaseEnBaja(e))
                              .reduce((sum: number, e: any) => sum + (parseFloat(e.pesoNeto) || 0), 0));
                            
                            const displayProdKg = envases.length > 0 ? pesoProducidoKg : (l.pesoNeto || 0);
@@ -5669,7 +5781,7 @@ const LotesProduccionView = ({
                                )}
                                {envases.length > 0 && (
                                  <p className="text-[9px] font-black text-sleek-accent uppercase">
-                                   📦 {envases.filter((e: any) => e.estado === 'en_stock').length} env. stock
+                                   📦 {envases.filter((e: any) => isEnvaseVigente(e)).length} env. stock
                                  </p>
                                )}
                                {(l.estado === 'Finalizado' || l.estado === 'Cerrado') && (
@@ -8097,6 +8209,8 @@ const EtiquetasView = ({
                 <tbody className="divide-y divide-slate-50">
                   {envasesParaMostrar.map((e: any, idx: number) => {
                     const vendida =
+                      (isEnvaseEnBaja(e) &&
+                        (e.motivoBaja?.toLowerCase().includes('venta') || e.ventaId || e.referenciaBaja)) ||
                       e.estado === 'Vendido' ||
                       getCodigosEtiquetasUsadasEnVentas(ventas).has(normalizeEtiquetaCodigo(e.codigoBarras || ''));
                     return (
@@ -11269,14 +11383,12 @@ const VentasPedidosView = ({
       m.referencia === venta.comprobante ? { ...m, anulado: true, anuladoPor: currentUser.name, anuladoFecha: new Date().toISOString() } : m
     );
 
-    // 2. Revertir estado de envases si hubo
-    const envaseBarcodes = venta.productos.filter((p: any) => p.codigoBarras).map((p: any) => p.codigoBarras);
-    const updatedLotesEtiquetados = lotesEtiquetados.map((le: any) => ({
-      ...le,
-      envases: le.envases.map((e: any) => 
-        envaseBarcodes.includes(e.codigoBarras) ? { ...e, estado: 'en_stock', ventaId: null } : e
-      )
-    }));
+    // 2. Revertir estado de envases vendidos en esta venta
+    const updatedLotesEtiquetados = revertirBajaEnvasesPorVenta(
+      lotesEtiquetados,
+      { id: venta.id, comprobante: venta.comprobante },
+      venta.productos || []
+    );
 
     // 3. Cambiar estado de la venta y anular cobros
     const updatedVentas = ventas.map((v: any) => v.id === venta.id ? { 
@@ -11323,14 +11435,13 @@ const VentasPedidosView = ({
              finalMovimientos = finalMovimientos.map((m: any) => 
                m.referencia === oldVenta.comprobante ? { ...m, anulado: true, anuladoPor: currentUser.name, anuladoFecha: new Date().toISOString() } : m
              );
-             // Revert envases status
-             const oldBarcodes = oldVenta.productos.filter((p: any) => p.codigoBarras).map((p: any) => p.codigoBarras);
-             if (oldBarcodes.length > 0) {
-                setLotesEtiquetados(lotesEtiquetados.map((le: any) => ({
-                  ...le,
-                  envases: le.envases.map((e: any) => oldBarcodes.includes(e.codigoBarras) ? { ...e, estado: 'en_stock' } : e)
-                })));
-             }
+             setLotesEtiquetados(
+               revertirBajaEnvasesPorVenta(
+                 lotesEtiquetados,
+                 { id: oldVenta.id, comprobante: oldVenta.comprobante },
+                 oldVenta.productos || []
+               )
+             );
           }
 
           if (shouldFinalize) {
@@ -11345,8 +11456,6 @@ const VentasPedidosView = ({
                 updatedLE.forEach((le: any) => {
                   const env = le.envases.find((e: any) => e.codigoBarras === item.codigoBarras);
                   if (env) {
-                    env.estado = 'Vendido';
-                    env.ventaId = savedVenta.id;
                     found = true;
                     
                     newMovs.push({
@@ -11446,7 +11555,12 @@ const VentasPedidosView = ({
             });
 
             setMovimientos([...newMovs, ...finalMovimientos]);
-            setLotesEtiquetados(updatedLE);
+            setLotesEtiquetados(
+              aplicarBajaEnvasesPorVenta(updatedLE, savedVenta.productos, {
+                id: savedVenta.id,
+                comprobante: savedVenta.comprobante,
+              })
+            );
             showNotification(`Venta ${savedVenta.comprobante} finalizada. Stock descontado.`, 'success');
           } else {
             setMovimientos(finalMovimientos);
@@ -11840,8 +11954,12 @@ const VentaForm = ({
 
     if (foundPackage) {
       const p: any = foundPackage;
-      if (p.estado === 'Baja' || p.anulado) {
+      if (isEnvaseEnBaja(p) || p.estado === 'Vendido') {
+        showNotification('Esta etiqueta ya fue dada de baja y no puede volver a usarse.', 'error');
+      } else if (p.anulado) {
         showNotification('Este envase fue dado de baja o anulado', 'error');
+      } else if (!isEnvaseVigente(p)) {
+        showNotification(`Esta etiqueta no está disponible (estado: ${p.estado || 'N/A'})`, 'error');
       } else if (isEtiquetaUsada(barcodeInput, ventas, lotesEtiquetados, form.id)) {
         showNotification('Esta etiqueta ya fue utilizada en otra venta y no puede volver a usarse.', 'error');
       } else if (form.productos.some((item: any) => item.codigoBarras === barcodeInput)) {
@@ -11918,12 +12036,13 @@ const VentaForm = ({
     
     // 1. Si es envase, volver a en_stock
     if (item.codigoBarras) {
-      setLotesEtiquetados(lotesEtiquetados.map((le: any) => ({
-        ...le,
-        envases: le.envases.map((e: any) => 
-          e.codigoBarras === item.codigoBarras ? { ...e, estado: 'en_stock', ventaId: null } : e
+      setLotesEtiquetados(
+        revertirBajaEnvasesPorVenta(
+          lotesEtiquetados,
+          { id: form.id, comprobante: form.comprobante },
+          [item]
         )
-      })));
+      );
     }
 
     // 2. Generar movimiento de entrada
