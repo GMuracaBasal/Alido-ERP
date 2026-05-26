@@ -2062,6 +2062,29 @@ const collectLotesExistentes = (
   return Array.from(nums).map((numeroLote) => ({ numeroLote }));
 };
 
+/** Secuencial del código de barras (último segmento: …-001-001 → 1). */
+const extraerSecuencialCodigoBarras = (codigo?: string): number => {
+  const c = (codigo || '').trim();
+  if (!c) return 0;
+  const parts = c.split('-');
+  const ultimo = parseInt(parts[parts.length - 1], 10);
+  return Number.isNaN(ultimo) ? 0 : ultimo;
+};
+
+/** Máximo secuencial usado entre envases (todos los estados: EN STOCK, BAJA, vendido, anulado). */
+const maxSecuencialEnvasesList = (envases: any[]): number => {
+  let max = 0;
+  (envases || []).forEach((e) => {
+    const fromCode = extraerSecuencialCodigoBarras(e.codigoBarras || e.codigo);
+    if (fromCode > max) max = fromCode;
+    const fromNum =
+      typeof e.numero === 'number' ? e.numero : parseInt(String(e.numero ?? ''), 10);
+    if (!Number.isNaN(fromNum) && fromNum > max) max = fromNum;
+  });
+  return max;
+};
+
+/** Genera el próximo código único; envasesDelLote debe incluir TODOS los envases del lote/sesión (sin filtrar por estado). */
 const generarCodigoEnvase = (
   numeroLote: string,
   envasesDelLote: any[],
@@ -2070,33 +2093,15 @@ const generarCodigoEnvase = (
 ): string => {
   if (esDespiece && codigoProductoCorte) {
     const prefijo = `${numeroLote}-${codigoProductoCorte}`;
-    const envasesDeEsteCorte = envasesDelLote.filter((e) =>
+    const envasesDeEsteCorte = (envasesDelLote || []).filter((e) =>
       codigoEnvasePerteneceALote(e.codigo || e.codigoBarras || '', prefijo)
     );
-    const maxNum =
-      envasesDeEsteCorte.length > 0
-        ? Math.max(
-            ...envasesDeEsteCorte.map((e) => {
-              const parts = (e.codigo || e.codigoBarras || '').split('-');
-              const ultimo = parseInt(parts[parts.length - 1], 10);
-              return isNaN(ultimo) ? 0 : ultimo;
-            })
-          )
-        : 0;
+    const maxNum = maxSecuencialEnvasesList(envasesDeEsteCorte);
     const correlativo = String(maxNum + 1).padStart(3, '0');
     return `${prefijo}-${correlativo}`;
   }
 
-  const maxNum =
-    envasesDelLote.length > 0
-      ? Math.max(
-          ...envasesDelLote.map((e) => {
-            const parts = (e.codigo || e.codigoBarras || '').split('-');
-            const ultimo = parseInt(parts[parts.length - 1], 10);
-            return isNaN(ultimo) ? 0 : ultimo;
-          })
-        )
-      : 0;
+  const maxNum = maxSecuencialEnvasesList(envasesDelLote || []);
   const correlativo = String(maxNum + 1).padStart(3, '0');
   return `${numeroLote}-${correlativo}`;
 };
@@ -6993,30 +6998,17 @@ const EtiquetasView = ({
 
   const nextEnvaseNumero = useMemo(() => {
     if (!loteEtiquetado || !selectedLote?.numeroLote) return 1;
-    const vigentes = loteEtiquetado.envases.filter((e: any) => {
-      const isAnulado = e.anulado === true || e.anulado === 'true';
-      return !isAnulado && e.estado !== 'baja';
-    });
-    const code = generarCodigoEnvase(
-      selectedLote.numeroLote,
-      vigentes,
-      esDespieceEtiquetado,
-      codigoProductoCorte
-    );
-    const parts = code.split('-');
-    return parseInt(parts[parts.length - 1], 10) || 1;
+    const todosLosEnvases = loteEtiquetado.envases || [];
+    return maxSecuencialEnvasesList(todosLosEnvases) + 1;
   }, [loteEtiquetado, selectedLote, esDespieceEtiquetado, codigoProductoCorte]);
 
   const currentBarcodeValue = useMemo(() => {
     if (!selectedLote?.numeroLote || !loteEtiquetado) return '';
     if (esDespieceEtiquetado && !selectedCorteId) return '';
-    const vigentes = loteEtiquetado.envases.filter((e: any) => {
-      const isAnulado = e.anulado === true || e.anulado === 'true';
-      return !isAnulado && e.estado !== 'baja';
-    });
+    const todosLosEnvases = loteEtiquetado.envases || [];
     return generarCodigoEnvase(
       selectedLote.numeroLote,
-      vigentes,
+      todosLosEnvases,
       esDespieceEtiquetado,
       codigoProductoCorte
     );
