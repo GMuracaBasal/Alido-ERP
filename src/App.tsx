@@ -2396,6 +2396,55 @@ const generarNumeroLote = (
   return `${prefijo}-${correlativo}`;
 };
 
+/** Correlativo numérico del comprobante (último segmento: VTA-20260527-047 → 47). */
+const getCorrelativoComprobante = (comprobante: string): number => {
+  const parts = (comprobante || '').split('-');
+  return parseInt(parts[parts.length - 1], 10) || 0;
+};
+
+/** Próximo N° comprobante secuencial (VTA-YYYYMMDD-NNN, EGR-YYYYMMDD-NNN, etc.). */
+const generarComprobanteSecuencial = (
+  prefijo: string,
+  existentes: { id?: string; comprobante?: string }[]
+): string => {
+  let maxCorrelativo = 0;
+  existentes.forEach((item) => {
+    const comp = (item.comprobante || item.id || '').trim();
+    if (!comp.startsWith(`${prefijo}-`)) return;
+    const ultimo = getCorrelativoComprobante(comp);
+    if (ultimo > maxCorrelativo) maxCorrelativo = ultimo;
+  });
+  return `${prefijo}-${String(maxCorrelativo + 1).padStart(3, '0')}`;
+};
+
+const generarComprobanteVenta = (
+  ventas: { id?: string; comprobante?: string }[],
+  fecha?: string | Date
+): string => {
+  const d =
+    fecha instanceof Date
+      ? fecha
+      : fecha
+        ? parseISO(fecha)
+        : new Date();
+  const prefijo = `VTA-${safeFormat(isValid(d) ? d : new Date(), 'yyyyMMdd')}`;
+  return generarComprobanteSecuencial(prefijo, ventas);
+};
+
+const generarComprobanteEgreso = (
+  egresos: { id?: string; comprobante?: string }[],
+  fecha?: string | Date
+): string => {
+  const d =
+    fecha instanceof Date
+      ? fecha
+      : fecha
+        ? parseISO(fecha)
+        : new Date();
+  const prefijo = `EGR-${safeFormat(isValid(d) ? d : new Date(), 'yyyyMMdd')}`;
+  return generarComprobanteSecuencial(prefijo, egresos);
+};
+
 /** Recolecta todos los números de lote del sistema para evitar duplicados. */
 const collectLotesExistentes = (
   lotesProduccion: any[] = [],
@@ -2538,12 +2587,6 @@ const getEnvasesEtiquetasCorteDespiece = (
     });
   });
   return envases.sort((a, b) => (a.numero || 0) - (b.numero || 0));
-};
-
-/** Correlativo numérico del comprobante (último segmento: VTA-20260527-047 → 47). */
-const getCorrelativoComprobante = (comprobante: string): number => {
-  const parts = (comprobante || '').split('-');
-  return parseInt(parts[parts.length - 1], 10) || 0;
 };
 
 /** Comprobantes / transacciones: más recientes primero (fecha desc → correlativo desc → id desc). */
@@ -11774,6 +11817,7 @@ const VentasPedidosView = ({
   const [selectedVenta, setSelectedVenta] = useState<any>(null);
   const [editingVenta, setEditingVenta] = useState<any>(null);
   const [isEditingVenta, setIsEditingVenta] = useState(false);
+  const [isNewVenta, setIsNewVenta] = useState(false);
   const editingOriginalProductsRef = useRef<VentaProducto[] | null>(null);
   const [isAnnulModalOpen, setIsAnnulModalOpen] = useState(false);
   const [ventaToAnnul, setVentaToAnnul] = useState<any>(null);
@@ -11800,9 +11844,10 @@ const VentasPedidosView = ({
 
   const handleCreateNew = () => {
     setIsEditingVenta(false);
+    setIsNewVenta(true);
     editingOriginalProductsRef.current = null;
     const today = new Date();
-    const vtaId = `VTA-${safeFormat(today, 'yyyyMMdd')}-${(ventas.length + 1).toString().padStart(3, '0')}`;
+    const vtaId = generarComprobanteVenta(ventas, today);
     setEditingVenta({
       id: vtaId,
       comprobante: vtaId,
@@ -11828,6 +11873,7 @@ const VentasPedidosView = ({
   };
 
   const handleEdit = (venta: any) => {
+    setIsNewVenta(false);
     if (venta.estado === 'Finalizado') {
       const prepared = withVentaLineIds(venta);
       editingOriginalProductsRef.current = JSON.parse(JSON.stringify(prepared.productos));
@@ -11843,6 +11889,7 @@ const VentasPedidosView = ({
 
   const clearVentaEditState = () => {
     setIsEditingVenta(false);
+    setIsNewVenta(false);
     editingOriginalProductsRef.current = null;
   };
 
@@ -12035,10 +12082,23 @@ const VentasPedidosView = ({
             showNotification(`Pedido ${savedVenta.comprobante} guardado como borrador.`, 'info');
           }
 
-          if (ventas.find((v: any) => v.id === savedVenta.id)) {
-            setVentas(ventas.map((v: any) => v.id === savedVenta.id ? savedVenta : v));
+          if (isNewVenta) {
+            let ventaToPersist = savedVenta;
+            const idComprobante = ventaToPersist.comprobante || ventaToPersist.id;
+            if (ventaToPersist.id !== idComprobante) {
+              ventaToPersist = { ...ventaToPersist, id: idComprobante, comprobante: idComprobante };
+            }
+            if (ventas.some((v: any) => v.id === ventaToPersist.id)) {
+              const nuevo = generarComprobanteVenta(ventas, ventaToPersist.fecha);
+              ventaToPersist = { ...ventaToPersist, id: nuevo, comprobante: nuevo };
+              showNotification(
+                `El número de comprobante ya existía. Se asignó ${nuevo}.`,
+                'warning'
+              );
+            }
+            setVentas([ventaToPersist, ...ventas]);
           } else {
-            setVentas([savedVenta, ...ventas]);
+            setVentas(ventas.map((v: any) => (v.id === savedVenta.id ? savedVenta : v)));
           }
           clearVentaEditState();
           setView('list');
@@ -12708,7 +12768,7 @@ const VentaForm = ({
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                        <div className="space-y-2">
                           <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nº Comprobante</label>
-                          <input type="text" readOnly={isEditingFinalized} value={form.comprobante} onChange={(e) => setForm({ ...form, comprobante: e.target.value })} className={cn("w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg outline-none font-black text-slate-600", isEditingFinalized && "opacity-70 cursor-not-allowed")} />
+                          <input type="text" readOnly value={form.comprobante} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg outline-none font-black text-slate-600 opacity-70 cursor-not-allowed" />
                        </div>
                        <div className="space-y-2">
                           <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Punto de Venta *</label>
@@ -16947,7 +17007,7 @@ const EgresosView = ({
     const data = {
       ...editingItem,
       id: editingItem.id || `eg-${Date.now()}`,
-      comprobante: editingItem.comprobante || `EGR-${format(new Date(), 'yyyyMMdd')}-${(egresos.length + 1).toString().padStart(3, '0')}`,
+      comprobante: editingItem.comprobante || generarComprobanteEgreso(egresos, editingItem.fecha || new Date()),
       usuario: currentUser.name,
       fechaCreacion: editingItem.fechaCreacion || new Date().toISOString()
     };
