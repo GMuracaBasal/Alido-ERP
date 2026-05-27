@@ -401,6 +401,253 @@ const validateEtiquetasEnVenta = (
   return null;
 };
 
+/** Coincide línea de venta (edición con diff). */
+const matchVentaLine = (a: any, b: any): boolean => {
+  if (a?._editLineId && b?._editLineId && a._editLineId === b._editLineId) return true;
+  const ca = normalizeEtiquetaCodigo(a?.codigoBarras || '');
+  const cb = normalizeEtiquetaCodigo(b?.codigoBarras || '');
+  if (ca && cb && ca === cb) return true;
+  return false;
+};
+
+const withVentaLineIds = (venta: any) => {
+  const productos = (venta.productos || []).map((p: any, i: number) => ({
+    ...p,
+    _editLineId: p._editLineId || `${venta.id}-line-${i}`,
+  }));
+  return { ...venta, productos };
+};
+
+const generarDetalleEdicionVenta = (
+  original: VentaProducto[],
+  quedaron: VentaProducto[],
+  nuevos: VentaProducto[],
+  eliminados: VentaProducto[]
+): string => {
+  const partes: string[] = [];
+  const conCambioPrecio = quedaron.filter((p) => {
+    const op = original.find((o) => matchVentaLine(o, p));
+    return op && op.precioUnitario !== p.precioUnitario;
+  });
+  const conCambioCant = quedaron.filter((p) => {
+    const op = original.find((o) => matchVentaLine(o, p));
+    return op && op.cantidad !== p.cantidad;
+  });
+  if (conCambioPrecio.length > 0) partes.push(`Editó precios de ${conCambioPrecio.length} producto(s)`);
+  if (conCambioCant.length > 0) partes.push(`Modificó cantidades de ${conCambioCant.length} producto(s)`);
+  if (nuevos.length > 0) partes.push(`Agregó ${nuevos.length} producto(s)`);
+  if (eliminados.length > 0) partes.push(`Eliminó ${eliminados.length} producto(s)`);
+  return partes.length > 0 ? `${partes.join('. ')}.` : 'Edición sin cambios en productos.';
+};
+
+/** Genera movimientos de salida para productos de una venta (finalización o ítems nuevos en edición). */
+const generarMovimientosSalidaVenta = (
+  items: VentaProducto[],
+  savedVenta: { comprobante: string; id: string },
+  finalMovimientos: any[],
+  productosList: any[],
+  usuario: string,
+  lotesEtiquetados: any[] = []
+): any[] => {
+  const newMovs: any[] = [];
+  items.forEach((item: any) => {
+    if (item.codigoBarras) {
+      let almacenId = 'a2';
+      let loteNumero = 'ENVASE';
+      for (const le of lotesEtiquetados) {
+        const env = (le.envases || []).find(
+          (e: any) => normalizeEtiquetaCodigo(e.codigoBarras || e.codigo || '') === normalizeEtiquetaCodigo(item.codigoBarras)
+        );
+        if (env) {
+          almacenId = le.almacenDestinoId || 'a2';
+          loteNumero = le.loteNumero || loteNumero;
+          break;
+        }
+      }
+      newMovs.push({
+        id: `MOV-${Date.now()}-${item.codigoBarras}`,
+        tipo: 'salida',
+        productoId: item.productoId,
+        almacenId,
+        cantidad: item.cantidad,
+        unidad: item.unidad,
+        cantidadKg:
+          item.unidad === 'kg'
+            ? item.cantidad
+            : item.cantidad * (productosList.find((p: any) => p.id === item.productoId)?.pesoNetoUnidad || 0),
+        motivo: `Venta ${savedVenta.comprobante}`,
+        loteNumero,
+        fechaIngreso: safeFormat(new Date(), 'yyyy-MM-dd'),
+        fechaVencimiento: '',
+        origen: 'manual',
+        usuario,
+        fechaHora: new Date().toISOString(),
+        anulado: false,
+        referencia: savedVenta.comprobante,
+        observaciones: `Envase: ${item.codigoBarras}`,
+      });
+      return;
+    }
+    let pending = item.cantidad;
+    const prod = productosList.find((p: any) => p.id === item.productoId);
+    const isKg = prod?.unidadMedidaId === 'u1';
+    const stockPorLoteAlmacen: Record<string, number> = {};
+    finalMovimientos
+      .filter((m: any) => !m.anulado && m.productoId === item.productoId)
+      .forEach((m: any) => {
+        const key = `${m.loteNumero}|||${m.almacenId}`;
+        const cant = m.tipo === 'entrada' ? m.cantidad : m.tipo === 'salida' ? -m.cantidad : 0;
+        stockPorLoteAlmacen[key] = (stockPorLoteAlmacen[key] || 0) + cant;
+      });
+    const batches = Object.keys(stockPorLoteAlmacen)
+      .map((key) => {
+        const [num, almId] = key.split('|||');
+        const entry = finalMovimientos.find(
+          (m: any) => m.productoId === item.productoId && m.loteNumero === num && m.tipo === 'entrada'
+        );
+        return {
+          numero: num,
+          almacenId: almId,
+          stock: stockPorLoteAlmacen[key],
+          vencimiento: entry?.fechaVencimiento || '9999-12-31',
+        };
+      })
+      .filter((b) => b.stock > 0.001)
+      .sort((a, b) => a.vencimiento.localeCompare(b.vencimiento));
+    batches.forEach((b) => {
+      if (pending <= 0) return;
+      const toTake = Math.min(pending, b.stock);
+      newMovs.push({
+        id: `MOV-${Date.now()}-${b.numero}-${pending}`,
+        tipo: 'salida',
+        productoId: item.productoId,
+        almacenId: b.almacenId,
+        cantidad: toTake,
+        unidad: item.unidad,
+        cantidadKg: isKg ? toTake : toTake * (prod?.pesoNetoUnidad || 0),
+        motivo: `Venta ${savedVenta.comprobante}`,
+        loteNumero: b.numero,
+        fechaIngreso: safeFormat(new Date(), 'yyyy-MM-dd'),
+        fechaVencimiento: b.vencimiento,
+        origen: 'manual',
+        usuario,
+        fechaHora: new Date().toISOString(),
+        anulado: false,
+        referencia: savedVenta.comprobante,
+        observaciones: 'Descuento por FEFO (Venta Manual)',
+      });
+      pending -= toTake;
+    });
+    if (pending > 0) {
+      const defaultAlmacen = batches.length > 0 ? batches[0].almacenId : 'a1';
+      newMovs.push({
+        id: `MOV-${Date.now()}-neg-${pending}`,
+        tipo: 'salida',
+        productoId: item.productoId,
+        almacenId: defaultAlmacen,
+        cantidad: pending,
+        unidad: item.unidad,
+        cantidadKg: isKg ? pending : pending * (prod?.pesoNetoUnidad || 0),
+        motivo: `Venta ${savedVenta.comprobante}`,
+        loteNumero: 'STK-NEGATIVO',
+        fechaIngreso: safeFormat(new Date(), 'yyyy-MM-dd'),
+        fechaVencimiento: '',
+        origen: 'manual',
+        usuario,
+        fechaHora: new Date().toISOString(),
+        anulado: false,
+        referencia: savedVenta.comprobante,
+        observaciones: 'Stock insuficiente (Salida forzada)',
+      });
+    }
+  });
+  return newMovs;
+};
+
+const generarMovimientoEntradaDevolucionVenta = (
+  item: VentaProducto,
+  comprobante: string,
+  usuario: string,
+  productosList: any[],
+  movimientos: any[],
+  almacenFallback = 'a2'
+): any => {
+  const prod = productosList.find((p: any) => p.id === item.productoId);
+  const prevSalida = [...movimientos]
+    .reverse()
+    .find(
+      (m: any) =>
+        !m.anulado &&
+        m.referencia === comprobante &&
+        m.tipo === 'salida' &&
+        m.productoId === item.productoId &&
+        (item.codigoBarras ? (m.observaciones || '').includes(item.codigoBarras) : true)
+    );
+  return {
+    id: `MOV-ED-V-${Date.now()}-${item.productoId}`,
+    tipo: 'entrada',
+    productoId: item.productoId,
+    almacenId: prevSalida?.almacenId || almacenFallback,
+    cantidad: item.cantidad,
+    unidad: item.unidad,
+    cantidadKg:
+      item.unidad === 'kg'
+        ? item.cantidad
+        : item.cantidad * (prod?.pesoNetoUnidad || 0),
+    motivo: `Devolución por edición de venta ${comprobante}`,
+    loteNumero: prevSalida?.loteNumero || 'DEV-MANUAL',
+    fechaIngreso: safeFormat(new Date(), 'yyyy-MM-dd'),
+    fechaVencimiento: prevSalida?.fechaVencimiento || '',
+    origen: 'edicion-venta',
+    usuario,
+    fechaHora: new Date().toISOString(),
+    anulado: false,
+    referencia: comprobante,
+    observaciones: item.codigoBarras
+      ? `Reversión envase: ${item.codigoBarras}`
+      : 'Reversión por edición de venta',
+  };
+};
+
+const matchEgresoItem = (a: any, b: any): boolean => !!(a?.id && b?.id && a.id === b.id);
+
+const generarDetalleEdicionEgreso = (
+  original: EgresoItem[],
+  quedaron: EgresoItem[],
+  nuevos: EgresoItem[],
+  eliminados: EgresoItem[]
+): string => {
+  const partes: string[] = [];
+  const conCambioMonto = quedaron.filter((it) => {
+    const o = original.find((x) => matchEgresoItem(x, it));
+    return o && (o.subtotal !== it.subtotal || o.precioUnitario !== it.precioUnitario || o.monto !== it.monto);
+  });
+  if (conCambioMonto.length > 0) partes.push(`Editó montos de ${conCambioMonto.length} ítem(s)`);
+  if (nuevos.length > 0) partes.push(`Agregó ${nuevos.length} ítem(s)`);
+  if (eliminados.length > 0) partes.push(`Eliminó ${eliminados.length} ítem(s)`);
+  return partes.length > 0 ? `${partes.join('. ')}.` : 'Edición sin cambios en ítems.';
+};
+
+const EditHistorySection = ({ editHistory }: { editHistory?: { fecha: string; usuario: string; detalle: string }[] }) => {
+  if (!editHistory?.length) return null;
+  return (
+    <div className="mt-8 pt-6 border-t border-slate-100 no-print">
+      <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">
+        Historial de edición
+      </h4>
+      <div className="space-y-3">
+        {editHistory.map((entry, i) => (
+          <div key={i} className="text-[10px] text-slate-500 font-bold leading-relaxed">
+            <span className="text-slate-400">📝 </span>
+            {safeFormat(entry.fecha, 'dd/MM/yyyy HH:mm')} — {entry.usuario}
+            <p className="ml-5 text-slate-400 font-medium normal-case tracking-normal mt-0.5">{entry.detalle}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 const filterEnvasesPorNumeroLote = (envases: any[], numeroLote: string): any[] =>
   (envases || []).filter(
     (e) =>
@@ -660,7 +907,7 @@ const aplicarBajaEnvasesEnEstado = (
       return {
         ...ev,
         estado: 'baja',
-        anulado: true,
+        anulado: false,
         motivoBaja,
         fechaBaja: now,
         usuarioBaja: usuario,
@@ -918,7 +1165,7 @@ interface Movimiento {
   numeroFactura?: string;
   costoUnitario?: number;
   referencia?: string | null; // referencia a lote de producción si es automático
-  origen: 'manual' | 'produccion' | 'despiece' | 'transferencia';
+  origen: 'manual' | 'produccion' | 'despiece' | 'transferencia' | 'edicion-venta' | 'edicion-egreso' | 'Compra';
   usuario: string;
   fechaHora: string;
   anulado: boolean;
@@ -1165,6 +1412,11 @@ interface Venta {
   usuario: string;
   fechaCreacion: string;
   comprobante: string; // autogenerado
+  editHistory?: {
+    fecha: string;
+    usuario: string;
+    detalle: string;
+  }[];
 }
 
 // --- Egresos Types ---
@@ -1251,6 +1503,11 @@ interface Egreso {
   estadoPago: 'Pendiente' | 'Parcial' | 'Pagado';
   usuario: string;
   fechaCreacion: string;
+  editHistory?: {
+    fecha: string;
+    usuario: string;
+    detalle: string;
+  }[];
 }
 
 interface PlantillaEgreso {
@@ -2104,6 +2361,51 @@ const generarCodigoEnvase = (
   const maxNum = maxSecuencialEnvasesList(envasesDelLote || []);
   const correlativo = String(maxNum + 1).padStart(3, '0');
   return `${numeroLote}-${correlativo}`;
+};
+
+/** Envases del lote para secuencial (todos los estados, uniendo entradas por id interno o número de lote). */
+const getEnvasesDelLoteParaSecuencial = (
+  loteInternalId: string,
+  numeroLote: string,
+  lotesEtiquetados: any[],
+  esDespiece?: boolean,
+  corteKey?: string
+): any[] => {
+  const entries = lotesEtiquetados.filter((le) => {
+    if (esDespiece && corteKey) return le.loteId === corteKey;
+    return (
+      le.loteId === loteInternalId ||
+      le.loteId === numeroLote ||
+      (le.loteNumero && le.loteNumero === numeroLote)
+    );
+  });
+  return entries.flatMap((le) => le.envases || []);
+};
+
+/** Próximo código único; nunca reutiliza un código ya presente (EN STOCK, BAJA, vendido, etc.). */
+const resolveProximoCodigoEnvaseUnico = (
+  numeroLote: string,
+  envasesDelLote: any[],
+  esDespiece = false,
+  codigoProductoCorte?: string
+): { numero: number; codigoBarras: string } => {
+  let codigoBarras = generarCodigoEnvase(numeroLote, envasesDelLote, esDespiece, codigoProductoCorte);
+  let numero = extraerSecuencialCodigoBarras(codigoBarras);
+  const used = new Set(
+    (envasesDelLote || [])
+      .map((e) => normalizeEtiquetaCodigo(e.codigoBarras || e.codigo || ''))
+      .filter(Boolean)
+  );
+  let guard = 0;
+  while (used.has(normalizeEtiquetaCodigo(codigoBarras)) && guard < 9999) {
+    guard += 1;
+    numero += 1;
+    codigoBarras =
+      esDespiece && codigoProductoCorte
+        ? `${numeroLote}-${codigoProductoCorte}-${String(numero).padStart(3, '0')}`
+        : `${numeroLote}-${String(numero).padStart(3, '0')}`;
+  }
+  return { numero, codigoBarras };
 };
 
 /** Número de lote de un corte de despiece: {lotePadre}-{códigoProducto} */
@@ -4302,7 +4604,7 @@ const LotesProduccionView = ({
 
     if (selectedLote) {
       const leProd = lotesEtiquetados.find((item: any) => item.loteId === selectedLote.id || item.loteId === selectedLote.numeroLote);
-      const activeEnv = (leProd?.envases || []).filter((e: any) => !(e.anulado === true || e.anulado === 'true' || e.estado === 'baja'));
+      const activeEnv = (leProd?.envases || []).filter(isEnvaseVigente);
       const pesoDesdeEtiquetas = activeEnv.reduce((s: number, e: any) => s + (parseFloat(e.pesoNeto) || 0), 0);
       const prodPT = productos.find((p: any) => p.id === formData.productoId);
       const usesUnitsPT = prodPT?.unidadMedidaId !== 'u1';
@@ -6169,7 +6471,7 @@ const handleFinalize = () => {
       const key = `${selectedLote?.id || formData.id}-${c.productoId}`;
       const le = lotesEtiquetados.find((item: any) => item.loteId === key);
       const hasLabels = le && le.envases?.length > 0;
-      const qty = hasLabels ? le.envases.filter((e: any) => !e.anulado).reduce((s: number, e: any) => s + e.pesoNeto, 0) : (parseFloat(c.cantidadReal) || 0);
+      const qty = hasLabels ? le.envases.filter(isEnvaseVigente).reduce((s: number, e: any) => s + e.pesoNeto, 0) : (parseFloat(c.cantidadReal) || 0);
       const factor = getPesoEquivalente(c.productoId);
       return {
         ...c,
@@ -6393,7 +6695,7 @@ const handleFinalize = () => {
       const key = `${selectedLote?.id || formData.id}-${c.productoId}`;
       const le = lotesEtiquetados.find((item: any) => item.loteId === key);
       const hasLabels = le && le.envases?.length > 0;
-      const qty = hasLabels ? le.envases.filter((e: any) => !e.anulado).reduce((s: number, e: any) => s + e.pesoNeto, 0) : (parseFloat(c.cantidadReal) || 0);
+      const qty = hasLabels ? le.envases.filter(isEnvaseVigente).reduce((s: number, e: any) => s + e.pesoNeto, 0) : (parseFloat(c.cantidadReal) || 0);
       return sum + formatNum(qty);
     }, 0);
     const cantidadIngresadaKg = formatNum(parseFloat(formData.cantidadIngresada) || 0);
@@ -6500,7 +6802,7 @@ const handleFinalize = () => {
                       const key = `${selectedLote?.id || formData.id}-${c.productoId}`;
                       const le = lotesEtiquetados.find((item: any) => item.loteId === key);
                       const hasLabels = le && le.envases?.length > 0;
-                      const etiquetadoQty = hasLabels ? le.envases.filter((e: any) => !e.anulado).reduce((sum: number, e: any) => sum + e.pesoNeto, 0) : 0;
+                      const etiquetadoQty = hasLabels ? le.envases.filter(isEnvaseVigente).reduce((sum: number, e: any) => sum + e.pesoNeto, 0) : 0;
                       const currentQty = hasLabels ? etiquetadoQty : c.cantidadReal;
 
                       return (
@@ -6544,7 +6846,7 @@ const handleFinalize = () => {
                             {prod?.unidadMedidaId !== 'u1' ? (
                               hasLabels ? (
                                 <div className="p-1 text-xs font-black text-sleek-dark">
-                                  {le.envases.filter((e: any) => !e.anulado).length}
+                                  {le.envases.filter(isEnvaseVigente).length}
                                   <span className="ml-1 text-slate-300 font-bold uppercase text-[9px]">un.</span>
                                 </div>
                               ) : (
@@ -6995,24 +7297,42 @@ const EtiquetasView = ({
 
   const esDespieceEtiquetado = selectedLote?.tipo === 'despiece';
   const codigoProductoCorte = esDespieceEtiquetado ? (product?.codigo || 'SIN') : undefined;
+  const corteKeyEtiquetado =
+    esDespieceEtiquetado && selectedLoteId && selectedCorteId
+      ? `${selectedLoteId}-${selectedCorteId}`
+      : undefined;
 
-  const nextEnvaseNumero = useMemo(() => {
-    if (!loteEtiquetado || !selectedLote?.numeroLote) return 1;
-    const todosLosEnvases = loteEtiquetado.envases || [];
-    return maxSecuencialEnvasesList(todosLosEnvases) + 1;
-  }, [loteEtiquetado, selectedLote, esDespieceEtiquetado, codigoProductoCorte]);
-
-  const currentBarcodeValue = useMemo(() => {
-    if (!selectedLote?.numeroLote || !loteEtiquetado) return '';
-    if (esDespieceEtiquetado && !selectedCorteId) return '';
-    const todosLosEnvases = loteEtiquetado.envases || [];
-    return generarCodigoEnvase(
+  const envasesParaSecuencial = useMemo(() => {
+    if (!selectedLoteId || !selectedLote?.numeroLote) return [];
+    return getEnvasesDelLoteParaSecuencial(
+      selectedLoteId,
       selectedLote.numeroLote,
-      todosLosEnvases,
+      lotesEtiquetados,
+      esDespieceEtiquetado,
+      corteKeyEtiquetado
+    );
+  }, [selectedLoteId, selectedLote, lotesEtiquetados, esDespieceEtiquetado, corteKeyEtiquetado]);
+
+  const proximoCodigoEnvase = useMemo(() => {
+    if (!selectedLote?.numeroLote || !loteEtiquetado) return { numero: 1, codigoBarras: '' };
+    if (esDespieceEtiquetado && !selectedCorteId) return { numero: 1, codigoBarras: '' };
+    return resolveProximoCodigoEnvaseUnico(
+      selectedLote.numeroLote,
+      envasesParaSecuencial,
       esDespieceEtiquetado,
       codigoProductoCorte
     );
-  }, [selectedLote, loteEtiquetado, esDespieceEtiquetado, codigoProductoCorte, selectedCorteId]);
+  }, [
+    selectedLote,
+    loteEtiquetado,
+    envasesParaSecuencial,
+    esDespieceEtiquetado,
+    codigoProductoCorte,
+    selectedCorteId,
+  ]);
+
+  const nextEnvaseNumero = proximoCodigoEnvase.numero;
+  const currentBarcodeValue = proximoCodigoEnvase.codigoBarras;
 
   // Serial Port Logic
   const connectScale = async () => {
@@ -7090,63 +7410,104 @@ const EtiquetasView = ({
   }, [currentBarcodeValue]);
 
   const registerEnvase = (print: boolean) => {
-    if (!selectedLoteId || currentPackagingWeight <= 0) return;
+    if (!selectedLoteId || currentPackagingWeight <= 0 || !selectedLote?.numeroLote) return;
     if (selectedLote?.tipo === 'despiece' && !selectedCorteId) return;
 
-    const newEnvase = {
-      numero: nextEnvaseNumero,
-      codigoBarras: currentBarcodeValue,
-      pesoNeto: currentPackagingWeight,
-      pesoBruto: parseFloat(manualGrossWeight) || null,
-      fechaHora: new Date().toISOString(),
-      usuario: currentUser.name,
-      anulado: false
-    };
+    const leKey =
+      corteKeyEtiquetado ||
+      lotesEtiquetados.find(
+        (l: any) =>
+          l.loteId === selectedLoteId ||
+          l.loteId === selectedLote.numeroLote ||
+          l.loteNumero === selectedLote.numeroLote
+      )?.loteId ||
+      selectedLoteId;
 
-    const updatedLoteEtiquetado = {
-      ...loteEtiquetado,
-      envases: [...loteEtiquetado.envases, { ...newEnvase, estado: 'en_stock' }],
-      pesoTotalEtiquetado: pesoEtiquetado + currentPackagingWeight
-    };
+    let registeredEnvase: any = null;
 
-    const newLotesEtiquetados = lotesEtiquetados.filter((l: any) => l.loteId !== loteEtiquetado.loteId);
-    setLotesEtiquetados([...newLotesEtiquetados, updatedLoteEtiquetado]);
+    setLotesEtiquetados((prev) => {
+      const envasesActuales = getEnvasesDelLoteParaSecuencial(
+        selectedLoteId,
+        selectedLote.numeroLote,
+        prev,
+        esDespieceEtiquetado,
+        corteKeyEtiquetado
+      );
+      const { numero: envNumero, codigoBarras: envCodigo } = resolveProximoCodigoEnvaseUnico(
+        selectedLote.numeroLote,
+        envasesActuales,
+        esDespieceEtiquetado,
+        codigoProductoCorte
+      );
 
-    // Track movement if it's already finalized (editing mode) — producción usa movimiento; despiece solo envases
-    if (selectedLote.estado === 'Finalizado' && selectedLote.tipo !== 'despiece') {
-       const now = new Date().toISOString();
-       const prodPT = productos.find((p: any) => p.id === updatedLoteEtiquetado.productoId);
-       const unitPT = unidades.find((u: any) => u.id === prodPT?.unidadMedidaId)?.abreviatura || 'kg';
-       const almId = selectedLote.tipo === 'despiece'
-         ? (updatedLoteEtiquetado.almacenId || almacenes[0]?.id || '')
-         : (selectedLote.almacenDestinoId || almacenes[0]?.id || '');
-       
-       const move: Movimiento = {
-         id: `MOV-${Date.now()}-edit-add`,
-         tipo: 'entrada',
-         productoId: updatedLoteEtiquetado.productoId,
-         almacenId: almId,
-         cantidad: prodPT?.unidadMedidaId === 'u1' ? currentPackagingWeight : 1,
-         unidad: unitPT,
-         cantidadKg: currentPackagingWeight,
-         motivo: `Nuevo envase (#${newEnvase.numero}) - Edición Lote ${selectedLote.numeroLote}`,
-         loteNumero: selectedLote.tipo === 'despiece'
-           ? getNumeroLoteCorteDespiece(selectedLote.numeroLote, updatedLoteEtiquetado.productoId, productos)
-           : selectedLote.numeroLote,
-         fechaIngreso: safeFormat(new Date(), 'yyyy-MM-dd'),
-         fechaVencimiento: selectedLote.fechaVencimiento,
-         origen: selectedLote.tipo === 'despiece' ? 'despiece' : 'produccion',
-         usuario: currentUser.name,
-         fechaHora: now,
-         anulado: false,
-         referencia: selectedLote.numeroLote,
-         observaciones: `Caja registrada durante edición de lote finalizado. Code: ${newEnvase.codigoBarras}`
-       };
-       setMovimientos([move, ...movimientos]);
+      registeredEnvase = {
+        numero: envNumero,
+        codigoBarras: envCodigo,
+        pesoNeto: currentPackagingWeight,
+        pesoBruto: parseFloat(manualGrossWeight) || null,
+        fechaHora: new Date().toISOString(),
+        usuario: currentUser.name,
+        anulado: false,
+        estado: 'en_stock',
+      };
+
+      const existingLe =
+        prev.find((l: any) => l.loteId === leKey) ||
+        (loteEtiquetado?.loteId === leKey ? loteEtiquetado : null) || {
+          loteId: leKey,
+          parentLoteId: selectedLoteId,
+          loteNumero: selectedLote.numeroLote,
+          tipoLote: selectedLote.tipo,
+          productoId: product?.id,
+          almacenId:
+            selectedLote.tipo === 'despiece' && selectedCorteId
+              ? selectedLote.cortes?.find((c: any) => c.productoId === selectedCorteId)?.almacenDestinoId || ''
+              : selectedLote.almacenDestinoId || '',
+          envases: [],
+          pesoTotalEtiquetado: 0,
+          estado: 'en_proceso',
+          mermaEmpaquetado: 0,
+          corteId: selectedCorteId,
+        };
+
+      const updatedEnvases = [...(existingLe.envases || []), registeredEnvase];
+      const pesoTotalEtiquetado = updatedEnvases
+        .filter(isEnvaseVigente)
+        .reduce((s: number, e: any) => s + (parseFloat(e.pesoNeto) || 0), 0);
+
+      const updatedLe = { ...existingLe, envases: updatedEnvases, pesoTotalEtiquetado };
+      return [...prev.filter((l: any) => l.loteId !== leKey), updatedLe];
+    });
+
+    if (selectedLote.estado === 'Finalizado' && selectedLote.tipo !== 'despiece' && registeredEnvase) {
+      const now = new Date().toISOString();
+      const prodPT = productos.find((p: any) => p.id === product?.id);
+      const unitPT = unidades.find((u: any) => u.id === prodPT?.unidadMedidaId)?.abreviatura || 'kg';
+      const almId = selectedLote.almacenDestinoId || almacenes[0]?.id || '';
+      const move: Movimiento = {
+        id: `MOV-${Date.now()}-edit-add`,
+        tipo: 'entrada',
+        productoId: product?.id || '',
+        almacenId: almId,
+        cantidad: prodPT?.unidadMedidaId === 'u1' ? currentPackagingWeight : 1,
+        unidad: unitPT,
+        cantidadKg: currentPackagingWeight,
+        motivo: `Nuevo envase (#${registeredEnvase.numero}) - Edición Lote ${selectedLote.numeroLote}`,
+        loteNumero: selectedLote.numeroLote,
+        fechaIngreso: safeFormat(new Date(), 'yyyy-MM-dd'),
+        fechaVencimiento: selectedLote.fechaVencimiento,
+        origen: 'produccion',
+        usuario: currentUser.name,
+        fechaHora: now,
+        anulado: false,
+        referencia: selectedLote.numeroLote,
+        observaciones: `Caja registrada durante edición de lote finalizado. Code: ${registeredEnvase.codigoBarras}`,
+      };
+      setMovimientos((m) => [move, ...m]);
     }
 
-    if (print) {
-      handlePrintLabel(newEnvase);
+    if (print && registeredEnvase) {
+      handlePrintLabel(registeredEnvase);
     }
 
     setManualWeight('');
@@ -7323,7 +7684,7 @@ const EtiquetasView = ({
     const updatedEnvases = targetLe.envases.map((ev: any) =>
       ev.codigoBarras === env.codigoBarras && ev.numero === env.numero ? { ...ev, pesoNeto: newKg } : ev
     );
-    const active = updatedEnvases.filter((ev: any) => !(ev.anulado === true || ev.anulado === 'true' || ev.estado === 'baja'));
+    const active = updatedEnvases.filter(isEnvaseVigente);
     const pesoTotalEtiquetado = active.reduce((s: number, ev: any) => s + (parseFloat(ev.pesoNeto) || 0), 0);
     setLotesEtiquetados(lotesEtiquetados.map((l: any) =>
       l.loteId === leId ? { ...l, envases: updatedEnvases, pesoTotalEtiquetado } : l
@@ -7626,7 +7987,7 @@ const EtiquetasView = ({
     if (selectedLote?.tipo === 'produccion') return pesoEtiquetado;
     const allCutsLabels = lotesEtiquetados.filter((le: any) => le.parentLoteId === selectedLoteId);
     return allCutsLabels.reduce((loteSum, le) => {
-      return loteSum + le.envases.filter((e: any) => !(e.anulado === true || e.anulado === 'true')).reduce((s: number, e: any) => s + e.pesoNeto, 0);
+      return loteSum + le.envases.filter(isEnvaseVigente).reduce((s: number, e: any) => s + e.pesoNeto, 0);
     }, 0);
   }, [selectedLote, selectedLoteId, lotesEtiquetados, pesoEtiquetado]);
 
@@ -7919,10 +8280,10 @@ const EtiquetasView = ({
                           setIsEditingFinalized(false);
                           showNotification('Edición guardada y cerrada', 'success');
                         } : finalizeEtiquetado}
-                        disabled={loteEtiquetado?.envases.filter((e: any) => !(e.anulado === true || e.anulado === 'true')).length === 0}
+                        disabled={loteEtiquetado?.envases.filter(isEnvaseVigente).length === 0}
                         className={cn(
                           "w-full py-3 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all shadow-lg",
-                          (loteEtiquetado?.envases.filter((e: any) => !(e.anulado === true || e.anulado === 'true')).length > 0) ? "bg-sleek-dark text-white hover:bg-slate-800" : "bg-slate-100 text-slate-300 cursor-not-allowed"
+                          (loteEtiquetado?.envases.filter(isEnvaseVigente).length > 0) ? "bg-sleek-dark text-white hover:bg-slate-800" : "bg-slate-100 text-slate-300 cursor-not-allowed"
                         )}
                       >
                         {isEditingFinalized ? 'Guardar y Cerrar Edición' : 'Finalizar Etiquetado'}
@@ -8181,7 +8542,7 @@ const EtiquetasView = ({
                </h3>
                <div className="flex gap-4 items-center">
                   <p className="text-[10px] font-bold text-slate-400 uppercase">
-                    Total Lote: <span className="text-sleek-accent">{selectedLote?.tipo === 'despiece' ? envasesParaMostrar.filter(e => !e.anulado).length : loteEtiquetado?.envases.filter((e: any) => !e.anulado).length || 0}</span> Envases | 
+                    Total Lote: <span className="text-sleek-accent">{selectedLote?.tipo === 'despiece' ? envasesParaMostrar.length : loteEtiquetado?.envases.length || 0}</span> Envases | 
                     <span className="text-sleek-accent"> {displayNum(totalPesoLote, 2)}</span> kg
                   </p>
                </div>
@@ -8382,7 +8743,7 @@ const EtiquetasView = ({
             </div>
             <div>
               <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Envases Registrados</p>
-              <p className="text-xs font-black uppercase">{loteEtiquetado?.envases.filter((e: any) => !(e.anulado === true || e.anulado === 'true')).length || 0}</p>
+              <p className="text-xs font-black uppercase">{loteEtiquetado?.envases.filter(isEnvaseVigente).length || 0}</p>
             </div>
             <div>
               <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Peso Neto Total</p>
@@ -8507,16 +8868,14 @@ const EtiquetasView = ({
                     ? {
                         ...envItem,
                         estado: 'baja',
-                        anulado: true,
+                        anulado: false,
                         motivoBaja: anularModal.motivo,
                         fechaBaja: new Date().toISOString(),
                         usuarioBaja: currentUser.name
                       }
                     : envItem
                 );
-                const active = updatedEnvases.filter((ev: any) =>
-                  !(ev.anulado === true || ev.anulado === 'true' || ev.estado === 'baja')
-                );
+                const active = updatedEnvases.filter(isEnvaseVigente);
                 const pesoTotalEtiquetado = active.reduce((s: number, ev: any) => s + (parseFloat(ev.pesoNeto) || 0), 0);
 
                 setLotesEtiquetados(
@@ -11295,6 +11654,8 @@ const VentasPedidosView = ({
   const [view, setView] = useState<'list' | 'form' | 'print'>('list');
   const [selectedVenta, setSelectedVenta] = useState<any>(null);
   const [editingVenta, setEditingVenta] = useState<any>(null);
+  const [isEditingVenta, setIsEditingVenta] = useState(false);
+  const editingOriginalProductsRef = useRef<VentaProducto[] | null>(null);
   const [isAnnulModalOpen, setIsAnnulModalOpen] = useState(false);
   const [ventaToAnnul, setVentaToAnnul] = useState<any>(null);
   const [isRemitoOpen, setIsRemitoOpen] = useState(false);
@@ -11322,6 +11683,8 @@ const VentasPedidosView = ({
   }, [ventas, dateRange, filterCliente, filterEstado, searchTerm, clientes]);
 
   const handleCreateNew = () => {
+    setIsEditingVenta(false);
+    editingOriginalProductsRef.current = null;
     const today = new Date();
     const vtaId = `VTA-${safeFormat(today, 'yyyyMMdd')}-${(ventas.length + 1).toString().padStart(3, '0')}`;
     setEditingVenta({
@@ -11349,9 +11712,22 @@ const VentasPedidosView = ({
   };
 
   const handleEdit = (venta: any) => {
-    // Abrir el modal con los datos precargados. No tocamos los movimientos todavía (Alternativa Recomendada).
-    setEditingVenta(JSON.parse(JSON.stringify(venta)));
+    if (venta.estado === 'Finalizado') {
+      const prepared = withVentaLineIds(venta);
+      editingOriginalProductsRef.current = JSON.parse(JSON.stringify(prepared.productos));
+      setIsEditingVenta(true);
+      setEditingVenta(JSON.parse(JSON.stringify(prepared)));
+    } else {
+      setIsEditingVenta(false);
+      editingOriginalProductsRef.current = null;
+      setEditingVenta(JSON.parse(JSON.stringify(venta)));
+    }
     setView('form');
+  };
+
+  const clearVentaEditState = () => {
+    setIsEditingVenta(false);
+    editingOriginalProductsRef.current = null;
   };
 
   const handleDelete = (venta: any) => {
@@ -11406,8 +11782,106 @@ const VentasPedidosView = ({
     return (
       <VentaForm 
         venta={editingVenta}
-        onClose={() => setView('list')}
+        isEditingFinalized={isEditingVenta}
+        onClose={() => { clearVentaEditState(); setView('list'); }}
         onSave={(savedVenta: any, shouldFinalize: boolean) => {
+          const oldVenta = ventas.find((v: any) => v.id === savedVenta.id);
+          const originalProducts = editingOriginalProductsRef.current;
+
+          // --- Edición inteligente de venta finalizada (DIFF) ---
+          if (isEditingVenta && originalProducts && shouldFinalize && oldVenta?.estado === 'Finalizado') {
+            const currentProducts: VentaProducto[] = savedVenta.productos || [];
+            const productosQueSeQuedan = currentProducts.filter((cp) =>
+              originalProducts.some((op) => matchVentaLine(op, cp))
+            );
+            const productosNuevos = currentProducts.filter(
+              (cp) => !originalProducts.some((op) => matchVentaLine(op, cp))
+            );
+            const productosEliminados = originalProducts.filter(
+              (op) => !currentProducts.some((cp) => matchVentaLine(op, cp))
+            );
+
+            const etiquetaError = validateEtiquetasEnVenta(
+              productosNuevos,
+              ventas,
+              lotesEtiquetados,
+              savedVenta.id
+            );
+            if (etiquetaError) {
+              showNotification(etiquetaError, 'error');
+              return;
+            }
+
+            let updatedLE = JSON.parse(JSON.stringify(lotesEtiquetados));
+            let finalMovimientos = [...movimientos];
+            const entradasDevolucion: any[] = [];
+
+            productosEliminados.forEach((item) => {
+              if (item.codigoBarras) {
+                updatedLE = revertirBajaEnvasesPorVenta(
+                  updatedLE,
+                  { id: savedVenta.id, comprobante: savedVenta.comprobante },
+                  [item]
+                );
+              }
+              entradasDevolucion.push(
+                generarMovimientoEntradaDevolucionVenta(
+                  item,
+                  savedVenta.comprobante,
+                  currentUser.name,
+                  productos,
+                  movimientos
+                )
+              );
+            });
+
+            const salidasNuevas = generarMovimientosSalidaVenta(
+              productosNuevos,
+              savedVenta,
+              finalMovimientos,
+              productos,
+              currentUser.name,
+              updatedLE
+            );
+            finalMovimientos = [...salidasNuevas, ...entradasDevolucion, ...finalMovimientos];
+
+            if (productosNuevos.some((p) => p.codigoBarras)) {
+              updatedLE = aplicarBajaEnvasesPorVenta(updatedLE, productosNuevos, {
+                id: savedVenta.id,
+                comprobante: savedVenta.comprobante,
+              });
+            }
+
+            const detalle = generarDetalleEdicionVenta(
+              originalProducts,
+              productosQueSeQuedan,
+              productosNuevos,
+              productosEliminados
+            );
+
+            const ventaEditada = {
+              ...savedVenta,
+              estado: 'Finalizado' as const,
+              comprobante: oldVenta.comprobante,
+              editHistory: [
+                ...(oldVenta.editHistory || []),
+                {
+                  fecha: new Date().toISOString(),
+                  usuario: currentUser.name,
+                  detalle,
+                },
+              ],
+            };
+
+            setMovimientos(finalMovimientos);
+            setLotesEtiquetados(updatedLE);
+            setVentas(ventas.map((v: any) => (v.id === ventaEditada.id ? ventaEditada : v)));
+            clearVentaEditState();
+            setView('list');
+            showNotification(`Venta ${ventaEditada.comprobante} actualizada.`, 'success');
+            return;
+          }
+
           const etiquetaError = validateEtiquetasEnVenta(
             savedVenta.productos || [],
             ventas,
@@ -11419,132 +11893,18 @@ const VentasPedidosView = ({
             return;
           }
 
-          // If editing a finalized sale, we must annul old moves first
           let finalMovimientos = [...movimientos];
-          const oldVenta = ventas.find((v: any) => v.id === savedVenta.id);
-          
-          if (oldVenta && oldVenta.estado === 'Finalizado') {
-             finalMovimientos = finalMovimientos.map((m: any) => 
-               m.referencia === oldVenta.comprobante ? { ...m, anulado: true, anuladoPor: currentUser.name, anuladoFecha: new Date().toISOString() } : m
-             );
-             setLotesEtiquetados(
-               revertirBajaEnvasesPorVenta(
-                 lotesEtiquetados,
-                 { id: oldVenta.id, comprobante: oldVenta.comprobante },
-                 oldVenta.productos || []
-               )
-             );
-          }
 
           if (shouldFinalize) {
-            // Logic to discount stock
-            const newMovs: Movimiento[] = [];
+            const newMovs = generarMovimientosSalidaVenta(
+              savedVenta.productos,
+              savedVenta,
+              finalMovimientos,
+              productos,
+              currentUser.name,
+              lotesEtiquetados
+            );
             const updatedLE = JSON.parse(JSON.stringify(lotesEtiquetados));
-
-            savedVenta.productos.forEach((item: any) => {
-              if (item.codigoBarras) {
-                // Specific Package
-                let found = false;
-                updatedLE.forEach((le: any) => {
-                  const env = le.envases.find((e: any) => e.codigoBarras === item.codigoBarras);
-                  if (env) {
-                    found = true;
-                    
-                    newMovs.push({
-                      id: `MOV-${Date.now()}-${item.codigoBarras}`,
-                      tipo: 'salida',
-                      productoId: item.productoId,
-                      almacenId: le.almacenDestinoId || 'a2',
-                      cantidad: item.cantidad,
-                      unidad: item.unidad,
-                      cantidadKg: item.unidad === 'kg' ? item.cantidad : (item.cantidad * (productos.find((p: any) => p.id === item.productoId)?.pesoNetoUnidad || 0)),
-                      motivo: `Venta ${savedVenta.comprobante}`,
-                      loteNumero: le.loteNumero,
-                      fechaIngreso: safeFormat(new Date(), 'yyyy-MM-dd'),
-                      fechaVencimiento: '',
-                      origen: 'manual',
-                      usuario: currentUser.name,
-                      fechaHora: new Date().toISOString(),
-                      anulado: false,
-                      referencia: savedVenta.comprobante,
-                      observaciones: `Envase: ${item.codigoBarras}`
-                    });
-                  }
-                });
-              } else {
-                // FEFO manual - track stock per lote AND per almacen
-                let pending = item.cantidad;
-                const prod = productos.find((p: any) => p.id === item.productoId);
-                const isKg = prod?.unidadMedidaId === 'u1';
-                
-                // Get stock per lote+almacen combination
-                const stockPorLoteAlmacen: any = {};
-                finalMovimientos.filter((m: any) => !m.anulado && m.productoId === item.productoId).forEach((m: any) => {
-                  const key = `${m.loteNumero}|||${m.almacenId}`;
-                  const cant = m.tipo === 'entrada' ? m.cantidad : (m.tipo === 'salida' ? -m.cantidad : 0);
-                  stockPorLoteAlmacen[key] = (stockPorLoteAlmacen[key] || 0) + cant;
-                });
-
-                // Build batches with almacen info, sorted FEFO
-                const batches = Object.keys(stockPorLoteAlmacen)
-                  .map(key => {
-                    const [num, almId] = key.split('|||');
-                    const entry = finalMovimientos.find((m: any) => m.productoId === item.productoId && m.loteNumero === num && m.tipo === 'entrada');
-                    return { numero: num, almacenId: almId, stock: stockPorLoteAlmacen[key], vencimiento: entry?.fechaVencimiento || '9999-12-31' };
-                  })
-                  .filter(b => b.stock > 0.001)
-                  .sort((a, b) => a.vencimiento.localeCompare(b.vencimiento));
-
-                batches.forEach(b => {
-                  if (pending <= 0) return;
-                  const toTake = Math.min(pending, b.stock);
-                  newMovs.push({
-                    id: `MOV-${Date.now()}-${b.numero}-${pending}`,
-                    tipo: 'salida',
-                    productoId: item.productoId,
-                    almacenId: b.almacenId, // Use the actual almacen where stock exists
-                    cantidad: toTake,
-                    unidad: item.unidad,
-                    cantidadKg: isKg ? toTake : (toTake * (prod?.pesoNetoUnidad || 0)),
-                    motivo: `Venta ${savedVenta.comprobante}`,
-                    loteNumero: b.numero,
-                    fechaIngreso: safeFormat(new Date(), 'yyyy-MM-dd'),
-                    fechaVencimiento: b.vencimiento,
-                    origen: 'manual',
-                    usuario: currentUser.name,
-                    fechaHora: new Date().toISOString(),
-                    anulado: false,
-                    referencia: savedVenta.comprobante,
-                    observaciones: 'Descuento por FEFO (Venta Manual)'
-                  });
-                  pending -= toTake;
-                });
-
-                if (pending > 0) {
-                  // Finalizing with negative stock warning
-                  const defaultAlmacen = batches.length > 0 ? batches[0].almacenId : 'a1';
-                   newMovs.push({
-                    id: `MOV-${Date.now()}-neg-${pending}`,
-                    tipo: 'salida',
-                    productoId: item.productoId,
-                    almacenId: defaultAlmacen,
-                    cantidad: pending,
-                    unidad: item.unidad,
-                    cantidadKg: isKg ? pending : (pending * (prod?.pesoNetoUnidad || 0)),
-                    motivo: `Venta ${savedVenta.comprobante}`,
-                    loteNumero: 'STK-NEGATIVO',
-                    fechaIngreso: safeFormat(new Date(), 'yyyy-MM-dd'),
-                    fechaVencimiento: '',
-                    origen: 'manual',
-                    usuario: currentUser.name,
-                    fechaHora: new Date().toISOString(),
-                    anulado: false,
-                    referencia: savedVenta.comprobante,
-                    observaciones: 'Stock insuficiente (Salida forzada)'
-                  });
-                }
-              }
-            });
 
             setMovimientos([...newMovs, ...finalMovimientos]);
             setLotesEtiquetados(
@@ -11564,6 +11924,7 @@ const VentasPedidosView = ({
           } else {
             setVentas([savedVenta, ...ventas]);
           }
+          clearVentaEditState();
           setView('list');
         }}
         clientes={clientes}
@@ -11727,9 +12088,14 @@ const VentasPedidosView = ({
                          <button onClick={() => { setSelectedVenta(venta); setIsRemitoOpen(true); }} className="p-2 text-slate-400 hover:text-sleek-accent transition-all" title="Ver / Imprimir">
                             <Eye className="w-4 h-4" />
                          </button>
-                         {venta.estado !== 'Anulado' && (
+                         {venta.estado !== 'Anulado' && venta.estado !== 'Finalizado' && (
                            <button onClick={() => handleEdit(venta)} className="p-2 text-slate-400 hover:text-sky-600 transition-all" title="Editar">
                              <Edit2 className="w-4 h-4" />
+                           </button>
+                         )}
+                         {venta.estado === 'Finalizado' && (
+                           <button onClick={() => handleEdit(venta)} className="p-2 text-slate-400 hover:text-sleek-accent transition-all" title="Editar comprobante">
+                             <Pencil className="w-4 h-4" />
                            </button>
                          )}
                          {venta.estado === 'En Proceso' && (
@@ -11824,7 +12190,7 @@ const VentasPedidosView = ({
 };
 
 const VentaForm = ({ 
-  venta, onClose, onSave, clientes, productos, listasPrecios, 
+  venta, isEditingFinalized = false, onClose, onSave, clientes, productos, listasPrecios, 
   puntosVenta, lotesEtiquetados, setLotesEtiquetados, almacenes, 
   movimientos, setMovimientos, ventas, showNotification 
 }: any) => {
@@ -12007,10 +12373,15 @@ const VentaForm = ({
   };
 
   const removeLine = (idx: number) => {
-    // BUG 2: Logica de devolucion si la venta esta finalizada
+    if (isEditingFinalized) {
+      const news = [...form.productos];
+      news.splice(idx, 1);
+      updateTotals(news);
+      return;
+    }
+    // Devolución inmediata solo si se edita fuera del modo diff (legacy)
     if (form.estado === 'Finalizado') {
        setReturnItemIdx(idx);
-       // Pre-select PT warehouse as default
        setReturnAlmacenId('a2'); 
        setIsReturnModalOpen(true);
     } else {
@@ -12148,7 +12519,12 @@ const VentaForm = ({
       return;
     }
 
-    const etiquetaError = validateEtiquetasEnVenta(form.productos, ventas, lotesEtiquetados, form.id);
+    const productosAValidar = isEditingFinalized
+      ? form.productos.filter(
+          (cp: any) => !(venta.productos || []).some((op: any) => matchVentaLine(op, cp))
+        )
+      : form.productos;
+    const etiquetaError = validateEtiquetasEnVenta(productosAValidar, ventas, lotesEtiquetados, form.id);
     if (etiquetaError) {
       showNotification(etiquetaError, 'error');
       return;
@@ -12158,7 +12534,12 @@ const VentaForm = ({
   };
 
   const executeSave = (isFinal: boolean) => {
-    const etiquetaError = validateEtiquetasEnVenta(form.productos, ventas, lotesEtiquetados, form.id);
+    const productosAValidar = isEditingFinalized
+      ? form.productos.filter(
+          (cp: any) => !(venta.productos || []).some((op: any) => matchVentaLine(op, cp))
+        )
+      : form.productos;
+    const etiquetaError = validateEtiquetasEnVenta(productosAValidar, ventas, lotesEtiquetados, form.id);
     if (etiquetaError) {
       showNotification(etiquetaError, 'error');
       setIsConfirmModalOpen(false);
@@ -12177,7 +12558,14 @@ const VentaForm = ({
             {/* Header toolbar */}
             <div className="h-16 bg-sleek-dark flex items-center justify-between px-8 text-white shadow-2xl z-10 shrink-0">
               <div className="flex items-center gap-6">
-                <h1 className="text-sm font-black uppercase tracking-[0.3em]">{venta.id ? 'Gestionar Operación' : 'NUEVA VENTA / PEDIDO'}</h1>
+                <h1 className="text-sm font-black uppercase tracking-[0.3em]">
+                  {isEditingFinalized ? 'Editar Comprobante' : venta.id ? 'Gestionar Operación' : 'NUEVA VENTA / PEDIDO'}
+                </h1>
+                {isEditingFinalized && (
+                  <span className="px-3 py-1 bg-amber-100 text-amber-800 text-[9px] font-black uppercase tracking-widest rounded-lg">
+                    Editando comprobante
+                  </span>
+                )}
               </div>
               <button 
                 onClick={handleClose} 
@@ -12199,7 +12587,7 @@ const VentaForm = ({
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                        <div className="space-y-2">
                           <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nº Comprobante</label>
-                          <input type="text" value={form.comprobante} onChange={(e) => setForm({ ...form, comprobante: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg outline-none font-black text-slate-600" />
+                          <input type="text" readOnly={isEditingFinalized} value={form.comprobante} onChange={(e) => setForm({ ...form, comprobante: e.target.value })} className={cn("w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg outline-none font-black text-slate-600", isEditingFinalized && "opacity-70 cursor-not-allowed")} />
                        </div>
                        <div className="space-y-2">
                           <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Punto de Venta *</label>
@@ -12509,6 +12897,7 @@ const VentaForm = ({
                      </div>
 
                      <div className="space-y-4 pt-6 border-t border-white/10">
+                        {!isEditingFinalized && (
                         <button 
                           disabled={isSubmitting}
                           onClick={() => {
@@ -12527,12 +12916,13 @@ const VentaForm = ({
                         >
                           {isSubmitting ? 'Guardando...' : 'Guardar como Borrador'}
                         </button>
+                        )}
                         <button 
                           disabled={isSubmitting}
                           onClick={handleFinalizeClick}
                           className="w-full py-4 bg-sleek-accent hover:bg-amber-600 text-white font-black rounded-xl text-xs uppercase tracking-widest shadow-xl transition-all disabled:opacity-50"
                         >
-                          {isSubmitting ? 'Procesando...' : 'Finalizar Venta'}
+                          {isSubmitting ? 'Procesando...' : isEditingFinalized ? 'Guardar Cambios' : 'Finalizar Venta'}
                         </button>
                      </div>
                   </Card>
@@ -12547,14 +12937,20 @@ const VentaForm = ({
                 <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mb-6 mx-auto">
                    <AlertCircle className="w-8 h-8 text-amber-500" />
                 </div>
-                <h3 className="text-sm font-black uppercase tracking-[0.2em] mb-4 text-sleek-dark">¿Finalizar Transacción?</h3>
+                <h3 className="text-sm font-black uppercase tracking-[0.2em] mb-4 text-sleek-dark">
+                  {isEditingFinalized ? '¿Guardar cambios?' : '¿Finalizar Transacción?'}
+                </h3>
                 <p className="text-[10px] text-slate-500 font-bold text-center leading-relaxed mb-8 uppercase tracking-widest">
-                  Se generará el comprobante <span className="text-sleek-dark">{form.comprobante}</span> por <span className="text-base font-black text-sleek-dark block mt-2">$ {displayNum(form.total, 2)}</span>. El stock de los productos se descontará inmediatamente.
+                  {isEditingFinalized ? (
+                    <>Se actualizará el comprobante <span className="text-sleek-dark">{form.comprobante}</span> por <span className="text-base font-black text-sleek-dark block mt-2">$ {displayNum(form.total, 2)}</span>. Solo se ajustará stock/etiquetas en productos agregados o eliminados.</>
+                  ) : (
+                    <>Se generará el comprobante <span className="text-sleek-dark">{form.comprobante}</span> por <span className="text-base font-black text-sleek-dark block mt-2">$ {displayNum(form.total, 2)}</span>. El stock de los productos se descontará inmediatamente.</>
+                  )}
                 </p>
                 <div className="flex gap-4">
                    <button onClick={() => setIsConfirmModalOpen(false)} className="flex-1 py-4 font-black uppercase text-[9px] tracking-widest text-slate-400">Volver</button>
                    <button onClick={() => executeSave(true)} className="flex-2 py-4 bg-sleek-dark text-white font-black rounded-2xl uppercase text-[9px] tracking-widest shadow-xl transition-all hover:bg-slate-800">
-                      Confirmar y Finalizar
+                      {isEditingFinalized ? 'Confirmar Cambios' : 'Confirmar y Finalizar'}
                    </button>
                 </div>
              </div>
@@ -13016,6 +13412,8 @@ const RemitoView = ({ venta, cliente, productos, onBack }: any) => {
               </div>
            </div>
         </div>
+
+        <EditHistorySection editHistory={venta.editHistory} />
      </div>
    );
 };
@@ -16314,6 +16712,8 @@ const EgresosView = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
+  const [isEditingEgreso, setIsEditingEgreso] = useState(false);
+  const editingOriginalItemsRef = useRef<EgresoItem[] | null>(null);
   const [filtroEgresoDesde, setFiltroEgresoDesde] = useState(() =>
     safeFormat(new Date(new Date().getFullYear(), new Date().getMonth(), 1), 'yyyy-MM-dd')
   );
@@ -16389,6 +16789,18 @@ const EgresosView = ({
     return { items: itemsActualizados, movimientos: movimientosNuevos };
   };
 
+  const clearEgresoEditState = () => {
+    setIsEditingEgreso(false);
+    editingOriginalItemsRef.current = null;
+  };
+
+  const openEgresoEdit = (eg: any) => {
+    editingOriginalItemsRef.current = JSON.parse(JSON.stringify(eg.items || []));
+    setIsEditingEgreso(eg.estado === 'Confirmado');
+    setEditingItem(JSON.parse(JSON.stringify(eg)));
+    setIsModalOpen(true);
+  };
+
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     if (editingItem.items.length === 0) {
@@ -16404,7 +16816,6 @@ const EgresosView = ({
       fechaCreacion: editingItem.fechaCreacion || new Date().toISOString()
     };
 
-    // Calculate totals if not already correct
     const neto = safeRound(data.items.reduce((sum: number, item: any) => sum + item.subtotal, 0), 2);
     let iva = 0;
     if (data.tipoIva === 'IVA 21%') iva = safeRound(neto * 0.21, 2);
@@ -16415,7 +16826,95 @@ const EgresosView = ({
     data.total = safeRound(neto + iva, 2);
 
     const isUpdate = egresos.some((eg: any) => eg.id === data.id);
+    const oldEgreso = egresos.find((eg: any) => eg.id === data.id);
     const tipoEgreso = tiposEgreso.find((t: any) => t.id === data.tipoEgresoId);
+
+    if (isEditingEgreso && editingOriginalItemsRef.current && oldEgreso?.estado === 'Confirmado') {
+      const originalItems = editingOriginalItemsRef.current;
+      const currentItems: EgresoItem[] = data.items || [];
+      const itemsQueSeQuedan = currentItems.filter((ci) => originalItems.some((oi) => matchEgresoItem(oi, ci)));
+      const itemsNuevos = currentItems.filter((ci) => !originalItems.some((oi) => matchEgresoItem(oi, ci)));
+      const itemsEliminados = originalItems.filter((oi) => !currentItems.some((ci) => matchEgresoItem(oi, ci)));
+
+      let movimientosFinal = [...movimientos];
+      let itemsActualizados = [...currentItems];
+
+      if (tipoEgreso?.impactaInventario) {
+        const proveedorNombre = proveedores.find((p: any) => p.id === data.proveedorId)?.razonSocial || 'Desconocido';
+
+        itemsEliminados.forEach((it) => {
+          if (!it.productoId) return;
+          const prevEntrada = [...movimientos]
+            .reverse()
+            .find(
+              (m: any) =>
+                !m.anulado &&
+                m.referencia === data.comprobante &&
+                m.tipo === 'entrada' &&
+                m.productoId === it.productoId &&
+                (it.numeroLoteGenerado ? m.loteNumero === it.numeroLoteGenerado : true)
+            );
+          const prod = productos.find((p: any) => p.id === it.productoId);
+          movimientosFinal.unshift({
+            id: `mov-ed-eg-sal-${Date.now()}-${it.id}`,
+            tipo: 'salida',
+            productoId: it.productoId,
+            almacenId: prevEntrada?.almacenId || (it as any).almacenDestinoId || almacenes[0]?.id,
+            cantidad: it.cantidad,
+            unidad: prod?.unidadMedidaId === 'u1' ? 'kg' : 'un',
+            cantidadKg: prod?.unidadMedidaId === 'u1' ? it.cantidad : (it.cantidad || 0) * (prod?.pesoNetoUnidad || 0),
+            motivo: `Reversión por edición - Egreso ${data.comprobante}`,
+            loteNumero: it.numeroLoteGenerado || prevEntrada?.loteNumero || 'REV-EG',
+            fechaIngreso: safeFormat(new Date(), 'yyyy-MM-dd'),
+            fechaVencimiento: it.fechaVencimiento || prevEntrada?.fechaVencimiento || '',
+            origen: 'edicion-egreso',
+            proveedor: proveedorNombre,
+            usuario: currentUser.name,
+            fechaHora: new Date().toISOString(),
+            anulado: false,
+            referencia: data.comprobante,
+            observaciones: 'Reversión ítem eliminado en edición',
+          });
+        });
+
+        if (itemsNuevos.length > 0) {
+          const partial = { ...data, items: itemsNuevos };
+          const movsBase = movimientosFinal.filter((m: any) => !m.anulado);
+          const resultado = procesarCompraInventario(partial, movsBase);
+          movimientosFinal = [...resultado.movimientos, ...movimientosFinal];
+          itemsActualizados = currentItems.map((ci) => {
+            const procesado = resultado.items.find((ni: any) => ni.id === ci.id);
+            return procesado ? { ...ci, ...procesado } : ci;
+          });
+        }
+      }
+
+      const detalle = generarDetalleEdicionEgreso(originalItems, itemsQueSeQuedan, itemsNuevos, itemsEliminados);
+      const egresoEditado = {
+        ...data,
+        comprobante: oldEgreso.comprobante,
+        estado: 'Confirmado' as const,
+        items: itemsActualizados,
+        editHistory: [
+          ...(oldEgreso.editHistory || []),
+          {
+            fecha: new Date().toISOString(),
+            usuario: currentUser.name,
+            detalle,
+          },
+        ],
+      };
+
+      setEgresos(egresos.map((eg: any) => (eg.id === egresoEditado.id ? egresoEditado : eg)));
+      if (tipoEgreso?.impactaInventario && (itemsNuevos.length > 0 || itemsEliminados.length > 0)) {
+        setMovimientos(movimientosFinal);
+      }
+      clearEgresoEditState();
+      setIsModalOpen(false);
+      showNotification(`Egreso ${egresoEditado.comprobante} actualizado.`, 'success');
+      return;
+    }
+
     let movimientosCompra: any[] = [];
 
     if (data.estado === 'Confirmado' && tipoEgreso?.impactaInventario) {
@@ -16447,6 +16946,7 @@ const EgresosView = ({
         showNotification('Egreso registrado', 'success');
       }
     }
+    clearEgresoEditState();
     setIsModalOpen(false);
   };
 
@@ -16518,6 +17018,7 @@ const EgresosView = ({
         </div>
         <button 
           onClick={() => { 
+            clearEgresoEditState();
             setEditingItem({ 
               fecha: format(new Date(), 'yyyy-MM-dd'), 
               tipoEgresoId: tiposEgreso[0]?.id || '', 
@@ -16663,7 +17164,11 @@ const EgresosView = ({
                     </td>
                     <td className="py-5 px-2 text-right">
                        <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                          <button onClick={() => { setEditingItem(eg); setIsModalOpen(true); }} className="p-2 hover:bg-sleek-accent/10 text-sleek-accent rounded transition-all"><Edit2 className="w-4 h-4" /></button>
+                          {eg.estado === 'Confirmado' ? (
+                            <button onClick={() => openEgresoEdit(eg)} className="p-2 hover:bg-sleek-accent/10 text-sleek-accent rounded transition-all" title="Editar comprobante"><Pencil className="w-4 h-4" /></button>
+                          ) : (
+                            <button onClick={() => openEgresoEdit(eg)} className="p-2 hover:bg-sleek-accent/10 text-sleek-accent rounded transition-all"><Edit2 className="w-4 h-4" /></button>
+                          )}
                           {eg.estado === 'Borrador' && (
                             <button 
                               onClick={() => {
@@ -16714,8 +17219,13 @@ const EgresosView = ({
         </div>
       </Card>
 
-      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={editingItem?.id ? 'Detalle de Egreso' : 'Registrar Nuevo Egreso'} className="modal-egreso">
+      <Modal isOpen={isModalOpen} onClose={() => { clearEgresoEditState(); setIsModalOpen(false); }} title={isEditingEgreso ? 'Editar Comprobante' : editingItem?.id ? 'Detalle de Egreso' : 'Registrar Nuevo Egreso'} className="modal-egreso">
         <form onSubmit={handleSave} className="flex flex-col h-full space-y-8">
+           {isEditingEgreso && (
+             <div className="px-4 py-2 bg-amber-100 text-amber-800 text-[10px] font-black uppercase tracking-widest rounded-lg text-center">
+               Editando comprobante
+             </div>
+           )}
            {/* Header Info - Two Columns */}
            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pb-8 border-b border-slate-100">
               {/* Column 1: Info General */}
@@ -17025,10 +17535,12 @@ const EgresosView = ({
               />
            </div>
 
+           <EditHistorySection editHistory={editingItem?.editHistory} />
+
            <div className="flex gap-4 pt-4">
-            <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 py-4 bg-slate-100 text-slate-600 font-black rounded-xl uppercase tracking-widest text-[10px]">Cancelar</button>
+            <button type="button" onClick={() => { clearEgresoEditState(); setIsModalOpen(false); }} className="flex-1 py-4 bg-slate-100 text-slate-600 font-black rounded-xl uppercase tracking-widest text-[10px]">Cancelar</button>
             <button type="submit" className="flex-[2] py-4 bg-sleek-dark text-white font-black rounded-xl shadow-2xl uppercase tracking-widest text-[10px] flex items-center justify-center gap-3">
-              <Save className="w-5 h-5" /> Guardar Registro
+              <Save className="w-5 h-5" /> {isEditingEgreso ? 'Guardar Cambios' : 'Guardar Registro'}
             </button>
           </div>
         </form>
