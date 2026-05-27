@@ -2540,6 +2540,32 @@ const getEnvasesEtiquetasCorteDespiece = (
   return envases.sort((a, b) => (a.numero || 0) - (b.numero || 0));
 };
 
+/** Correlativo numérico del comprobante (último segmento: VTA-20260527-047 → 47). */
+const getCorrelativoComprobante = (comprobante: string): number => {
+  const parts = (comprobante || '').split('-');
+  return parseInt(parts[parts.length - 1], 10) || 0;
+};
+
+/** Comprobantes / transacciones: más recientes primero (fecha desc → correlativo desc → id desc). */
+const compareRecientesPrimero = (
+  a: { fecha?: string; fechaHora?: string; comprobante?: string; fechaCreacion?: string; id?: string },
+  b: { fecha?: string; fechaHora?: string; comprobante?: string; fechaCreacion?: string; id?: string }
+): number => {
+  const fechaA = a.fechaHora || a.fecha || a.fechaCreacion || '';
+  const fechaB = b.fechaHora || b.fecha || b.fechaCreacion || '';
+  const byFecha = fechaB.localeCompare(fechaA);
+  if (byFecha !== 0) return byFecha;
+  const byComp =
+    getCorrelativoComprobante(b.comprobante || '') - getCorrelativoComprobante(a.comprobante || '');
+  if (byComp !== 0) return byComp;
+  return (b.id || '').localeCompare(a.id || '');
+};
+
+const compareAntiguosPrimero = (
+  a: { fecha?: string; fechaHora?: string; comprobante?: string; fechaCreacion?: string; id?: string },
+  b: { fecha?: string; fechaHora?: string; comprobante?: string; fechaCreacion?: string; id?: string }
+): number => -compareRecientesPrimero(a, b);
+
 /** Más recientes primero: fecha elaboración desc, luego N° lote desc. */
 const compareLotesRecientesPrimero = (
   a: { fechaElaboracion?: string; numeroLote?: string; id?: string },
@@ -9608,7 +9634,7 @@ const MovimientosView = ({
       const matchesHasta = !filterFechaHasta || !safeIsAfter(mDate, addDays(parseISO(filterFechaHasta), 1));
 
       return matchesTipo && matchesOrigen && matchesProducto && matchesAlmacen && matchesSearch && matchesDesde && matchesHasta;
-    }).sort((a: any, b: any) => new Date(b.fechaHora).getTime() - new Date(a.fechaHora).getTime());
+    }).sort(compareRecientesPrimero);
   }, [movimientos, filterTipo, filterOrigen, filterProductoId, filterAlmacenId, filterFechaDesde, filterFechaHasta, searchTerm, productos]);
 
   const paginatedMovs = filteredMovimientos.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
@@ -11769,7 +11795,7 @@ const VentasPedidosView = ({
       const matchSearch = v.comprobante.toLowerCase().includes(searchTerm.toLowerCase()) || 
                           (cliente?.razonSocial || '').toLowerCase().includes(searchTerm.toLowerCase());
       return matchDate && matchCliente && matchEstado && matchSearch;
-    }).sort((a: any, b: any) => b.fecha.localeCompare(a.fecha));
+    }).sort(compareRecientesPrimero);
   }, [ventas, dateRange, filterCliente, filterEstado, searchTerm, clientes]);
 
   const handleCreateNew = () => {
@@ -13749,7 +13775,11 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
 
         {/* Recibo / Venta View Modal */}
         <Modal isOpen={isReceiptModalOpen} onClose={() => setIsReceiptModalOpen(false)} title={selectedVoucher?.total ? "Detalle de Venta" : "Detalle de Cobro"}>
-          {selectedVoucher && (
+          {selectedVoucher && (() => {
+            const sucursalVenta = selectedVoucher.total
+              ? selectedCliente?.sucursales?.find((s: any) => s.id === selectedVoucher.sucursalId)
+              : null;
+            return (
             <div className="space-y-8 p-4">
               <div className="flex justify-between items-start border-b pb-3">
                 <div>
@@ -13766,14 +13796,23 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-8">
+              <div className={`grid gap-8 ${selectedVoucher.total ? 'grid-cols-1 md:grid-cols-3' : 'grid-cols-2'}`}>
                 <div>
                   <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Cliente</p>
                   <p className="text-sm font-black text-sleek-dark uppercase">{selectedCliente.razonSocial}</p>
                 </div>
-                <div className="text-right">
-                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Concepto</p>
-                  <p className="text-sm font-black text-slate-600 uppercase">
+                {selectedVoucher.total && (
+                  <div>
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Sucursal</p>
+                    <p className="text-sm font-black text-sleek-dark uppercase">{sucursalVenta?.nombre || 'S/D'}</p>
+                    {sucursalVenta?.direccion && (
+                      <p className="text-[10px] font-bold text-slate-500 mt-0.5">{sucursalVenta.direccion}</p>
+                    )}
+                  </div>
+                )}
+                <div className={selectedVoucher.total ? '' : 'text-right'}>
+                  <p className={`text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 ${selectedVoucher.total ? '' : 'text-right'}`}>Concepto</p>
+                  <p className={`text-sm font-black text-slate-600 uppercase ${selectedVoucher.total ? '' : 'text-right'}`}>
                     {selectedVoucher.total ? "Venta de Mercaderías" : "Abono a Cuenta Corriente"}
                   </p>
                 </div>
@@ -13838,6 +13877,12 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
                     const printWindow = window.open('', '_blank');
                     if (printWindow) {
                       const isVenta = !!selectedVoucher.total;
+                      const sucursalPrint = isVenta
+                        ? (selectedCliente?.sucursales?.find((s: any) => s.id === selectedVoucher.sucursalId)?.nombre || 'S/D')
+                        : '';
+                      const sucursalDirPrint = isVenta
+                        ? (selectedCliente?.sucursales?.find((s: any) => s.id === selectedVoucher.sucursalId)?.direccion || '')
+                        : '';
                       printWindow.document.write(`
                         <html>
                           <head>
@@ -13871,6 +13916,9 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
                             <div class="content">
                               <p style="font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid #e2e8f0; padding-bottom: 5px;">Cliente</p>
                               <h2 style="margin: 10px 0;">${selectedCliente.razonSocial}</h2>
+                              ${isVenta ? `
+                                <p style="margin: 8px 0 16px 0; font-size: 12px;"><strong style="text-transform: uppercase; letter-spacing: 1px; color: #64748b;">Sucursal:</strong> ${sucursalPrint}${sucursalDirPrint ? ` — ${sucursalDirPrint}` : ''}</p>
+                              ` : ''}
                               
                               ${isVenta ? `
                                 <table>
@@ -13919,7 +13967,8 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
                 <button onClick={() => setIsReceiptModalOpen(false)} className="px-6 py-2 bg-sleek-dark text-white font-black text-[10px] uppercase tracking-widest rounded">Cerrar</button>
               </div>
             </div>
-          )}
+            );
+          })()}
         </Modal>
       </>
     );
@@ -14436,7 +14485,7 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
             raw: c
           };
         })
-    ].sort((a, b) => new Date(a.fecha).getTime() - new Date(b.fecha).getTime());
+    ];
 
     const filteredTransacciones = rawTransacciones.filter(t => {
       const tDate = t.fecha.split('T')[0];
@@ -14450,11 +14499,15 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
       return matchesDesde && matchesHasta && matchesTipo && matchesSearch;
     });
 
+    const saldoPorTransaccion = new Map<string, number>();
     let runningSaldo = 0;
-    const transaccionesConSaldo = filteredTransacciones.map(t => {
+    [...filteredTransacciones].sort(compareAntiguosPrimero).forEach((t) => {
       runningSaldo += t.debe - t.haber;
-      return { ...t, saldoAcumulado: runningSaldo };
-    }).reverse();
+      saldoPorTransaccion.set(t.id, runningSaldo);
+    });
+    const transaccionesConSaldo = [...filteredTransacciones]
+      .sort(compareRecientesPrimero)
+      .map((t) => ({ ...t, saldoAcumulado: saldoPorTransaccion.get(t.id) ?? 0 }));
 
     return (
       <div className="space-y-8 animate-in slide-in-from-right duration-500">
@@ -15904,17 +15957,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
       return matchesDesde && matchesHasta && matchesTipo && matchesSearch;
     });
 
-    return filtered.sort((a: any, b: any) => {
-      const fechaA = parseISO(a.fecha);
-      const fechaB = parseISO(b.fecha);
-      const diffFecha = fechaB.getTime() - fechaA.getTime();
-      if (diffFecha !== 0) return diffFecha;
-      const getCorrelativo = (comp: string) => {
-        const parts = (comp || '').split('-');
-        return parseInt(parts[parts.length - 1], 10) || 0;
-      };
-      return getCorrelativo(b.comprobante || '') - getCorrelativo(a.comprobante || '');
-    });
+    return filtered.sort(compareRecientesPrimero);
   }, [selectedProveedor, egresos, pagosProveedores, filterCcDesde, filterCcHasta, filterCcTipo, filterCcSearch]);
 
   const handleSave = (e: React.FormEvent) => {
@@ -16838,11 +16881,7 @@ const EgresosView = ({
       const matchesType = filterType === 'Todos' || e.tipoEgresoId === filterType;
       const matchesStatus = filterStatus === 'Todos' || e.estado === filterStatus;
       return matchesSearch && matchesType && matchesStatus;
-    }).sort((a: any, b: any) => {
-      const byFecha = b.fecha.localeCompare(a.fecha);
-      if (byFecha !== 0) return byFecha;
-      return (b.fechaCreacion || b.comprobante || '').localeCompare(a.fechaCreacion || a.comprobante || '');
-    });
+    }).sort(compareRecientesPrimero);
   }, [egresos, filtroEgresoDesde, filtroEgresoHasta, filtroEgresoProveedor, filterType, filterStatus, searchTerm, proveedores]);
 
   const procesarCompraInventario = (data: any, movsBase: any[]) => {
@@ -18156,14 +18195,14 @@ const InicioView = ({
   const actividadReciente = useMemo(() => {
     return [...movimientos]
       .filter((m: Movimiento) => !m.anulado)
-      .sort((a: Movimiento, b: Movimiento) => b.fechaHora.localeCompare(a.fechaHora))
+      .sort(compareRecientesPrimero)
       .slice(0, 5);
   }, [movimientos]);
 
   const pedidosDelDia = useMemo(() => {
     return [...ventas]
       .filter((v: Venta) => v.fecha === today && v.estado !== 'Anulado')
-      .sort((a: Venta, b: Venta) => b.fechaCreacion.localeCompare(a.fechaCreacion))
+      .sort(compareRecientesPrimero)
       .slice(0, 5);
   }, [ventas, today]);
 
@@ -18174,7 +18213,7 @@ const InicioView = ({
         const tipo = tiposEgreso.find((t: TipoEgreso) => t.id === e.tipoEgresoId);
         return tipo?.impactaInventario === true;
       })
-      .sort((a: Egreso, b: Egreso) => b.fechaCreacion.localeCompare(a.fechaCreacion))
+      .sort(compareRecientesPrimero)
       .slice(0, 5);
   }, [egresos, tiposEgreso, today]);
 
