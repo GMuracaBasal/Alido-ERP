@@ -183,7 +183,25 @@ const displayToIsoDate = (display: string): string | null => {
   return iso;
 };
 
-/** Normaliza valor de estado a yyyy-MM-dd para <input type="date" /> */
+/** yyyy-MM-dd → dd/MM/yyyy para mostrar en inputs */
+const isoToDisplayDate = (value: string): string => {
+  if (!value) return '';
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(value)) return value;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const d = parseISO(value);
+    if (isValid(d)) return format(d, 'dd/MM/yyyy');
+  }
+  const fromDisplay = displayToIsoDate(value);
+  if (fromDisplay) return isoToDisplayDate(fromDisplay);
+  const d = parseISO(value);
+  if (isValid(d)) return format(d, 'dd/MM/yyyy');
+  return '';
+};
+
+/** Fecha de hoy en formato ISO (yyyy-MM-dd) — default de filtros */
+const todayIso = (): string => format(new Date(), 'yyyy-MM-dd');
+
+/** Normaliza valor de estado a yyyy-MM-dd */
 const normalizeIsoDateForInput = (value: string): string => {
   if (!value) return '';
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
@@ -197,26 +215,101 @@ const normalizeIsoDateForInput = (value: string): string => {
   return '';
 };
 
-/** Input de fecha con calendario nativo del navegador; valor interno yyyy-MM-dd */
+const formatDateTyping = (raw: string): string => {
+  const digits = raw.replace(/\D/g, '').slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+};
+
+/** Input de fecha dd/mm/aaaa + selector calendario nativo; valor interno yyyy-MM-dd */
 const DateInput: React.FC<{
   value: string;
   onChange: (isoDate: string) => void;
 } & Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'type'>> = ({
   value,
   onChange,
-  className,
+  className = '',
   onBlur,
+  placeholder = 'dd/mm/aaaa',
   ...props
-}) => (
-  <input
-    {...props}
-    type="date"
-    value={normalizeIsoDateForInput(value)}
-    onChange={(e) => onChange(e.target.value || '')}
-    onBlur={onBlur}
-    className={className}
-  />
-);
+}) => {
+  const nativePickerRef = useRef<HTMLInputElement>(null);
+  const [display, setDisplay] = useState(() => isoToDisplayDate(value));
+  const isoValue = normalizeIsoDateForInput(value);
+
+  useEffect(() => {
+    setDisplay(isoToDisplayDate(value));
+  }, [value]);
+
+  const applyIso = (iso: string) => {
+    onChange(iso);
+    setDisplay(iso ? isoToDisplayDate(iso) : '');
+  };
+
+  const openCalendar = () => {
+    const el = nativePickerRef.current;
+    if (!el) return;
+    try {
+      el.showPicker?.();
+    } catch {
+      el.focus();
+      el.click();
+    }
+  };
+
+  return (
+    <div className="relative w-full">
+      <input
+        {...props}
+        type="text"
+        inputMode="numeric"
+        placeholder={placeholder}
+        maxLength={10}
+        value={display}
+        onChange={(e) => {
+          const formatted = formatDateTyping(e.target.value);
+          setDisplay(formatted);
+          const iso = displayToIsoDate(formatted);
+          if (iso) onChange(iso);
+          else if (!formatted.trim()) onChange('');
+        }}
+        onBlur={(e) => {
+          const iso = displayToIsoDate(display);
+          if (iso) {
+            setDisplay(isoToDisplayDate(iso));
+            if (iso !== isoValue) onChange(iso);
+          } else if (!display.trim()) {
+            onChange('');
+          } else {
+            setDisplay(isoToDisplayDate(value));
+          }
+          onBlur?.(e);
+        }}
+        className={`${className} pr-10`.trim()}
+      />
+      <input
+        ref={nativePickerRef}
+        type="date"
+        value={isoValue}
+        onChange={(e) => applyIso(e.target.value || '')}
+        tabIndex={-1}
+        className="sr-only"
+        aria-hidden
+      />
+      <button
+        type="button"
+        tabIndex={-1}
+        onClick={openCalendar}
+        className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-sleek-accent transition-colors z-[1]"
+        aria-label="Abrir calendario"
+        title="Seleccionar fecha"
+      >
+        <Calendar className="w-4 h-4 shrink-0" />
+      </button>
+    </div>
+  );
+};
 
 /** Match estricto: código de envase pertenece al N° lote (prefijo + guión final). */
 const codigoEnvasePerteneceALote = (codigoEnvase: string, numeroLote: string): boolean => {
@@ -9491,8 +9584,8 @@ const MovimientosView = ({
   const [filterOrigen, setFilterOrigen] = useState('Todos');
   const [filterProductoId, setFilterProductoId] = useState('Todos');
   const [filterAlmacenId, setFilterAlmacenId] = useState('Todos');
-  const [filterFechaDesde, setFilterFechaDesde] = useState('');
-  const [filterFechaHasta, setFilterFechaHasta] = useState('');
+  const [filterFechaDesde, setFilterFechaDesde] = useState(() => todayIso());
+  const [filterFechaHasta, setFilterFechaHasta] = useState(() => todayIso());
   const [searchTerm, setSearchTerm] = useState('');
   
   const [currentPage, setCurrentPage] = useState(1);
@@ -11661,11 +11754,8 @@ const VentasPedidosView = ({
   const [isRemitoOpen, setIsRemitoOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   
-  // List Filters
-  const [dateRange, setDateRange] = useState({ 
-    from: safeFormat(new Date(), 'yyyy-MM-dd'), 
-    to: safeFormat(new Date(), 'yyyy-MM-dd') 
-  });
+  // List Filters — por defecto: comprobantes del día actual
+  const [dateRange, setDateRange] = useState(() => ({ from: todayIso(), to: todayIso() }));
   const [filterCliente, setFilterCliente] = useState('');
   const [filterEstado, setFilterEstado] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
@@ -12031,9 +12121,14 @@ const VentasPedidosView = ({
       </Card>
 
       <Card className="overflow-hidden border-none shadow-xl rounded-2xl">
-        <div className="overflow-x-auto">
+        <div className="px-8 py-3 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+            {filteredVentas.length} comprobante{filteredVentas.length !== 1 ? 's' : ''} visible{filteredVentas.length !== 1 ? 's' : ''}
+          </p>
+        </div>
+        <div className="overflow-x-auto max-h-[70vh] overflow-y-auto custom-scrollbar">
           <table className="w-full">
-            <thead>
+            <thead className="sticky top-0 z-10 bg-white shadow-sm">
               <tr className="bg-slate-50/50">
                 <th className="px-8 py-5 text-left text-[10px] font-black uppercase text-slate-400 tracking-widest">Fecha</th>
                 <th className="px-8 py-5 text-left text-[10px] font-black uppercase text-slate-400 tracking-widest">Nº Comprobante</th>
@@ -13427,8 +13522,8 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
   const [filterEstado, setFilterEstado] = useState('Activo');
 
   // Account Statement Table Filters
-  const [filterCtaDesde, setFilterCtaDesde] = useState('');
-  const [filterCtaHasta, setFilterCtaHasta] = useState(new Date().toISOString().split('T')[0]);
+  const [filterCtaDesde, setFilterCtaDesde] = useState(() => todayIso());
+  const [filterCtaHasta, setFilterCtaHasta] = useState(() => todayIso());
   const [filterCtaTipo, setFilterCtaTipo] = useState('Todos');
   const [filterCtaSearch, setFilterCtaSearch] = useState('');
 
@@ -14526,8 +14621,8 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
                 <div className="flex items-center">
                   <button 
                     onClick={() => {
-                      setFilterCtaDesde('');
-                      setFilterCtaHasta(new Date().toISOString().split('T')[0]);
+                      setFilterCtaDesde(todayIso());
+                      setFilterCtaHasta(todayIso());
                       setFilterCtaTipo('Todos');
                       setFilterCtaSearch('');
                     }}
@@ -14623,7 +14718,7 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
                 </table>
               </div>
 
-              {(filterCtaDesde || filterCtaHasta !== new Date().toISOString().split('T')[0] || filterCtaTipo !== 'Todos' || filterCtaSearch) && (
+              {(filterCtaDesde !== todayIso() || filterCtaHasta !== todayIso() || filterCtaTipo !== 'Todos' || filterCtaSearch) && (
                 <div className="px-8 py-3 bg-slate-50/50 border-t border-slate-50 flex items-center justify-between">
                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
                     Mostrando <span className="text-sleek-dark font-black">{filteredTransacciones.length}</span> de <span className="text-sleek-dark font-black">{rawTransacciones.length}</span> transacciones
@@ -15776,8 +15871,8 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
   });
   const [editingPagoId, setEditingPagoId] = useState<string | null>(null);
   const [pagoMontoInput, setPagoMontoInput] = useState('0');
-  const [filterCcDesde, setFilterCcDesde] = useState('');
-  const [filterCcHasta, setFilterCcHasta] = useState(() => new Date().toISOString().split('T')[0]);
+  const [filterCcDesde, setFilterCcDesde] = useState(() => todayIso());
+  const [filterCcHasta, setFilterCcHasta] = useState(() => todayIso());
   const [filterCcTipo, setFilterCcTipo] = useState('Todos');
   const [filterCcSearch, setFilterCcSearch] = useState('');
 
@@ -16053,8 +16148,8 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
                   <button
                     type="button"
                     onClick={() => {
-                      setFilterCcDesde('');
-                      setFilterCcHasta(new Date().toISOString().split('T')[0]);
+                      setFilterCcDesde(todayIso());
+                      setFilterCcHasta(todayIso());
                       setFilterCcTipo('Todos');
                       setFilterCcSearch('');
                     }}
@@ -16714,10 +16809,8 @@ const EgresosView = ({
   const [editingItem, setEditingItem] = useState<any>(null);
   const [isEditingEgreso, setIsEditingEgreso] = useState(false);
   const editingOriginalItemsRef = useRef<EgresoItem[] | null>(null);
-  const [filtroEgresoDesde, setFiltroEgresoDesde] = useState(() =>
-    safeFormat(new Date(new Date().getFullYear(), new Date().getMonth(), 1), 'yyyy-MM-dd')
-  );
-  const [filtroEgresoHasta, setFiltroEgresoHasta] = useState(() => safeFormat(new Date(), 'yyyy-MM-dd'));
+  const [filtroEgresoDesde, setFiltroEgresoDesde] = useState(() => todayIso());
+  const [filtroEgresoHasta, setFiltroEgresoHasta] = useState(() => todayIso());
   const [filtroEgresoProveedor, setFiltroEgresoProveedor] = useState('');
   const [filterType, setFilterType] = useState('Todos');
   const [filterStatus, setFilterStatus] = useState('Todos');
@@ -16745,7 +16838,11 @@ const EgresosView = ({
       const matchesType = filterType === 'Todos' || e.tipoEgresoId === filterType;
       const matchesStatus = filterStatus === 'Todos' || e.estado === filterStatus;
       return matchesSearch && matchesType && matchesStatus;
-    }).sort((a: any, b: any) => b.fecha.localeCompare(a.fecha));
+    }).sort((a: any, b: any) => {
+      const byFecha = b.fecha.localeCompare(a.fecha);
+      if (byFecha !== 0) return byFecha;
+      return (b.fechaCreacion || b.comprobante || '').localeCompare(a.fechaCreacion || a.comprobante || '');
+    });
   }, [egresos, filtroEgresoDesde, filtroEgresoHasta, filtroEgresoProveedor, filterType, filterStatus, searchTerm, proveedores]);
 
   const procesarCompraInventario = (data: any, movsBase: any[]) => {
@@ -17127,9 +17224,14 @@ const EgresosView = ({
       </Card>
 
       <Card className="p-0 border-none shadow-xl bg-white/80 backdrop-blur-md overflow-hidden">
-        <div className="mt-0 overflow-x-auto">
+        <div className="px-6 py-3 border-b border-slate-100 bg-slate-50/50">
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+            {filtered.length} comprobante{filtered.length !== 1 ? 's' : ''} visible{filtered.length !== 1 ? 's' : ''}
+          </p>
+        </div>
+        <div className="mt-0 overflow-x-auto max-h-[70vh] overflow-y-auto custom-scrollbar">
            <table className="w-full text-left">
-              <thead>
+              <thead className="sticky top-0 z-10 bg-white shadow-sm">
                 <tr className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] border-b border-slate-100">
                   <th className="pb-4 px-2">Fecha</th>
                   <th className="pb-4 px-2">Comprobante</th>
