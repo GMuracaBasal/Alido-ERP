@@ -907,7 +907,7 @@ const aplicarBajaEnvasesEnEstado = (
       return {
         ...ev,
         estado: 'baja',
-        anulado: true,
+        anulado: false,
         motivoBaja,
         fechaBaja: now,
         usuarioBaja: usuario,
@@ -4604,7 +4604,7 @@ const LotesProduccionView = ({
 
     if (selectedLote) {
       const leProd = lotesEtiquetados.find((item: any) => item.loteId === selectedLote.id || item.loteId === selectedLote.numeroLote);
-      const activeEnv = (leProd?.envases || []).filter((e: any) => !(e.anulado === true || e.anulado === 'true' || e.estado === 'baja'));
+      const activeEnv = (leProd?.envases || []).filter(isEnvaseVigente);
       const pesoDesdeEtiquetas = activeEnv.reduce((s: number, e: any) => s + (parseFloat(e.pesoNeto) || 0), 0);
       const prodPT = productos.find((p: any) => p.id === formData.productoId);
       const usesUnitsPT = prodPT?.unidadMedidaId !== 'u1';
@@ -6471,7 +6471,7 @@ const handleFinalize = () => {
       const key = `${selectedLote?.id || formData.id}-${c.productoId}`;
       const le = lotesEtiquetados.find((item: any) => item.loteId === key);
       const hasLabels = le && le.envases?.length > 0;
-      const qty = hasLabels ? le.envases.filter((e: any) => !e.anulado).reduce((s: number, e: any) => s + e.pesoNeto, 0) : (parseFloat(c.cantidadReal) || 0);
+      const qty = hasLabels ? le.envases.filter(isEnvaseVigente).reduce((s: number, e: any) => s + e.pesoNeto, 0) : (parseFloat(c.cantidadReal) || 0);
       const factor = getPesoEquivalente(c.productoId);
       return {
         ...c,
@@ -6695,7 +6695,7 @@ const handleFinalize = () => {
       const key = `${selectedLote?.id || formData.id}-${c.productoId}`;
       const le = lotesEtiquetados.find((item: any) => item.loteId === key);
       const hasLabels = le && le.envases?.length > 0;
-      const qty = hasLabels ? le.envases.filter((e: any) => !e.anulado).reduce((s: number, e: any) => s + e.pesoNeto, 0) : (parseFloat(c.cantidadReal) || 0);
+      const qty = hasLabels ? le.envases.filter(isEnvaseVigente).reduce((s: number, e: any) => s + e.pesoNeto, 0) : (parseFloat(c.cantidadReal) || 0);
       return sum + formatNum(qty);
     }, 0);
     const cantidadIngresadaKg = formatNum(parseFloat(formData.cantidadIngresada) || 0);
@@ -6802,7 +6802,7 @@ const handleFinalize = () => {
                       const key = `${selectedLote?.id || formData.id}-${c.productoId}`;
                       const le = lotesEtiquetados.find((item: any) => item.loteId === key);
                       const hasLabels = le && le.envases?.length > 0;
-                      const etiquetadoQty = hasLabels ? le.envases.filter((e: any) => !e.anulado).reduce((sum: number, e: any) => sum + e.pesoNeto, 0) : 0;
+                      const etiquetadoQty = hasLabels ? le.envases.filter(isEnvaseVigente).reduce((sum: number, e: any) => sum + e.pesoNeto, 0) : 0;
                       const currentQty = hasLabels ? etiquetadoQty : c.cantidadReal;
 
                       return (
@@ -6846,7 +6846,7 @@ const handleFinalize = () => {
                             {prod?.unidadMedidaId !== 'u1' ? (
                               hasLabels ? (
                                 <div className="p-1 text-xs font-black text-sleek-dark">
-                                  {le.envases.filter((e: any) => !e.anulado).length}
+                                  {le.envases.filter(isEnvaseVigente).length}
                                   <span className="ml-1 text-slate-300 font-bold uppercase text-[9px]">un.</span>
                                 </div>
                               ) : (
@@ -7410,77 +7410,104 @@ const EtiquetasView = ({
   }, [currentBarcodeValue]);
 
   const registerEnvase = (print: boolean) => {
-    if (!selectedLoteId || currentPackagingWeight <= 0) return;
+    if (!selectedLoteId || currentPackagingWeight <= 0 || !selectedLote?.numeroLote) return;
     if (selectedLote?.tipo === 'despiece' && !selectedCorteId) return;
 
-    const envasesActuales = getEnvasesDelLoteParaSecuencial(
-      selectedLoteId,
-      selectedLote.numeroLote,
-      lotesEtiquetados,
-      esDespieceEtiquetado,
-      corteKeyEtiquetado
-    );
-    const { numero: envNumero, codigoBarras: envCodigo } = resolveProximoCodigoEnvaseUnico(
-      selectedLote.numeroLote,
-      envasesActuales,
-      esDespieceEtiquetado,
-      codigoProductoCorte
-    );
+    const leKey =
+      corteKeyEtiquetado ||
+      lotesEtiquetados.find(
+        (l: any) =>
+          l.loteId === selectedLoteId ||
+          l.loteId === selectedLote.numeroLote ||
+          l.loteNumero === selectedLote.numeroLote
+      )?.loteId ||
+      selectedLoteId;
 
-    const newEnvase = {
-      numero: envNumero,
-      codigoBarras: envCodigo,
-      pesoNeto: currentPackagingWeight,
-      pesoBruto: parseFloat(manualGrossWeight) || null,
-      fechaHora: new Date().toISOString(),
-      usuario: currentUser.name,
-      anulado: false
-    };
+    let registeredEnvase: any = null;
 
-    const updatedLoteEtiquetado = {
-      ...loteEtiquetado,
-      envases: [...loteEtiquetado.envases, { ...newEnvase, estado: 'en_stock' }],
-      pesoTotalEtiquetado: pesoEtiquetado + currentPackagingWeight
-    };
+    setLotesEtiquetados((prev) => {
+      const envasesActuales = getEnvasesDelLoteParaSecuencial(
+        selectedLoteId,
+        selectedLote.numeroLote,
+        prev,
+        esDespieceEtiquetado,
+        corteKeyEtiquetado
+      );
+      const { numero: envNumero, codigoBarras: envCodigo } = resolveProximoCodigoEnvaseUnico(
+        selectedLote.numeroLote,
+        envasesActuales,
+        esDespieceEtiquetado,
+        codigoProductoCorte
+      );
 
-    const newLotesEtiquetados = lotesEtiquetados.filter((l: any) => l.loteId !== loteEtiquetado.loteId);
-    setLotesEtiquetados([...newLotesEtiquetados, updatedLoteEtiquetado]);
+      registeredEnvase = {
+        numero: envNumero,
+        codigoBarras: envCodigo,
+        pesoNeto: currentPackagingWeight,
+        pesoBruto: parseFloat(manualGrossWeight) || null,
+        fechaHora: new Date().toISOString(),
+        usuario: currentUser.name,
+        anulado: false,
+        estado: 'en_stock',
+      };
 
-    // Track movement if it's already finalized (editing mode) — producción usa movimiento; despiece solo envases
-    if (selectedLote.estado === 'Finalizado' && selectedLote.tipo !== 'despiece') {
-       const now = new Date().toISOString();
-       const prodPT = productos.find((p: any) => p.id === updatedLoteEtiquetado.productoId);
-       const unitPT = unidades.find((u: any) => u.id === prodPT?.unidadMedidaId)?.abreviatura || 'kg';
-       const almId = selectedLote.tipo === 'despiece'
-         ? (updatedLoteEtiquetado.almacenId || almacenes[0]?.id || '')
-         : (selectedLote.almacenDestinoId || almacenes[0]?.id || '');
-       
-       const move: Movimiento = {
-         id: `MOV-${Date.now()}-edit-add`,
-         tipo: 'entrada',
-         productoId: updatedLoteEtiquetado.productoId,
-         almacenId: almId,
-         cantidad: prodPT?.unidadMedidaId === 'u1' ? currentPackagingWeight : 1,
-         unidad: unitPT,
-         cantidadKg: currentPackagingWeight,
-         motivo: `Nuevo envase (#${newEnvase.numero}) - Edición Lote ${selectedLote.numeroLote}`,
-         loteNumero: selectedLote.tipo === 'despiece'
-           ? getNumeroLoteCorteDespiece(selectedLote.numeroLote, updatedLoteEtiquetado.productoId, productos)
-           : selectedLote.numeroLote,
-         fechaIngreso: safeFormat(new Date(), 'yyyy-MM-dd'),
-         fechaVencimiento: selectedLote.fechaVencimiento,
-         origen: selectedLote.tipo === 'despiece' ? 'despiece' : 'produccion',
-         usuario: currentUser.name,
-         fechaHora: now,
-         anulado: false,
-         referencia: selectedLote.numeroLote,
-         observaciones: `Caja registrada durante edición de lote finalizado. Code: ${newEnvase.codigoBarras}`
-       };
-       setMovimientos([move, ...movimientos]);
+      const existingLe =
+        prev.find((l: any) => l.loteId === leKey) ||
+        (loteEtiquetado?.loteId === leKey ? loteEtiquetado : null) || {
+          loteId: leKey,
+          parentLoteId: selectedLoteId,
+          loteNumero: selectedLote.numeroLote,
+          tipoLote: selectedLote.tipo,
+          productoId: product?.id,
+          almacenId:
+            selectedLote.tipo === 'despiece' && selectedCorteId
+              ? selectedLote.cortes?.find((c: any) => c.productoId === selectedCorteId)?.almacenDestinoId || ''
+              : selectedLote.almacenDestinoId || '',
+          envases: [],
+          pesoTotalEtiquetado: 0,
+          estado: 'en_proceso',
+          mermaEmpaquetado: 0,
+          corteId: selectedCorteId,
+        };
+
+      const updatedEnvases = [...(existingLe.envases || []), registeredEnvase];
+      const pesoTotalEtiquetado = updatedEnvases
+        .filter(isEnvaseVigente)
+        .reduce((s: number, e: any) => s + (parseFloat(e.pesoNeto) || 0), 0);
+
+      const updatedLe = { ...existingLe, envases: updatedEnvases, pesoTotalEtiquetado };
+      return [...prev.filter((l: any) => l.loteId !== leKey), updatedLe];
+    });
+
+    if (selectedLote.estado === 'Finalizado' && selectedLote.tipo !== 'despiece' && registeredEnvase) {
+      const now = new Date().toISOString();
+      const prodPT = productos.find((p: any) => p.id === product?.id);
+      const unitPT = unidades.find((u: any) => u.id === prodPT?.unidadMedidaId)?.abreviatura || 'kg';
+      const almId = selectedLote.almacenDestinoId || almacenes[0]?.id || '';
+      const move: Movimiento = {
+        id: `MOV-${Date.now()}-edit-add`,
+        tipo: 'entrada',
+        productoId: product?.id || '',
+        almacenId: almId,
+        cantidad: prodPT?.unidadMedidaId === 'u1' ? currentPackagingWeight : 1,
+        unidad: unitPT,
+        cantidadKg: currentPackagingWeight,
+        motivo: `Nuevo envase (#${registeredEnvase.numero}) - Edición Lote ${selectedLote.numeroLote}`,
+        loteNumero: selectedLote.numeroLote,
+        fechaIngreso: safeFormat(new Date(), 'yyyy-MM-dd'),
+        fechaVencimiento: selectedLote.fechaVencimiento,
+        origen: 'produccion',
+        usuario: currentUser.name,
+        fechaHora: now,
+        anulado: false,
+        referencia: selectedLote.numeroLote,
+        observaciones: `Caja registrada durante edición de lote finalizado. Code: ${registeredEnvase.codigoBarras}`,
+      };
+      setMovimientos((m) => [move, ...m]);
     }
 
-    if (print) {
-      handlePrintLabel(newEnvase);
+    if (print && registeredEnvase) {
+      handlePrintLabel(registeredEnvase);
     }
 
     setManualWeight('');
@@ -7657,7 +7684,7 @@ const EtiquetasView = ({
     const updatedEnvases = targetLe.envases.map((ev: any) =>
       ev.codigoBarras === env.codigoBarras && ev.numero === env.numero ? { ...ev, pesoNeto: newKg } : ev
     );
-    const active = updatedEnvases.filter((ev: any) => !(ev.anulado === true || ev.anulado === 'true' || ev.estado === 'baja'));
+    const active = updatedEnvases.filter(isEnvaseVigente);
     const pesoTotalEtiquetado = active.reduce((s: number, ev: any) => s + (parseFloat(ev.pesoNeto) || 0), 0);
     setLotesEtiquetados(lotesEtiquetados.map((l: any) =>
       l.loteId === leId ? { ...l, envases: updatedEnvases, pesoTotalEtiquetado } : l
@@ -7960,7 +7987,7 @@ const EtiquetasView = ({
     if (selectedLote?.tipo === 'produccion') return pesoEtiquetado;
     const allCutsLabels = lotesEtiquetados.filter((le: any) => le.parentLoteId === selectedLoteId);
     return allCutsLabels.reduce((loteSum, le) => {
-      return loteSum + le.envases.filter((e: any) => !(e.anulado === true || e.anulado === 'true')).reduce((s: number, e: any) => s + e.pesoNeto, 0);
+      return loteSum + le.envases.filter(isEnvaseVigente).reduce((s: number, e: any) => s + e.pesoNeto, 0);
     }, 0);
   }, [selectedLote, selectedLoteId, lotesEtiquetados, pesoEtiquetado]);
 
@@ -8253,10 +8280,10 @@ const EtiquetasView = ({
                           setIsEditingFinalized(false);
                           showNotification('Edición guardada y cerrada', 'success');
                         } : finalizeEtiquetado}
-                        disabled={loteEtiquetado?.envases.filter((e: any) => !(e.anulado === true || e.anulado === 'true')).length === 0}
+                        disabled={loteEtiquetado?.envases.filter(isEnvaseVigente).length === 0}
                         className={cn(
                           "w-full py-3 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all shadow-lg",
-                          (loteEtiquetado?.envases.filter((e: any) => !(e.anulado === true || e.anulado === 'true')).length > 0) ? "bg-sleek-dark text-white hover:bg-slate-800" : "bg-slate-100 text-slate-300 cursor-not-allowed"
+                          (loteEtiquetado?.envases.filter(isEnvaseVigente).length > 0) ? "bg-sleek-dark text-white hover:bg-slate-800" : "bg-slate-100 text-slate-300 cursor-not-allowed"
                         )}
                       >
                         {isEditingFinalized ? 'Guardar y Cerrar Edición' : 'Finalizar Etiquetado'}
@@ -8515,7 +8542,7 @@ const EtiquetasView = ({
                </h3>
                <div className="flex gap-4 items-center">
                   <p className="text-[10px] font-bold text-slate-400 uppercase">
-                    Total Lote: <span className="text-sleek-accent">{selectedLote?.tipo === 'despiece' ? envasesParaMostrar.filter(e => !e.anulado).length : loteEtiquetado?.envases.filter((e: any) => !e.anulado).length || 0}</span> Envases | 
+                    Total Lote: <span className="text-sleek-accent">{selectedLote?.tipo === 'despiece' ? envasesParaMostrar.length : loteEtiquetado?.envases.length || 0}</span> Envases | 
                     <span className="text-sleek-accent"> {displayNum(totalPesoLote, 2)}</span> kg
                   </p>
                </div>
@@ -8716,7 +8743,7 @@ const EtiquetasView = ({
             </div>
             <div>
               <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Envases Registrados</p>
-              <p className="text-xs font-black uppercase">{loteEtiquetado?.envases.filter((e: any) => !(e.anulado === true || e.anulado === 'true')).length || 0}</p>
+              <p className="text-xs font-black uppercase">{loteEtiquetado?.envases.filter(isEnvaseVigente).length || 0}</p>
             </div>
             <div>
               <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Peso Neto Total</p>
@@ -8841,16 +8868,14 @@ const EtiquetasView = ({
                     ? {
                         ...envItem,
                         estado: 'baja',
-                        anulado: true,
+                        anulado: false,
                         motivoBaja: anularModal.motivo,
                         fechaBaja: new Date().toISOString(),
                         usuarioBaja: currentUser.name
                       }
                     : envItem
                 );
-                const active = updatedEnvases.filter((ev: any) =>
-                  !(ev.anulado === true || ev.anulado === 'true' || ev.estado === 'baja')
-                );
+                const active = updatedEnvases.filter(isEnvaseVigente);
                 const pesoTotalEtiquetado = active.reduce((s: number, ev: any) => s + (parseFloat(ev.pesoNeto) || 0), 0);
 
                 setLotesEtiquetados(
