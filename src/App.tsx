@@ -12218,6 +12218,240 @@ const AlmacenesView = ({
 
 // --- Ventas Components ---
 
+const MESES_DASHBOARD = [
+  'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
+];
+
+const ventaEnMesAnio = (v: Venta, mes: number, anio: number) => {
+  if (v.estado !== 'Finalizado') return false;
+  const d = parseISO(v.fecha);
+  if (!isValid(d)) return false;
+  return d.getMonth() === mes && d.getFullYear() === anio;
+};
+
+const kgDeLineaVenta = (p: VentaProducto, productosList: Producto[]) => {
+  if (p.pesoKg != null && p.pesoKg > 0) return p.pesoKg;
+  const prod = productosList.find((pr) => pr.id === p.productoId);
+  if (p.unidad === 'kg' || prod?.unidadMedidaId === 'u1') return p.cantidad || 0;
+  return (p.cantidad || 0) * (prod?.pesoNetoUnidad || 0);
+};
+
+const VentasDashboardView = ({
+  ventas,
+  clientes,
+  productos,
+  listasPrecios,
+  puntosVenta,
+}: {
+  ventas: Venta[];
+  clientes: Cliente[];
+  productos: Producto[];
+  listasPrecios: ListaPrecio[];
+  puntosVenta: PuntoVenta[];
+}) => {
+  const hoy = new Date();
+  const [mesIdx, setMesIdx] = useState(hoy.getMonth());
+  const [anio, setAnio] = useState(hoy.getFullYear());
+  const [comparacion, setComparacion] = useState<'Mes anterior' | 'Mismo mes año anterior' | 'Sin comparación'>('Mes anterior');
+
+  const periodoComparacion = useMemo(() => {
+    if (comparacion === 'Sin comparación') return null;
+    if (comparacion === 'Mes anterior') {
+      const d = new Date(anio, mesIdx - 1, 1);
+      return { mes: d.getMonth(), anio: d.getFullYear() };
+    }
+    return { mes: mesIdx, anio: anio - 1 };
+  }, [comparacion, mesIdx, anio]);
+
+  const ventasPeriodo = useMemo(
+    () => ventas.filter((v) => ventaEnMesAnio(v, mesIdx, anio)),
+    [ventas, mesIdx, anio]
+  );
+
+  const ventasComparacion = useMemo(() => {
+    if (!periodoComparacion) return [];
+    return ventas.filter((v) => ventaEnMesAnio(v, periodoComparacion.mes, periodoComparacion.anio));
+  }, [ventas, periodoComparacion]);
+
+  const metricas = useMemo(() => {
+    const calc = (lista: Venta[]) => {
+      const facturacion = lista.reduce((s, v) => s + (v.total || 0), 0);
+      const operaciones = lista.length;
+      const ticket = operaciones > 0 ? facturacion / operaciones : 0;
+      const kg = lista.reduce(
+        (s, v) =>
+          s + (v.productos || []).reduce((ps, p) => ps + kgDeLineaVenta(p, productos), 0),
+        0
+      );
+      const cobrado = lista.reduce((s, v) => s + (v.totalCobrado || 0), 0);
+      const efectividad = facturacion > 0 ? (cobrado / facturacion) * 100 : 0;
+      return { facturacion, operaciones, ticket, kg, efectividad };
+    };
+    return { actual: calc(ventasPeriodo), anterior: calc(ventasComparacion) };
+  }, [ventasPeriodo, ventasComparacion, productos]);
+
+  const variacionPct = (actual: number, anterior: number) => {
+    if (!periodoComparacion || anterior === 0) return null;
+    return ((actual - anterior) / anterior) * 100;
+  };
+
+  const KpiCard = ({
+    label,
+    value,
+    variacion,
+    format: fmt = 'number',
+  }: {
+    label: string;
+    value: number;
+    variacion: number | null;
+    format?: 'money' | 'number' | 'percent';
+  }) => {
+    const display =
+      fmt === 'money'
+        ? `$ ${formatCurrency(value)}`
+        : fmt === 'percent'
+          ? `${formatNumber(value, 1)}%`
+          : label.toLowerCase().includes('kg')
+            ? `${displayNum(value, 2)} kg`
+            : displayNum(value, 0);
+    const varPos = variacion != null && variacion >= 0;
+    const varNeg = variacion != null && variacion < 0;
+    return (
+      <Card className="p-4 border border-slate-100 shadow-sm">
+        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">{label}</p>
+        <p className="text-2xl font-bold text-sleek-dark">{display}</p>
+        {variacion != null ? (
+          <p
+            className={cn(
+              'text-xs font-bold mt-2 flex items-center gap-1',
+              varPos ? 'text-emerald-500' : varNeg ? 'text-red-500' : 'text-slate-400'
+            )}
+          >
+            {varPos ? <TrendingUp className="w-3.5 h-3.5" /> : varNeg ? <TrendingDown className="w-3.5 h-3.5" /> : null}
+            {varPos ? '▲' : varNeg ? '▼' : ''} {formatNumber(Math.abs(variacion), 1)}% vs período ant.
+          </p>
+        ) : (
+          <p className="text-xs text-slate-400 mt-2">Sin comparación</p>
+        )}
+      </Card>
+    );
+  };
+
+  const aniosOpciones = useMemo(() => {
+    const set = new Set<number>();
+    ventas.forEach((v) => {
+      const d = parseISO(v.fecha);
+      if (isValid(d)) set.add(d.getFullYear());
+    });
+    set.add(hoy.getFullYear());
+    return Array.from(set).sort((a, b) => b - a);
+  }, [ventas]);
+
+  return (
+    <div id="dashboard-ventas" className="space-y-8 animate-in fade-in duration-500 pb-12">
+      <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6">
+        <div>
+          <h1 className="text-2xl font-bold text-sleek-dark uppercase tracking-widest flex items-center gap-3">
+            <BarChart3 className="w-7 h-7 text-sleek-accent" />
+            Dashboard de Ventas
+          </h1>
+          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">
+            KPIs y resumen del período seleccionado
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-4 items-end bg-white p-4 rounded-xl border border-slate-100 shadow-sm">
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Período</label>
+            <div className="flex gap-2">
+              <select
+                value={mesIdx}
+                onChange={(e) => setMesIdx(parseInt(e.target.value, 10))}
+                className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold uppercase tracking-widest"
+              >
+                {MESES_DASHBOARD.map((m, i) => (
+                  <option key={m} value={i}>{m}</option>
+                ))}
+              </select>
+              <select
+                value={anio}
+                onChange={(e) => setAnio(parseInt(e.target.value, 10))}
+                className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold uppercase tracking-widest"
+              >
+                {aniosOpciones.map((y) => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Comparar con</label>
+            <select
+              value={comparacion}
+              onChange={(e) => setComparacion(e.target.value as typeof comparacion)}
+              className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold uppercase tracking-widest min-w-[180px]"
+            >
+              <option value="Mes anterior">Mes anterior</option>
+              <option value="Mismo mes año anterior">Mismo mes año anterior</option>
+              <option value="Sin comparación">Sin comparación</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
+        <KpiCard
+          label="Facturación total"
+          value={metricas.actual.facturacion}
+          variacion={variacionPct(metricas.actual.facturacion, metricas.anterior.facturacion)}
+          format="money"
+        />
+        <KpiCard
+          label="Operaciones"
+          value={metricas.actual.operaciones}
+          variacion={variacionPct(metricas.actual.operaciones, metricas.anterior.operaciones)}
+        />
+        <KpiCard
+          label="Ticket promedio"
+          value={metricas.actual.ticket}
+          variacion={variacionPct(metricas.actual.ticket, metricas.anterior.ticket)}
+          format="money"
+        />
+        <KpiCard
+          label="Kg vendidos"
+          value={metricas.actual.kg}
+          variacion={variacionPct(metricas.actual.kg, metricas.anterior.kg)}
+        />
+        <KpiCard
+          label="Efectividad cobranza"
+          value={metricas.actual.efectividad}
+          variacion={variacionPct(metricas.actual.efectividad, metricas.anterior.efectividad)}
+          format="percent"
+        />
+      </div>
+
+      <Card className="p-6">
+        <h2 className="text-sm font-semibold text-slate-700 uppercase tracking-widest mb-4">
+          Resumen rápido — {MESES_DASHBOARD[mesIdx]} {anio}
+        </h2>
+        <p className="text-sm text-slate-600">
+          {metricas.actual.operaciones} ventas finalizadas por un total de{' '}
+          <span className="font-bold text-sleek-dark">$ {formatCurrency(metricas.actual.facturacion)}</span>
+          {metricas.actual.kg > 0 && (
+            <> y <span className="font-bold">{displayNum(metricas.actual.kg, 2)} kg</span> vendidos</>
+          )}
+          .
+        </p>
+        {ventasPeriodo.length === 0 && (
+          <p className="text-[11px] text-slate-400 font-bold uppercase tracking-widest mt-4 italic">
+            No hay ventas finalizadas en este período.
+          </p>
+        )}
+      </Card>
+    </div>
+  );
+};
+
 const VentasPedidosView = ({ 
   ventas, setVentas, clientes, listasPrecios, puntosVenta, productos, 
   lotesStock, movimientos, setMovimientos, lotesEtiquetados, setLotesEtiquetados,
@@ -19347,7 +19581,7 @@ export default function App() {
       const defaultSub = {
         'INVENTARIO': ['Dashboard', 'Almacenes', 'Productos', 'Movimientos', 'Alertas', 'Reportes'],
         'PRODUCCIÓN': ['Lotes de Producción', 'Lotes de Despiece', 'Recetas Estándar', 'Plantillas de Despiece', 'Etiquetas', 'Dashboard', 'Trazabilidad'],
-        'VENTAS': ['Ventas y Pedidos', 'Clientes', 'Listas de Precios', 'Puntos de Venta'],
+        'VENTAS': ['Ventas y Pedidos', 'Dashboard Ventas', 'Clientes', 'Listas de Precios', 'Puntos de Venta'],
         'EGRESOS': ['Egresos y Compras', 'Proveedores', 'Tipos de Egreso', 'Plan de Cuentas'],
         'USUARIOS': ['Gestión de Usuarios']
       };
@@ -20045,7 +20279,7 @@ export default function App() {
             setExpandedModule={setExpandedModule}
             setActiveModule={setActiveModule}
             setActiveSubSection={setActiveSubSection}
-            subItems={['Ventas y Pedidos', 'Clientes', 'Listas de Precios', 'Puntos de Venta']} 
+            subItems={['Ventas y Pedidos', 'Dashboard Ventas', 'Clientes', 'Listas de Precios', 'Puntos de Venta']} 
             sidebarExpanded={sidebarExpanded}
             currentUser={currentUser}
           />
@@ -20360,6 +20594,15 @@ export default function App() {
                 almacenes={almacenes}
                 currentUser={currentUser}
                 showNotification={showNotification}
+              />
+            )}
+            {activeModule === 'VENTAS' && activeSubSection === 'Dashboard Ventas' && (
+              <VentasDashboardView
+                ventas={ventas}
+                clientes={clientes}
+                productos={productos}
+                listasPrecios={listasPrecios}
+                puntosVenta={puntosVenta}
               />
             )}
             {activeModule === 'VENTAS' && activeSubSection === 'Clientes' && (
