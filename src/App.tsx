@@ -18956,6 +18956,14 @@ export default function App() {
       setPagosProveedores(d.alido_pagos_proveedores);
       setPlantillasEgresos(d.alido_plantillas_egresos);
       setMercaderiaPendiente(d.alido_mercaderia_pendiente);
+
+      // --- NUEVO: Inicializar refs de protección con los datos cargados ---
+      if (d.alido_lotes_etiquetados?.length > 0) lastKnownLotesEtiquetadosRef.current = d.alido_lotes_etiquetados;
+      if (d.alido_lotes_produccion?.length > 0) lastKnownLotesProduccionRef.current = d.alido_lotes_produccion;
+      if (d.alido_lotes_despiece?.length > 0) lastKnownLotesDespieceRef.current = d.alido_lotes_despiece;
+      if (d.alido_movimientos?.length > 0) lastKnownMovimientosRef.current = d.alido_movimientos;
+      if (d.alido_ventas?.length > 0) lastKnownVentasRef.current = d.alido_ventas;
+
       setIsLoading(false);
     });
   }, []);
@@ -19082,6 +19090,34 @@ export default function App() {
   const isApplyingRemoteRef = useRef(false);
   const lastSyncRef = useRef(new Date().toISOString());
 
+  // --- NUEVO: Refs para proteger datos críticos contra borrado accidental ---
+  const lastKnownLotesEtiquetadosRef = useRef<any[] | null>(null);
+  const lastKnownLotesProduccionRef = useRef<any[] | null>(null);
+  const lastKnownLotesDespieceRef = useRef<any[] | null>(null);
+  const lastKnownMovimientosRef = useRef<any[] | null>(null);
+  const lastKnownVentasRef = useRef<any[] | null>(null);
+
+  // --- NUEVO: Trackear última versión válida de datos críticos ---
+  useEffect(() => {
+    if (lotesEtiquetados.length > 0) lastKnownLotesEtiquetadosRef.current = lotesEtiquetados;
+  }, [lotesEtiquetados]);
+
+  useEffect(() => {
+    if (lotesProduccion.length > 0) lastKnownLotesProduccionRef.current = lotesProduccion;
+  }, [lotesProduccion]);
+
+  useEffect(() => {
+    if (lotesDespiece.length > 0) lastKnownLotesDespieceRef.current = lotesDespiece;
+  }, [lotesDespiece]);
+
+  useEffect(() => {
+    if (movimientos.length > 0) lastKnownMovimientosRef.current = movimientos;
+  }, [movimientos]);
+
+  useEffect(() => {
+    if (ventas.length > 0) lastKnownVentasRef.current = ventas;
+  }, [ventas]);
+
   useEffect(() => {
     if (isLoading) return; // Don't save while loading from Supabase
     if (isApplyingRemoteRef.current) return; // Don't save when applying remote changes
@@ -19092,6 +19128,18 @@ export default function App() {
 
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
+      // --- PROTECCIÓN: No guardar arrays vacíos si antes tenían datos ---
+      const protectedKeys: Record<
+        string,
+        { current: any[]; lastKnown: React.MutableRefObject<any[] | null> }
+      > = {
+        alido_lotes_etiquetados: { current: lotesEtiquetados, lastKnown: lastKnownLotesEtiquetadosRef },
+        alido_lotes_produccion: { current: lotesProduccion, lastKnown: lastKnownLotesProduccionRef },
+        alido_lotes_despiece: { current: lotesDespiece, lastKnown: lastKnownLotesDespieceRef },
+        alido_movimientos: { current: movimientos, lastKnown: lastKnownMovimientosRef },
+        alido_ventas: { current: ventas, lastKnown: lastKnownVentasRef },
+      };
+
       const dataMap: Record<string, any> = {
         alido_users: users, alido_almacenes: almacenes, alido_familias: familias,
         alido_subfamilias: subfamilias, alido_unidades_medida: unidades,
@@ -19109,14 +19157,46 @@ export default function App() {
         alido_egresos: egresos, alido_pagos_proveedores: pagosProveedores,
         alido_plantillas_egresos: plantillasEgresos, alido_mercaderia_pendiente: mercaderiaPendiente
       };
+
+      // --- NUEVO: Log de auditoría para debugging ---
+      const criticalCounts = {
+        lotesEtiquetados: lotesEtiquetados.length,
+        lotesProduccion: lotesProduccion.length,
+        lotesDespiece: lotesDespiece.length,
+        movimientos: movimientos.length,
+        ventas: ventas.length,
+      };
+      console.log('[SAVE] Guardando en Supabase:', criticalCounts);
+
       // Save to Supabase
       lastSyncRef.current = new Date().toISOString();
       Object.entries(dataMap).forEach(([key, value]) => {
+        const protection = protectedKeys[key];
+        if (protection) {
+          const currentIsEmpty = !Array.isArray(protection.current) || protection.current.length === 0;
+          const hadData =
+            protection.lastKnown.current !== null && protection.lastKnown.current.length > 0;
+          if (currentIsEmpty && hadData) {
+            console.error(
+              `⚠️ PROTECCIÓN: Se bloqueó el guardado de ${key} porque está vacío pero antes tenía ${protection.lastKnown.current!.length} registros. Esto previene pérdida de datos.`
+            );
+            return;
+          }
+        }
         saveToSupabase(key, value);
       });
       // Also keep localStorage as offline cache
       Object.entries(dataMap).forEach(([key, value]) => {
-        try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+        const protection = protectedKeys[key];
+        if (protection) {
+          const currentIsEmpty = !Array.isArray(protection.current) || protection.current.length === 0;
+          const hadData =
+            protection.lastKnown.current !== null && protection.lastKnown.current.length > 0;
+          if (currentIsEmpty && hadData) return;
+        }
+        try {
+          localStorage.setItem(key, JSON.stringify(value));
+        } catch {}
       });
     }, 800); // Debounce 800ms to batch rapid changes
   }, [users, almacenes, familias, subfamilias, unidades, productos, stockSeguridad, movimientos, recetas, recetasHistorial, lotesProduccion, lotesHistorial, plantillasDespiece, plantillasDespieceHistorial, lotesDespiece, lotesDespieceHistorial, lotesEtiquetados, descuentosPendientes, clientes, listasPrecios, puntosVenta, ventas, cobrosClientes, planCuentas, tiposEgreso, proveedores, egresos, pagosProveedores, plantillasEgresos, mercaderiaPendiente, isLoading]);
@@ -19150,9 +19230,36 @@ export default function App() {
           isApplyingRemoteRef.current = true;
           updates.forEach(({ key, value }) => {
             const setter = KEY_TO_SETTER[key];
-            if (setter && value !== null && value !== undefined) {
-              setter(value);
+            if (!setter) return;
+            if (value === null || value === undefined) return;
+
+            // PROTECCIÓN: no aplicar arrays vacíos sobre datos que existen
+            const criticalKeys = [
+              'alido_lotes_etiquetados',
+              'alido_lotes_produccion',
+              'alido_lotes_despiece',
+              'alido_movimientos',
+              'alido_ventas',
+            ];
+            if (criticalKeys.includes(key)) {
+              const isEmpty = !Array.isArray(value) || value.length === 0;
+              const refMap: Record<string, React.MutableRefObject<any[] | null>> = {
+                alido_lotes_etiquetados: lastKnownLotesEtiquetadosRef,
+                alido_lotes_produccion: lastKnownLotesProduccionRef,
+                alido_lotes_despiece: lastKnownLotesDespieceRef,
+                alido_movimientos: lastKnownMovimientosRef,
+                alido_ventas: lastKnownVentasRef,
+              };
+              const lastKnown = refMap[key]?.current;
+              if (isEmpty && lastKnown && lastKnown.length > 0) {
+                console.error(
+                  `⚠️ SYNC PROTECCIÓN: Se bloqueó la sincronización de ${key} porque el valor remoto está vacío pero localmente hay ${lastKnown.length} registros.`
+                );
+                return;
+              }
             }
+
+            setter(value);
           });
           lastSyncRef.current = new Date().toISOString();
           // Allow save effect to skip, then re-enable
