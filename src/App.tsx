@@ -1019,7 +1019,7 @@ const calcularCantidadStockLote = (
   };
 };
 
-/** Lotes con stock > 0 para vista de almacén (respeta envases etiquetados). */
+/** Lotes con stock distinto de cero para vista de almacén (incluye negativos; respeta envases etiquetados). */
 const getLotesVisiblesEnAlmacen = (
   productoId: string,
   almacenId: string,
@@ -1042,7 +1042,7 @@ const getLotesVisiblesEnAlmacen = (
       );
       return { ...l, cantidad, pesoEquivalenteReal };
     })
-    .filter((l: any) => (l.cantidad || 0) > 0.0001);
+    .filter((l: any) => Math.abs(l.cantidad || 0) > 0.0001);
 };
 
 const buildEnvaseSelectionKey = (leId: string, env: { codigoBarras: string; numero: number | string }) =>
@@ -11635,17 +11635,24 @@ const AlmacenesView = ({
     const assignedProducts = stockSeguridad.filter((s: any) => s.almacenId === selectedAlmacen.id);
     const assignedProductIds = new Set(assignedProducts.map((ap: any) => ap.productoId));
 
-    // Find products with stock in this almacen that are NOT assigned via stockSeguridad
-    const unassignedWithStock = Array.from(new Set(
-      lotesStock
-        .filter((ls: any) => {
-          if (ls.almacenId !== selectedAlmacen.id || assignedProductIds.has(ls.productoId)) return false;
-          const p = productos.find((pr: any) => pr.id === ls.productoId);
-          const { cantidad } = calcularCantidadStockLote(ls, p, lotesEtiquetados, lotesProduccion, lotesDespiece);
-          return cantidad > 0.001;
-        })
-        .map((ls: any) => ls.productoId)
-    )).map((pid: any) => ({ productoId: pid, cantidad: 0, almacenId: selectedAlmacen.id, _unassigned: true }));
+    // Productos con stock (positivo o negativo) no asignados vía stock de seguridad
+    const unassignedWithStock = Array.from(
+      new Set(
+        lotesStock
+          .filter(
+            (ls: any) =>
+              ls.almacenId === selectedAlmacen.id && !assignedProductIds.has(ls.productoId)
+          )
+          .map((ls: any) => ls.productoId)
+      )
+    )
+      .filter((pid: string) => Math.abs(getStockActual(pid, selectedAlmacen.id)) > 0.001)
+      .map((pid: string) => ({
+        productoId: pid,
+        cantidad: 0,
+        almacenId: selectedAlmacen.id,
+        _unassigned: true,
+      }));
 
     const allProducts = [...assignedProducts, ...unassignedWithStock];
 
@@ -11662,22 +11669,33 @@ const AlmacenesView = ({
       const actual = getStockActual(prod.id, selectedAlmacen.id);
       const seguridad = ap.cantidad;
       let status = 'gris';
-      if (seguridad > 0) {
+      if (actual < -0.001) status = 'negativo';
+      else if (seguridad > 0) {
         if (actual < seguridad) status = 'rojo';
         else if (actual <= seguridad * 1.3) status = 'amarillo';
         else status = 'verde';
       }
 
-      const matchesEstado = filterEstado === 'Todos' || 
-                           (filterEstado === 'Con alerta' && (status === 'rojo' || status === 'amarillo')) ||
-                           (filterEstado === 'Sin alerta' && status === 'verde');
+      const matchesEstado =
+        filterEstado === 'Todos' ||
+        (filterEstado === 'Con alerta' &&
+          (status === 'rojo' || status === 'amarillo' || status === 'negativo')) ||
+        (filterEstado === 'Sin alerta' && status === 'verde') ||
+        (filterEstado === 'Stock negativo' && status === 'negativo');
 
       return matchesSearch && matchesTipo && matchesEstado;
     });
 
     const ocupacion = getOcupacionAlmacen(selectedAlmacen.id);
     const capacidad = selectedAlmacen.capacidadMax || 0;
-    const porcentaje = capacidad > 0 ? Math.min(Math.round((ocupacion / capacidad) * 100), 100) : 0;
+    const ocupacionNegativa = ocupacion < -0.001;
+    const porcentajeRaw = capacidad > 0 ? Math.round((ocupacion / capacidad) * 100) : 0;
+    const porcentaje =
+      capacidad > 0
+        ? ocupacionNegativa
+          ? 0
+          : Math.min(Math.max(porcentajeRaw, 0), 100)
+        : 0;
     const unidadCapacidad = unidades.find((u: any) => u.id === selectedAlmacen.capacidadUnidadId)?.abreviatura || 'kg';
 
     return (
@@ -11730,17 +11748,28 @@ const AlmacenesView = ({
           <div className="bg-slate-50 p-6 rounded-xl border border-slate-100">
             <div className="flex justify-between items-end mb-3">
               <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">Ocupación Total</p>
-              <p className="text-sm font-black text-sleek-dark">
-                {formatNumber(ocupacion || 0)} {unidadCapacidad} / {formatNumber(capacidad || 0)} {unidadCapacidad} ({porcentaje}%)
+              <p className={cn("text-sm font-black", ocupacionNegativa ? "text-sleek-danger" : "text-sleek-dark")}>
+                {formatNumber(ocupacion || 0)} {unidadCapacidad} / {formatNumber(capacidad || 0)} {unidadCapacidad}
+                {ocupacionNegativa ? (
+                  <span className="ml-2 text-[10px] uppercase tracking-widest">(stock negativo)</span>
+                ) : (
+                  <span> ({porcentaje}%)</span>
+                )}
               </p>
             </div>
             <div className="w-full bg-slate-200 rounded-full h-4 overflow-hidden border border-slate-300">
               <div 
                 className={cn(
                   "h-full transition-all duration-1000",
-                  porcentaje > 90 ? "bg-sleek-danger" : porcentaje > 70 ? "bg-sleek-warning" : "bg-sleek-success"
+                  ocupacionNegativa
+                    ? "bg-sleek-danger"
+                    : porcentaje > 90
+                      ? "bg-sleek-danger"
+                      : porcentaje > 70
+                        ? "bg-sleek-warning"
+                        : "bg-sleek-success"
                 )}
-                style={{ width: `${porcentaje}%` }}
+                style={{ width: ocupacionNegativa ? '100%' : `${porcentaje}%` }}
               />
             </div>
           </div>
@@ -11776,6 +11805,7 @@ const AlmacenesView = ({
               <option value="Todos">Todos los Estados</option>
               <option value="Con alerta">Con Alerta</option>
               <option value="Sin alerta">Sin Alerta</option>
+              <option value="Stock negativo">Stock Negativo</option>
             </select>
           </div>
         </div>
@@ -11817,9 +11847,18 @@ const AlmacenesView = ({
                     lotesDespiece
                   );
                   const prodUnidad = unidades.find((u: any) => u.id === prod.unidadMedidaId)?.abreviatura || '';
+                  const stockKgDisplay =
+                    prod.tipo === 'Materia Prima'
+                      ? prodLotes.reduce(
+                          (sum: number, l: any) => sum + (l.cantidad * getPesoEquivalente(prod.id, l)),
+                          0
+                        )
+                      : actual || 0;
+                  const esStockNegativo = stockKgDisplay < -0.001 || actual < -0.001;
                   
                   let status = 'gris';
-                  if (seguridad > 0) {
+                  if (actual < -0.001) status = 'negativo';
+                  else if (seguridad > 0) {
                     if (actual < seguridad) status = 'rojo';
                     else if (actual <= seguridad * 1.3) status = 'amarillo';
                     else status = 'verde';
@@ -11827,7 +11866,11 @@ const AlmacenesView = ({
 
                   return (
                     <React.Fragment key={ap.productoId}>
-                      <tr className={cn("hover:bg-slate-50 transition-colors", expandedProduct === ap.productoId && "bg-slate-50/50")}>
+                      <tr className={cn(
+                        "hover:bg-slate-50 transition-colors",
+                        expandedProduct === ap.productoId && "bg-slate-50/50",
+                        esStockNegativo && "bg-red-50/40"
+                      )}>
                         <td className="px-6 py-4">
                           <p className="font-black text-sleek-dark uppercase tracking-tight">{prod.nombre}</p>
                           <p className="text-[10px] text-slate-400 font-bold uppercase">{prod.codigo}</p>
@@ -11838,11 +11881,14 @@ const AlmacenesView = ({
                           </Badge>
                         </td>
                         <td className="px-6 py-4 text-right">
-                          <p className="font-mono font-bold text-sleek-dark">
+                          <p className={cn("font-mono font-bold", esStockNegativo ? "text-sleek-danger" : "text-sleek-dark")}>
                             {prod.tipo === 'Materia Prima' 
-                              ? displayNum(prodLotes.reduce((sum: number, l: any) => sum + (l.cantidad * getPesoEquivalente(prod.id, l)), 0), 2) 
+                              ? displayNum(stockKgDisplay, 2) 
                               : displayNum(actual || 0, 2)} {prod.tipo === 'Materia Prima' ? 'kg' : prodUnidad}
                           </p>
+                          {esStockNegativo && (
+                            <Badge variant="danger" className="mt-1 text-[9px]">NEGATIVO</Badge>
+                          )}
                           {prod.tipo === 'Materia Prima' && prodUnidad !== 'kg' && (
                             <p className="text-[10px] text-slate-400">({displayNum(actual || 0, 1)} {prodUnidad})</p>
                           )}
@@ -11865,10 +11911,15 @@ const AlmacenesView = ({
                         <td className="px-6 py-4 text-center">
                           <div className={cn(
                             "w-3 h-3 rounded-full mx-auto shadow-sm",
+                            status === 'negativo' ? "bg-sleek-danger ring-2 ring-red-200" :
                             status === 'rojo' ? "bg-sleek-danger animate-pulse" : 
                             status === 'amarillo' ? "bg-sleek-warning" : 
                             status === 'verde' ? "bg-sleek-success" : "bg-slate-300"
-                          )} title={status === 'rojo' ? 'Bajo Stock' : status === 'amarillo' ? 'Cerca del Límite' : 'Stock OK'} />
+                          )} title={
+                            status === 'negativo' ? 'Stock negativo' :
+                            status === 'rojo' ? 'Bajo Stock' :
+                            status === 'amarillo' ? 'Cerca del Límite' : 'Stock OK'
+                          } />
                         </td>
                         <td className="px-6 py-4 text-center">
                           <button 
@@ -11890,8 +11941,8 @@ const AlmacenesView = ({
                             </button>
                             <button 
                               onClick={() => {
-                                if (actual > 0) {
-                                  showNotification('No se puede quitar. Hay stock actual.', 'error');
+                                if (Math.abs(actual) > 0.001) {
+                                  showNotification('No se puede quitar. Hay stock actual (incluye negativo).', 'error');
                                   return;
                                 }
                                 confirmDialog('¿Quitar este producto del almacén?', () => {
@@ -11932,12 +11983,18 @@ const AlmacenesView = ({
                                       const venc = parseISO(lote.fechaVencimiento);
                                       const isExpired = safeIsBefore(lote.fechaVencimiento, hoy);
                                       const isNear = !isExpired && safeDiffDays(lote.fechaVencimiento, hoy) <= 7;
+                                      const loteNegativo = (lote.cantidad || 0) < -0.001;
                                       
                                       return (
                                         <React.Fragment key={lote.id}>
-                                          <tr>
-                                            <td className="py-3 font-mono font-bold text-sleek-dark">{lote.numeroLote}</td>
-                                            <td className="py-3 text-right font-mono font-bold text-sleek-dark">
+                                          <tr className={loteNegativo ? "bg-red-50/30" : undefined}>
+                                            <td className="py-3 font-mono font-bold text-sleek-dark">
+                                              {lote.numeroLote}
+                                              {lote.numeroLote === 'STK-NEGATIVO' && (
+                                                <span className="ml-2 text-[9px] text-sleek-danger font-black uppercase">ajuste</span>
+                                              )}
+                                            </td>
+                                            <td className={cn("py-3 text-right font-mono font-bold", loteNegativo ? "text-sleek-danger" : "text-sleek-dark")}>
                                               {prod.tipo === 'Materia Prima' 
                                                 ? `${displayNum((lote.cantidad || 0) * getPesoEquivalente(prod.id, lote), 2)} kg`
                                                 : `${displayNum(lote.cantidad || 0, 1)} ${prodUnidad}`}
@@ -11956,8 +12013,8 @@ const AlmacenesView = ({
                                                 >
                                                   <Package className="w-3 h-3" /> Ver Cajas
                                                 </button>
-                                                <Badge variant={isExpired ? 'danger' : isNear ? 'warning' : 'success'}>
-                                                  {isExpired ? 'Vencido' : isNear ? 'Próximo' : 'Vigente'}
+                                                <Badge variant={loteNegativo ? 'danger' : isExpired ? 'danger' : isNear ? 'warning' : 'success'}>
+                                                  {loteNegativo ? 'Negativo' : isExpired ? 'Vencido' : isNear ? 'Próximo' : 'Vigente'}
                                                 </Badge>
                                               </div>
                                             </td>
