@@ -715,6 +715,11 @@ const aplicarFEFOMostradorFraccionado = (args: {
   const pvSeleccionado = (puntosVenta || []).find((pv: any) => pv.id === puntoVentaId);
   const almacenesPV: string[] = (pvSeleccionado?.almacenIds || []) as string[];
 
+  // Si el PV no tiene almacenes configurados, no aplicar FEFO fraccionado
+  if (almacenesPV.length === 0) {
+    return { ok: true, lotesEtiquetados: JSON.parse(JSON.stringify(lotesEtiquetados || [])), items: JSON.parse(JSON.stringify(items || [])), movimientosExtra: [] };
+  }
+
   const itemsOut: VentaProducto[] = JSON.parse(JSON.stringify(items || []));
   const leOut: any[] = JSON.parse(JSON.stringify(lotesEtiquetados || []));
   const movimientosExtra: any[] = [];
