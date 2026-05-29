@@ -12223,6 +12223,8 @@ const MESES_DASHBOARD = [
   'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
 ];
 
+const COLORS_CHART = ['#F27D26', '#1A2B3C', '#10B981', '#3B82F6', '#8B5CF6', '#F59E0B', '#EF4444', '#06B6D4', '#EC4899', '#14B8A6'];
+
 const ventaEnMesAnio = (v: Venta, mes: number, anio: number) => {
   if (v.estado !== 'Finalizado') return false;
   const d = parseISO(v.fecha);
@@ -12243,17 +12245,89 @@ const VentasDashboardView = ({
   productos,
   listasPrecios,
   puntosVenta,
+  familias,
 }: {
   ventas: Venta[];
   clientes: Cliente[];
   productos: Producto[];
   listasPrecios: ListaPrecio[];
   puntosVenta: PuntoVenta[];
+  familias: Familia[];
 }) => {
   const hoy = new Date();
   const [mesIdx, setMesIdx] = useState(hoy.getMonth());
   const [anio, setAnio] = useState(hoy.getFullYear());
   const [comparacion, setComparacion] = useState<'Mes anterior' | 'Mismo mes año anterior' | 'Sin comparación'>('Mes anterior');
+
+  const [dashFechaDesde, setDashFechaDesde] = useState('');
+  const [dashFechaHasta, setDashFechaHasta] = useState('');
+  const [dashClienteId, setDashClienteId] = useState('');
+  const [dashListaPrecioId, setDashListaPrecioId] = useState('');
+  const [dashSucursalId, setDashSucursalId] = useState('');
+
+  const [dashTab, setDashTab] = useState<'cliente' | 'lista' | 'producto' | 'pv' | 'sucursal'>('cliente');
+
+  const [evolucionMetrica, setEvolucionMetrica] = useState<'facturacion' | 'kg'>('facturacion');
+  const [evolucionComposicion, setEvolucionComposicion] = useState<'lista' | 'familia'>('lista');
+
+  const clienteById = useMemo(() => {
+    const map = new Map<string, Cliente>();
+    (clientes || []).forEach((c) => map.set(c.id, c));
+    return map;
+  }, [clientes]);
+
+  const productoById = useMemo(() => {
+    const map = new Map<string, Producto>();
+    (productos || []).forEach((p) => map.set(p.id, p));
+    return map;
+  }, [productos]);
+
+  const puntoVentaById = useMemo(() => {
+    const map = new Map<string, PuntoVenta>();
+    (puntosVenta || []).forEach((pv) => map.set(pv.id, pv));
+    return map;
+  }, [puntosVenta]);
+
+  const listaById = useMemo(() => {
+    const map = new Map<string, ListaPrecio>();
+    (listasPrecios || []).forEach((lp) => map.set(lp.id, lp));
+    return map;
+  }, [listasPrecios]);
+
+  const familiaById = useMemo(() => {
+    const map = new Map<string, Familia>();
+    (familias || []).forEach((f) => map.set(f.id, f));
+    return map;
+  }, [familias]);
+
+  const useRangoFechas = !!dashFechaDesde || !!dashFechaHasta;
+
+  const ventasPeriodo = useMemo(() => {
+    return ventas.filter((v) => {
+      if (v.estado !== 'Finalizado') return false;
+      const d = parseISO(v.fecha);
+      if (!isValid(d)) return false;
+
+      if (dashFechaDesde || dashFechaHasta) {
+        if (dashFechaDesde && d < parseISO(dashFechaDesde)) return false;
+        if (dashFechaHasta) {
+          const hasta = new Date(`${dashFechaHasta}T23:59:59`);
+          if (d > hasta) return false;
+        }
+      } else {
+        if (d.getMonth() !== mesIdx || d.getFullYear() !== anio) return false;
+      }
+
+      if (dashClienteId && v.clienteId !== dashClienteId) return false;
+      if (dashListaPrecioId) {
+        const cliente = clientes.find((c) => c.id === v.clienteId);
+        if (cliente?.listaPrecioId !== dashListaPrecioId) return false;
+      }
+      if (dashSucursalId && v.sucursalId !== dashSucursalId) return false;
+
+      return true;
+    });
+  }, [ventas, mesIdx, anio, dashFechaDesde, dashFechaHasta, dashClienteId, dashListaPrecioId, dashSucursalId, clientes]);
 
   const periodoComparacion = useMemo(() => {
     if (comparacion === 'Sin comparación') return null;
@@ -12264,15 +12338,19 @@ const VentasDashboardView = ({
     return { mes: mesIdx, anio: anio - 1 };
   }, [comparacion, mesIdx, anio]);
 
-  const ventasPeriodo = useMemo(
-    () => ventas.filter((v) => ventaEnMesAnio(v, mesIdx, anio)),
-    [ventas, mesIdx, anio]
-  );
-
   const ventasComparacion = useMemo(() => {
     if (!periodoComparacion) return [];
-    return ventas.filter((v) => ventaEnMesAnio(v, periodoComparacion.mes, periodoComparacion.anio));
-  }, [ventas, periodoComparacion]);
+    return ventas.filter((v) => {
+      if (!ventaEnMesAnio(v, periodoComparacion.mes, periodoComparacion.anio)) return false;
+      if (dashClienteId && v.clienteId !== dashClienteId) return false;
+      if (dashListaPrecioId) {
+        const cliente = clientes.find((c) => c.id === v.clienteId);
+        if (cliente?.listaPrecioId !== dashListaPrecioId) return false;
+      }
+      if (dashSucursalId && v.sucursalId !== dashSucursalId) return false;
+      return true;
+    });
+  }, [ventas, periodoComparacion, dashClienteId, dashListaPrecioId, dashSucursalId, clientes]);
 
   const metricas = useMemo(() => {
     const calc = (lista: Venta[]) => {
@@ -12280,8 +12358,7 @@ const VentasDashboardView = ({
       const operaciones = lista.length;
       const ticket = operaciones > 0 ? facturacion / operaciones : 0;
       const kg = lista.reduce(
-        (s, v) =>
-          s + (v.productos || []).reduce((ps, p) => ps + kgDeLineaVenta(p, productos), 0),
+        (s, v) => s + (v.productos || []).reduce((ps, p) => ps + kgDeLineaVenta(p, productos), 0),
         0
       );
       const cobrado = lista.reduce((s, v) => s + (v.totalCobrado || 0), 0);
@@ -12295,6 +12372,12 @@ const VentasDashboardView = ({
     if (!periodoComparacion || anterior === 0) return null;
     return ((actual - anterior) / anterior) * 100;
   };
+
+  const textoComparacion = useMemo(() => {
+    if (!periodoComparacion) return '';
+    if (comparacion === 'Mes anterior') return 'mes anterior';
+    return `${MESES_DASHBOARD[mesIdx]} ${anio - 1}`;
+  }, [periodoComparacion, comparacion, mesIdx, anio]);
 
   const KpiCard = ({
     label,
@@ -12329,7 +12412,7 @@ const VentasDashboardView = ({
             )}
           >
             {varPos ? <TrendingUp className="w-3.5 h-3.5" /> : varNeg ? <TrendingDown className="w-3.5 h-3.5" /> : null}
-            {varPos ? '▲' : varNeg ? '▼' : ''} {formatNumber(Math.abs(variacion), 1)}% vs período ant.
+            {varPos ? '▲' : varNeg ? '▼' : ''} {formatNumber(Math.abs(variacion), 1)}% vs {textoComparacion}
           </p>
         ) : (
           <p className="text-xs text-slate-400 mt-2">Sin comparación</p>
@@ -12348,6 +12431,249 @@ const VentasDashboardView = ({
     return Array.from(set).sort((a, b) => b - a);
   }, [ventas]);
 
+  const clientesOrdenados = useMemo(() => {
+    return [...(clientes || [])].sort((a, b) => (a.razonSocial || '').localeCompare(b.razonSocial || ''));
+  }, [clientes]);
+
+  const sucursalesOpciones = useMemo(() => {
+    if (dashClienteId) {
+      const cli = clienteById.get(dashClienteId);
+      return (cli?.sucursales || []).map((s) => ({ id: s.id, label: s.nombre, clienteId: cli.id }));
+    }
+    const all: { id: string; label: string; clienteId: string; clienteLabel: string }[] = [];
+    (clientes || []).forEach((c) => {
+      (c.sucursales || []).forEach((s) => {
+        all.push({ id: s.id, label: s.nombre, clienteId: c.id, clienteLabel: c.razonSocial });
+      });
+    });
+    return all.sort((a, b) => `${a.clienteLabel} ${a.label}`.localeCompare(`${b.clienteLabel} ${b.label}`));
+  }, [dashClienteId, clienteById, clientes]);
+
+  const clearFiltros = () => {
+    setDashFechaDesde('');
+    setDashFechaHasta('');
+    setDashClienteId('');
+    setDashListaPrecioId('');
+    setDashSucursalId('');
+  };
+
+  const totalFacturacionPeriodo = metricas.actual.facturacion;
+
+  const datosPorCliente = useMemo(() => {
+    const acc: Record<string, any> = {};
+    ventasPeriodo.forEach((v) => {
+      const key = v.clienteId || 'sin-cliente';
+      const cli = clienteById.get(v.clienteId);
+      if (!acc[key]) {
+        acc[key] = { clienteId: v.clienteId, nombre: cli?.razonSocial || 'Sin cliente', operaciones: 0, kg: 0, facturacion: 0 };
+      }
+      acc[key].operaciones += 1;
+      acc[key].kg += (v.productos || []).reduce((s, p) => s + kgDeLineaVenta(p, productos), 0);
+      acc[key].facturacion += v.total || 0;
+    });
+    const out = Object.values(acc).sort((a: any, b: any) => b.facturacion - a.facturacion);
+    out.forEach((d: any, i: number) => {
+      d.ranking = i + 1;
+      d.ticket = d.operaciones > 0 ? d.facturacion / d.operaciones : 0;
+      d.pct = totalFacturacionPeriodo > 0 ? (d.facturacion / totalFacturacionPeriodo) * 100 : 0;
+    });
+    return out;
+  }, [ventasPeriodo, clienteById, productos, totalFacturacionPeriodo]);
+
+  const datosPorLista = useMemo(() => {
+    const acc: Record<string, any> = {};
+    ventasPeriodo.forEach((v) => {
+      const cliente = clientes.find((c) => c.id === v.clienteId);
+      const listaId = cliente?.listaPrecioId || 'sin-lista';
+      const lista = listaById.get(listaId);
+      if (!acc[listaId]) {
+        acc[listaId] = { listaId, nombre: lista?.nombre || 'Sin lista', clientesSet: new Set<string>(), operaciones: 0, kg: 0, facturacion: 0 };
+      }
+      acc[listaId].clientesSet.add(v.clienteId);
+      acc[listaId].operaciones += 1;
+      acc[listaId].kg += (v.productos || []).reduce((s, p) => s + kgDeLineaVenta(p, productos), 0);
+      acc[listaId].facturacion += v.total || 0;
+    });
+    const out = Object.values(acc).map((d: any) => {
+      const clientesCount = d.clientesSet.size;
+      delete d.clientesSet;
+      const pct = totalFacturacionPeriodo > 0 ? (d.facturacion / totalFacturacionPeriodo) * 100 : 0;
+      return { ...d, clientes: clientesCount, pct };
+    });
+    return out.sort((a: any, b: any) => b.facturacion - a.facturacion);
+  }, [ventasPeriodo, clientes, listaById, productos, totalFacturacionPeriodo]);
+
+  const datosPorProducto = useMemo(() => {
+    const acc: Record<string, any> = {};
+    ventasPeriodo.forEach((v) => {
+      (v.productos || []).forEach((p) => {
+        const key = p.productoId || 'sin-producto';
+        const prod = productoById.get(p.productoId);
+        if (!acc[key]) {
+          acc[key] = { productoId: p.productoId, nombre: prod?.nombre || 'Sin producto', codigo: prod?.codigo || '-', kg: 0, unidades: 0, facturacion: 0 };
+        }
+        const kg = kgDeLineaVenta(p, productos);
+        acc[key].kg += kg;
+        acc[key].unidades += 1;
+        acc[key].facturacion += p.subtotal || (p.precioUnitario || 0) * (p.cantidad || 0);
+      });
+    });
+    const out = Object.values(acc).sort((a: any, b: any) => b.facturacion - a.facturacion);
+    const total = out.reduce((s: number, d: any) => s + (d.facturacion || 0), 0);
+    out.forEach((d: any, i: number) => {
+      d.ranking = i + 1;
+      d.precioPromKg = d.kg > 0 ? d.facturacion / d.kg : 0;
+      d.pct = total > 0 ? (d.facturacion / total) * 100 : 0;
+    });
+    return out;
+  }, [ventasPeriodo, productoById, productos]);
+
+  const datosPorPV = useMemo(() => {
+    const acc: Record<string, any> = {};
+    ventasPeriodo.forEach((v) => {
+      const key = v.puntoVentaId || 'sin-pv';
+      const pv = puntoVentaById.get(v.puntoVentaId);
+      if (!acc[key]) {
+        acc[key] = { puntoVentaId: v.puntoVentaId, nombre: pv?.nombre || 'Sin PV', operaciones: 0, kg: 0, facturacion: 0 };
+      }
+      acc[key].operaciones += 1;
+      acc[key].kg += (v.productos || []).reduce((s, p) => s + kgDeLineaVenta(p, productos), 0);
+      acc[key].facturacion += v.total || 0;
+    });
+    const out = Object.values(acc).sort((a: any, b: any) => b.facturacion - a.facturacion);
+    out.forEach((d: any) => {
+      d.ticket = d.operaciones > 0 ? d.facturacion / d.operaciones : 0;
+      d.pct = totalFacturacionPeriodo > 0 ? (d.facturacion / totalFacturacionPeriodo) * 100 : 0;
+    });
+    return out;
+  }, [ventasPeriodo, puntoVentaById, productos, totalFacturacionPeriodo]);
+
+  const datosPorSucursal = useMemo(() => {
+    const acc: Record<string, any> = {};
+    ventasPeriodo.forEach((v) => {
+      const key = `${v.clienteId}|||${v.sucursalId}`;
+      const cli = clienteById.get(v.clienteId);
+      const suc = (cli?.sucursales || []).find((s) => s.id === v.sucursalId);
+      if (!acc[key]) {
+        acc[key] = {
+          clienteId: v.clienteId,
+          clienteNombre: cli?.razonSocial || 'Sin cliente',
+          sucursalId: v.sucursalId,
+          sucursalNombre: suc?.nombre || '-',
+          operaciones: 0,
+          kg: 0,
+          facturacion: 0,
+        };
+      }
+      acc[key].operaciones += 1;
+      acc[key].kg += (v.productos || []).reduce((s, p) => s + kgDeLineaVenta(p, productos), 0);
+      acc[key].facturacion += v.total || 0;
+    });
+    const rows = Object.values(acc);
+    const totalPorCliente: Record<string, number> = {};
+    rows.forEach((r: any) => {
+      totalPorCliente[r.clienteId] = (totalPorCliente[r.clienteId] || 0) + r.facturacion;
+    });
+    rows.forEach((r: any) => {
+      r.pctCliente = totalPorCliente[r.clienteId] > 0 ? (r.facturacion / totalPorCliente[r.clienteId]) * 100 : 0;
+    });
+    return rows.sort((a: any, b: any) => {
+      if (a.clienteNombre !== b.clienteNombre) return b.facturacion - a.facturacion;
+      return b.facturacion - a.facturacion;
+    });
+  }, [ventasPeriodo, clienteById, productos]);
+
+  const datosEvolucion = useMemo(() => {
+    const result: any[] = [];
+    for (let i = 11; i >= 0; i--) {
+      let m = mesIdx - i;
+      let a = anio;
+      while (m < 0) {
+        m += 12;
+        a -= 1;
+      }
+
+      const filtraExtra = (v: Venta) => {
+        if (dashClienteId && v.clienteId !== dashClienteId) return false;
+        if (dashListaPrecioId) {
+          const cl = clientes.find((c) => c.id === v.clienteId);
+          if (cl?.listaPrecioId !== dashListaPrecioId) return false;
+        }
+        if (dashSucursalId && v.sucursalId !== dashSucursalId) return false;
+        return true;
+      };
+
+      const ventasMes = ventas.filter((v) => ventaEnMesAnio(v, m, a) && filtraExtra(v));
+      const ventasMesAnioAnt = ventas.filter((v) => ventaEnMesAnio(v, m, a - 1) && filtraExtra(v));
+
+      const label = new Date(a, m).toLocaleDateString('es-AR', { month: 'short', year: '2-digit' });
+
+      result.push({
+        label,
+        facturacion: ventasMes.reduce((s, v) => s + (v.total || 0), 0),
+        kg: ventasMes.reduce(
+          (s, v) => s + (v.productos || []).reduce((ps, p) => ps + kgDeLineaVenta(p, productos), 0),
+          0
+        ),
+        facturacionAnt: ventasMesAnioAnt.reduce((s, v) => s + (v.total || 0), 0),
+        kgAnt: ventasMesAnioAnt.reduce(
+          (s, v) => s + (v.productos || []).reduce((ps, p) => ps + kgDeLineaVenta(p, productos), 0),
+          0
+        ),
+      });
+    }
+    return result;
+  }, [ventas, mesIdx, anio, dashClienteId, dashListaPrecioId, dashSucursalId, clientes, productos]);
+
+  const datosComposicionApilados = useMemo(() => {
+    const categorias = new Set<string>();
+    const rows: any[] = [];
+
+    for (let i = 11; i >= 0; i--) {
+      let m = mesIdx - i;
+      let a = anio;
+      while (m < 0) {
+        m += 12;
+        a -= 1;
+      }
+
+      const ventasMes = ventas.filter((v) => {
+        if (!ventaEnMesAnio(v, m, a)) return false;
+        if (dashClienteId && v.clienteId !== dashClienteId) return false;
+        if (dashListaPrecioId) {
+          const cl = clientes.find((c) => c.id === v.clienteId);
+          if (cl?.listaPrecioId !== dashListaPrecioId) return false;
+        }
+        if (dashSucursalId && v.sucursalId !== dashSucursalId) return false;
+        return true;
+      });
+
+      const desglose: Record<string, number> = {};
+      ventasMes.forEach((v) => {
+        if (evolucionComposicion === 'lista') {
+          const cl = clientes.find((c) => c.id === v.clienteId);
+          const lp = listasPrecios.find((l) => l.id === cl?.listaPrecioId);
+          const cat = lp?.nombre || 'Sin lista';
+          categorias.add(cat);
+          desglose[cat] = (desglose[cat] || 0) + (v.total || 0);
+        } else {
+          (v.productos || []).forEach((p) => {
+            const prod = productos.find((pr) => pr.id === p.productoId);
+            const fam = familias.find((f) => f.id === prod?.familiaId);
+            const cat = fam?.nombre || 'Sin familia';
+            categorias.add(cat);
+            desglose[cat] = (desglose[cat] || 0) + (p.subtotal || 0);
+          });
+        }
+      });
+
+      const label = new Date(a, m).toLocaleDateString('es-AR', { month: 'short', year: '2-digit' });
+      rows.push({ label, ...desglose });
+    }
+
+    return { categorias: Array.from(categorias), rows };
+  }, [ventas, mesIdx, anio, dashClienteId, dashListaPrecioId, dashSucursalId, clientes, listasPrecios, productos, familias, evolucionComposicion]);
+
   return (
     <div id="dashboard-ventas" className="space-y-8 animate-in fade-in duration-500 pb-12">
       <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6">
@@ -12360,7 +12686,8 @@ const VentasDashboardView = ({
             KPIs y resumen del período seleccionado
           </p>
         </div>
-        <div className="flex flex-wrap gap-4 items-end bg-white p-4 rounded-xl border border-slate-100 shadow-sm">
+        <div className="flex flex-col gap-4 bg-white p-4 rounded-xl border border-slate-100 shadow-sm w-full lg:w-auto">
+          <div className="flex flex-wrap gap-4 items-end">
           <div>
             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Período</label>
             <div className="flex gap-2">
@@ -12368,6 +12695,7 @@ const VentasDashboardView = ({
                 value={mesIdx}
                 onChange={(e) => setMesIdx(parseInt(e.target.value, 10))}
                 className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold uppercase tracking-widest"
+                disabled={useRangoFechas}
               >
                 {MESES_DASHBOARD.map((m, i) => (
                   <option key={m} value={i}>{m}</option>
@@ -12377,6 +12705,7 @@ const VentasDashboardView = ({
                 value={anio}
                 onChange={(e) => setAnio(parseInt(e.target.value, 10))}
                 className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold uppercase tracking-widest"
+                disabled={useRangoFechas}
               >
                 {aniosOpciones.map((y) => (
                   <option key={y} value={y}>{y}</option>
@@ -12395,6 +12724,81 @@ const VentasDashboardView = ({
               <option value="Mismo mes año anterior">Mismo mes año anterior</option>
               <option value="Sin comparación">Sin comparación</option>
             </select>
+          </div>
+          </div>
+
+          <div className="flex flex-wrap gap-4 items-end">
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Desde</label>
+              <input
+                type="date"
+                value={dashFechaDesde}
+                onChange={(e) => setDashFechaDesde(e.target.value)}
+                className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold uppercase tracking-widest"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Hasta</label>
+              <input
+                type="date"
+                value={dashFechaHasta}
+                onChange={(e) => setDashFechaHasta(e.target.value)}
+                className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold uppercase tracking-widest"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Cliente</label>
+              <select
+                value={dashClienteId}
+                onChange={(e) => {
+                  setDashClienteId(e.target.value);
+                  setDashSucursalId('');
+                }}
+                className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold uppercase tracking-widest min-w-[220px]"
+              >
+                <option value="">Todos los clientes</option>
+                {clientesOrdenados.map((c) => (
+                  <option key={c.id} value={c.id}>{c.razonSocial}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Lista de precios</label>
+              <select
+                value={dashListaPrecioId}
+                onChange={(e) => setDashListaPrecioId(e.target.value)}
+                className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold uppercase tracking-widest min-w-[220px]"
+              >
+                <option value="">Todas las listas</option>
+                {(listasPrecios || []).map((lp) => (
+                  <option key={lp.id} value={lp.id}>{lp.nombre}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Sucursal</label>
+              <select
+                value={dashSucursalId}
+                onChange={(e) => setDashSucursalId(e.target.value)}
+                className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold uppercase tracking-widest min-w-[220px]"
+              >
+                <option value="">Todas las sucursales</option>
+                {sucursalesOpciones.map((s: any) => (
+                  <option key={`${s.clienteId}-${s.id}`} value={s.id}>
+                    {dashClienteId ? s.label : `${s.clienteLabel} — ${s.label}`}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <button
+              onClick={clearFiltros}
+              className="px-3 py-2 text-xs font-bold uppercase tracking-widest text-slate-400 hover:text-slate-600 flex items-center gap-2"
+              title="Limpiar filtros"
+              type="button"
+            >
+              <X className="w-4 h-4" /> Limpiar filtros
+            </button>
           </div>
         </div>
       </div>
@@ -12430,24 +12834,441 @@ const VentasDashboardView = ({
         />
       </div>
 
-      <Card className="p-6">
-        <h2 className="text-sm font-semibold text-slate-700 uppercase tracking-widest mb-4">
-          Resumen rápido — {MESES_DASHBOARD[mesIdx]} {anio}
-        </h2>
-        <p className="text-sm text-slate-600">
-          {metricas.actual.operaciones} ventas finalizadas por un total de{' '}
-          <span className="font-bold text-sleek-dark">$ {formatCurrency(metricas.actual.facturacion)}</span>
-          {metricas.actual.kg > 0 && (
-            <> y <span className="font-bold">{displayNum(metricas.actual.kg, 2)} kg</span> vendidos</>
+      {/* Bloque 2 — Desgloses */}
+      <div className="bg-white border border-slate-100 rounded-lg shadow-sm">
+        <div className="flex border-b border-slate-200 overflow-x-auto">
+          {[
+            { key: 'cliente' as const, label: 'Por Cliente' },
+            { key: 'lista' as const, label: 'Por Lista de Precios' },
+            { key: 'producto' as const, label: 'Por Producto' },
+            { key: 'pv' as const, label: 'Por Punto de Venta' },
+            { key: 'sucursal' as const, label: 'Por Sucursal' },
+          ].map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setDashTab(tab.key)}
+              className={cn(
+                'px-4 py-3 text-[10px] uppercase tracking-widest font-bold whitespace-nowrap border-b-2 transition-colors',
+                dashTab === tab.key ? 'text-sleek-accent border-sleek-accent' : 'text-slate-400 border-transparent hover:text-slate-600'
+              )}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="p-6">
+          {dashTab === 'cliente' && (
+            <div className="space-y-6">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead className="bg-slate-50 border-b border-slate-200">
+                    <tr className="text-xs text-slate-500 font-semibold uppercase tracking-widest">
+                      <th className="px-4 py-3">#</th>
+                      <th className="px-4 py-3">Cliente</th>
+                      <th className="px-4 py-3 text-right">Operaciones</th>
+                      <th className="px-4 py-3 text-right">Kg</th>
+                      <th className="px-4 py-3 text-right">Facturación</th>
+                      <th className="px-4 py-3 text-right">Ticket prom.</th>
+                      <th className="px-4 py-3 text-right">% del total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {datosPorCliente.map((d: any) => (
+                      <tr key={d.clienteId} className="hover:bg-slate-50">
+                        <td className="px-4 py-3 font-mono text-sm">{d.ranking}</td>
+                        <td className="px-4 py-3 text-sm font-bold text-sleek-dark">{d.nombre}</td>
+                        <td className="px-4 py-3 text-sm text-right font-mono">{d.operaciones}</td>
+                        <td className="px-4 py-3 text-sm text-right font-mono">{displayNum(d.kg, 2)}</td>
+                        <td className="px-4 py-3 text-sm text-right font-mono font-bold">$ {formatCurrency(d.facturacion)}</td>
+                        <td className="px-4 py-3 text-sm text-right font-mono">$ {formatCurrency(d.ticket)}</td>
+                        <td className="px-4 py-3 text-sm text-right font-mono">{displayNum(d.pct, 1)}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {datosPorCliente.length > 0 && (
+                <div className="mt-6" style={{ height: 400 }}>
+                  <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Top 10 Clientes por Facturación</h3>
+                  <Bar
+                    data={{
+                      labels: datosPorCliente.slice(0, 10).map((d: any) => d.nombre),
+                      datasets: [{
+                        label: 'Facturación',
+                        data: datosPorCliente.slice(0, 10).map((d: any) => d.facturacion),
+                        backgroundColor: '#F27D26',
+                        borderRadius: 4,
+                      }],
+                    }}
+                    options={{
+                      indexAxis: 'y' as const,
+                      responsive: true,
+                      maintainAspectRatio: false,
+                      plugins: { legend: { display: false } },
+                      scales: {
+                        x: { ticks: { callback: (v: any) => `$ ${(Number(v) / 1000).toFixed(0)}k` } },
+                      },
+                    }}
+                  />
+                </div>
+              )}
+            </div>
           )}
-          .
-        </p>
-        {ventasPeriodo.length === 0 && (
-          <p className="text-[11px] text-slate-400 font-bold uppercase tracking-widest mt-4 italic">
-            No hay ventas finalizadas en este período.
-          </p>
-        )}
-      </Card>
+
+          {dashTab === 'lista' && (
+            <div className="space-y-6">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead className="bg-slate-50 border-b border-slate-200">
+                    <tr className="text-xs text-slate-500 font-semibold uppercase tracking-widest">
+                      <th className="px-4 py-3">Lista de precios</th>
+                      <th className="px-4 py-3 text-right">Clientes</th>
+                      <th className="px-4 py-3 text-right">Operaciones</th>
+                      <th className="px-4 py-3 text-right">Kg</th>
+                      <th className="px-4 py-3 text-right">Facturación</th>
+                      <th className="px-4 py-3 text-right">% del total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {datosPorLista.map((d: any) => (
+                      <tr key={d.listaId} className="hover:bg-slate-50">
+                        <td className="px-4 py-3 text-sm font-bold text-sleek-dark">{d.nombre}</td>
+                        <td className="px-4 py-3 text-sm text-right font-mono">{d.clientes}</td>
+                        <td className="px-4 py-3 text-sm text-right font-mono">{d.operaciones}</td>
+                        <td className="px-4 py-3 text-sm text-right font-mono">{displayNum(d.kg, 2)}</td>
+                        <td className="px-4 py-3 text-sm text-right font-mono font-bold">$ {formatCurrency(d.facturacion)}</td>
+                        <td className="px-4 py-3 text-sm text-right font-mono">{displayNum(d.pct, 1)}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {datosPorLista.length > 0 && (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+                  <div style={{ height: 300 }}>
+                    <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Facturación por Lista</h3>
+                    <Bar
+                      data={{
+                        labels: datosPorLista.map((d: any) => d.nombre),
+                        datasets: [{
+                          label: 'Facturación',
+                          data: datosPorLista.map((d: any) => d.facturacion),
+                          backgroundColor: COLORS_CHART.slice(0, datosPorLista.length),
+                          borderRadius: 4,
+                        }],
+                      }}
+                      options={{
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false } },
+                        scales: {
+                          y: { ticks: { callback: (v: any) => `$ ${(Number(v) / 1000).toFixed(0)}k` } },
+                        },
+                      }}
+                    />
+                  </div>
+                  <div style={{ height: 300 }}>
+                    <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Distribución</h3>
+                    <Pie
+                      data={{
+                        labels: datosPorLista.map((d: any) => d.nombre),
+                        datasets: [{
+                          data: datosPorLista.map((d: any) => d.facturacion),
+                          backgroundColor: COLORS_CHART.slice(0, datosPorLista.length),
+                        }],
+                      }}
+                      options={{
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                          legend: { position: 'bottom' as const },
+                          tooltip: { callbacks: { label: (ctx: any) => `$ ${formatCurrency(ctx.parsed)}` } },
+                        },
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {dashTab === 'producto' && (
+            <div className="space-y-6">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead className="bg-slate-50 border-b border-slate-200">
+                    <tr className="text-xs text-slate-500 font-semibold uppercase tracking-widest">
+                      <th className="px-4 py-3">#</th>
+                      <th className="px-4 py-3">Producto</th>
+                      <th className="px-4 py-3">Código</th>
+                      <th className="px-4 py-3 text-right">Kg vendidos</th>
+                      <th className="px-4 py-3 text-right">Unidades</th>
+                      <th className="px-4 py-3 text-right">Facturación</th>
+                      <th className="px-4 py-3 text-right">Precio prom/kg</th>
+                      <th className="px-4 py-3 text-right">% del total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {datosPorProducto.map((d: any) => (
+                      <tr key={d.productoId} className="hover:bg-slate-50">
+                        <td className="px-4 py-3 font-mono text-sm">{d.ranking}</td>
+                        <td className="px-4 py-3 text-sm font-bold text-sleek-dark">{d.nombre}</td>
+                        <td className="px-4 py-3 text-sm font-mono text-slate-500">{d.codigo}</td>
+                        <td className="px-4 py-3 text-sm text-right font-mono">{displayNum(d.kg, 2)}</td>
+                        <td className="px-4 py-3 text-sm text-right font-mono">{d.unidades}</td>
+                        <td className="px-4 py-3 text-sm text-right font-mono font-bold">$ {formatCurrency(d.facturacion)}</td>
+                        <td className="px-4 py-3 text-sm text-right font-mono">$ {formatCurrency(d.precioPromKg)}</td>
+                        <td className="px-4 py-3 text-sm text-right font-mono">{displayNum(d.pct, 1)}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {datosPorProducto.length > 0 && (
+                <div className="mt-6" style={{ height: 400 }}>
+                  <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Top 10 Productos por Kg Vendidos</h3>
+                  <Bar
+                    data={{
+                      labels: datosPorProducto.slice(0, 10).map((d: any) => d.nombre),
+                      datasets: [{
+                        label: 'Kg',
+                        data: datosPorProducto.slice(0, 10).map((d: any) => d.kg),
+                        backgroundColor: '#F27D26',
+                        borderRadius: 4,
+                      }],
+                    }}
+                    options={{
+                      indexAxis: 'y' as const,
+                      responsive: true,
+                      maintainAspectRatio: false,
+                      plugins: { legend: { display: false } },
+                      scales: {
+                        x: { ticks: { callback: (v: any) => `${Number(v).toFixed(0)} kg` } },
+                      },
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {dashTab === 'pv' && (
+            <div className="space-y-6">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead className="bg-slate-50 border-b border-slate-200">
+                    <tr className="text-xs text-slate-500 font-semibold uppercase tracking-widest">
+                      <th className="px-4 py-3">Punto de venta</th>
+                      <th className="px-4 py-3 text-right">Operaciones</th>
+                      <th className="px-4 py-3 text-right">Kg</th>
+                      <th className="px-4 py-3 text-right">Facturación</th>
+                      <th className="px-4 py-3 text-right">Ticket prom.</th>
+                      <th className="px-4 py-3 text-right">% del total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {datosPorPV.map((d: any) => (
+                      <tr key={d.puntoVentaId} className="hover:bg-slate-50">
+                        <td className="px-4 py-3 text-sm font-bold text-sleek-dark">{d.nombre}</td>
+                        <td className="px-4 py-3 text-sm text-right font-mono">{d.operaciones}</td>
+                        <td className="px-4 py-3 text-sm text-right font-mono">{displayNum(d.kg, 2)}</td>
+                        <td className="px-4 py-3 text-sm text-right font-mono font-bold">$ {formatCurrency(d.facturacion)}</td>
+                        <td className="px-4 py-3 text-sm text-right font-mono">$ {formatCurrency(d.ticket)}</td>
+                        <td className="px-4 py-3 text-sm text-right font-mono">{displayNum(d.pct, 1)}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {datosPorPV.length > 0 && (
+                <div className="mt-6" style={{ height: 300 }}>
+                  <Bar
+                    data={{
+                      labels: datosPorPV.map((d: any) => d.nombre),
+                      datasets: [{
+                        label: 'Facturación',
+                        data: datosPorPV.map((d: any) => d.facturacion),
+                        backgroundColor: COLORS_CHART.slice(0, datosPorPV.length),
+                        borderRadius: 4,
+                      }],
+                    }}
+                    options={{
+                      responsive: true,
+                      maintainAspectRatio: false,
+                      plugins: { legend: { display: false } },
+                      scales: {
+                        y: { ticks: { callback: (v: any) => `$ ${(Number(v) / 1000).toFixed(0)}k` } },
+                      },
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {dashTab === 'sucursal' && (
+            <div className="space-y-6">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead className="bg-slate-50 border-b border-slate-200">
+                    <tr className="text-xs text-slate-500 font-semibold uppercase tracking-widest">
+                      <th className="px-4 py-3">Cliente</th>
+                      <th className="px-4 py-3">Sucursal</th>
+                      <th className="px-4 py-3 text-right">Operaciones</th>
+                      <th className="px-4 py-3 text-right">Kg</th>
+                      <th className="px-4 py-3 text-right">Facturación</th>
+                      <th className="px-4 py-3 text-right">% del cliente</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {datosPorSucursal.map((r: any, i: number) => {
+                      const prevCliente = i > 0 ? datosPorSucursal[i - 1].clienteNombre : '';
+                      const showCliente = r.clienteNombre !== prevCliente;
+                      return (
+                        <tr key={`${r.clienteId}-${r.sucursalId}`} className={cn('hover:bg-slate-50', showCliente && i > 0 && 'border-t-2 border-t-slate-200')}>
+                          <td className="px-4 py-3 text-sm font-bold text-sleek-dark">{showCliente ? r.clienteNombre : ''}</td>
+                          <td className="px-4 py-3 text-sm text-slate-700">{r.sucursalNombre}</td>
+                          <td className="px-4 py-3 text-sm text-right font-mono">{r.operaciones}</td>
+                          <td className="px-4 py-3 text-sm text-right font-mono">{displayNum(r.kg, 2)}</td>
+                          <td className="px-4 py-3 text-sm text-right font-mono font-bold">$ {formatCurrency(r.facturacion)}</td>
+                          <td className="px-4 py-3 text-sm text-right font-mono">{displayNum(r.pctCliente, 1)}%</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Bloque 3 — Evolución temporal */}
+      <div className="space-y-4">
+        <h3 className="text-sm font-bold text-sleek-dark uppercase tracking-widest">Evolución Temporal</h3>
+
+        <div className="bg-white border border-slate-100 rounded-lg shadow-sm p-6">
+          <div className="flex gap-2 mb-4">
+            <button
+              onClick={() => setEvolucionMetrica('facturacion')}
+              className={cn('px-3 py-1 text-xs rounded-full font-bold', evolucionMetrica === 'facturacion' ? 'bg-sleek-accent text-white' : 'bg-slate-100 text-slate-600')}
+              type="button"
+            >
+              Facturación ($)
+            </button>
+            <button
+              onClick={() => setEvolucionMetrica('kg')}
+              className={cn('px-3 py-1 text-xs rounded-full font-bold', evolucionMetrica === 'kg' ? 'bg-sleek-accent text-white' : 'bg-slate-100 text-slate-600')}
+              type="button"
+            >
+              Kg vendidos
+            </button>
+          </div>
+          <div style={{ height: 350 }}>
+            <Line
+              data={{
+                labels: datosEvolucion.map((d: any) => d.label),
+                datasets: [
+                  {
+                    label: 'Año actual',
+                    data: datosEvolucion.map((d: any) => (evolucionMetrica === 'facturacion' ? d.facturacion : d.kg)),
+                    borderColor: '#F27D26',
+                    backgroundColor: 'rgba(242,125,38,0.1)',
+                    borderWidth: 3,
+                    pointRadius: 4,
+                    tension: 0.3,
+                    fill: true,
+                  },
+                  {
+                    label: 'Año anterior',
+                    data: datosEvolucion.map((d: any) => (evolucionMetrica === 'facturacion' ? d.facturacionAnt : d.kgAnt)),
+                    borderColor: '#94A3B8',
+                    borderWidth: 2,
+                    borderDash: [5, 5],
+                    pointRadius: 3,
+                    tension: 0.3,
+                    fill: false,
+                  },
+                ],
+              }}
+              options={{
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                  legend: { position: 'bottom' as const },
+                  tooltip: {
+                    callbacks: {
+                      label: (ctx: any) =>
+                        evolucionMetrica === 'facturacion'
+                          ? `${ctx.dataset.label}: $ ${formatCurrency(ctx.parsed.y)}`
+                          : `${ctx.dataset.label}: ${displayNum(ctx.parsed.y, 2)} kg`,
+                    },
+                  },
+                },
+                scales: {
+                  y: {
+                    ticks: {
+                      callback: (v: any) =>
+                        evolucionMetrica === 'facturacion' ? `$ ${(Number(v) / 1000).toFixed(0)}k` : `${Number(v).toFixed(0)} kg`,
+                    },
+                  },
+                },
+              }}
+            />
+          </div>
+        </div>
+
+        <div className="bg-white border border-slate-100 rounded-lg shadow-sm p-6">
+          <div className="flex items-center justify-between mb-4">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Composición Mensual</span>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setEvolucionComposicion('lista')}
+                className={cn('px-3 py-1 text-xs rounded-full font-bold', evolucionComposicion === 'lista' ? 'bg-sleek-accent text-white' : 'bg-slate-100 text-slate-600')}
+                type="button"
+              >
+                Por Lista
+              </button>
+              <button
+                onClick={() => setEvolucionComposicion('familia')}
+                className={cn('px-3 py-1 text-xs rounded-full font-bold', evolucionComposicion === 'familia' ? 'bg-sleek-accent text-white' : 'bg-slate-100 text-slate-600')}
+                type="button"
+              >
+                Por Familia
+              </button>
+            </div>
+          </div>
+          <div style={{ height: 350 }}>
+            <Bar
+              data={{
+                labels: datosComposicionApilados.rows.map((d: any) => d.label),
+                datasets: datosComposicionApilados.categorias.map((cat: string, i: number) => ({
+                  label: cat,
+                  data: datosComposicionApilados.rows.map((d: any) => d[cat] || 0),
+                  backgroundColor: COLORS_CHART[i % COLORS_CHART.length],
+                })),
+              }}
+              options={{
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { position: 'bottom' as const } },
+                scales: {
+                  x: { stacked: true },
+                  y: {
+                    stacked: true,
+                    ticks: { callback: (v: any) => `$ ${(Number(v) / 1000).toFixed(0)}k` },
+                  },
+                },
+              }}
+            />
+          </div>
+        </div>
+      </div>
     </div>
   );
 };
@@ -12491,10 +13312,11 @@ const VentasPedidosView = ({
     setIsNewVenta(true);
     editingOriginalProductsRef.current = null;
     const today = new Date();
-    const vtaId = generarComprobanteVenta(ventas, today);
+    const vtaIdProvisorio = generarComprobanteVenta(ventas, today);
+    const tempId = `TEMP-${Date.now()}`;
     setEditingVenta({
-      id: vtaId,
-      comprobante: vtaId,
+      id: tempId,
+      comprobante: vtaIdProvisorio,
       puntoVentaId: puntosVenta[0]?.id || '',
       clienteId: '',
       sucursalId: '',
@@ -12590,6 +13412,7 @@ const VentasPedidosView = ({
     return (
       <VentaForm 
         venta={editingVenta}
+        isNewVenta={isNewVenta}
         isEditingFinalized={isEditingVenta}
         onClose={() => { clearVentaEditState(); setView('list'); }}
         onSave={(savedVenta: any, shouldFinalize: boolean) => {
@@ -12724,24 +13547,36 @@ const VentasPedidosView = ({
             return;
           }
 
+          // Si es venta nueva, generar comprobante definitivo ANTES de procesar stock
+          let ventaFinal = { ...savedVenta };
+          if (isNewVenta) {
+            const fechaVenta = savedVenta.fecha || safeFormat(new Date(), 'yyyy-MM-dd');
+            const comprobanteDefinitivo = generarComprobanteVenta(ventas, fechaVenta);
+            ventaFinal = {
+              ...savedVenta,
+              id: comprobanteDefinitivo,
+              comprobante: comprobanteDefinitivo,
+            };
+          }
+
           let finalMovimientos = [...movimientos];
 
           if (shouldFinalize) {
             const fracc = aplicarFEFOMostradorFraccionado({
-              items: savedVenta.productos || [],
+              items: ventaFinal.productos || [],
               lotesEtiquetados,
               lotesStock,
               puntosVenta,
               almacenes,
-              puntoVentaId: savedVenta.puntoVentaId,
-              comprobante: savedVenta.comprobante,
+              puntoVentaId: ventaFinal.puntoVentaId,
+              comprobante: ventaFinal.comprobante,
               usuario: currentUser.name,
             });
             if (fracc.ok === false) {
               showNotification(fracc.error, 'error');
               return;
             }
-            const ventaConFracc = { ...savedVenta, productos: fracc.items };
+            const ventaConFracc = { ...ventaFinal, productos: fracc.items };
 
             const newMovs = generarMovimientosSalidaVenta(
               ventaConFracc.productos,
@@ -12758,33 +13593,33 @@ const VentasPedidosView = ({
             setMovimientos([...movsFinal, ...finalMovimientos]);
             setLotesEtiquetados(
               aplicarBajaEnvasesPorVenta(updatedLE, ventaConFracc.productos, {
-                id: savedVenta.id,
-                comprobante: savedVenta.comprobante,
+                id: ventaFinal.id,
+                comprobante: ventaFinal.comprobante,
               })
             );
-            showNotification(`Venta ${savedVenta.comprobante} finalizada. Stock descontado.`, 'success');
+            showNotification(`Venta ${ventaFinal.comprobante} finalizada. Stock descontado.`, 'success');
           } else {
             setMovimientos(finalMovimientos);
-            showNotification(`Pedido ${savedVenta.comprobante} guardado como borrador.`, 'info');
+            showNotification(`Pedido ${ventaFinal.comprobante} guardado como borrador.`, 'info');
           }
 
+          // Persistir la venta con comprobante definitivo
           if (isNewVenta) {
-            let ventaToPersist = savedVenta;
-            const idComprobante = ventaToPersist.comprobante || ventaToPersist.id;
-            if (ventaToPersist.id !== idComprobante) {
-              ventaToPersist = { ...ventaToPersist, id: idComprobante, comprobante: idComprobante };
-            }
-            if (ventas.some((v: any) => v.id === ventaToPersist.id)) {
-              const nuevo = generarComprobanteVenta(ventas, ventaToPersist.fecha);
-              ventaToPersist = { ...ventaToPersist, id: nuevo, comprobante: nuevo };
-              showNotification(
-                `El número de comprobante ya existía. Se asignó ${nuevo}.`,
-                'warning'
-              );
-            }
-            setVentas([ventaToPersist, ...ventas]);
+            setVentas((prevVentas: Venta[]) => {
+              if (prevVentas.some((v: any) => v.id === ventaFinal.id)) {
+                const nuevoComp = generarComprobanteVenta(prevVentas, ventaFinal.fecha);
+                ventaFinal = { ...ventaFinal, id: nuevoComp, comprobante: nuevoComp };
+                showNotification(
+                  `Numeración ajustada automáticamente a ${nuevoComp}.`,
+                  'warning'
+                );
+              }
+              return [ventaFinal, ...prevVentas];
+            });
           } else {
-            setVentas(ventas.map((v: any) => (v.id === savedVenta.id ? savedVenta : v)));
+            setVentas((prevVentas: Venta[]) =>
+              prevVentas.map((v: any) => (v.id === ventaFinal.id ? ventaFinal : v))
+            );
           }
           clearVentaEditState();
           setView('list');
@@ -13057,7 +13892,7 @@ const VentasPedidosView = ({
 };
 
 const VentaForm = ({ 
-  venta, isEditingFinalized = false, onClose, onSave, clientes, productos, listasPrecios, 
+  venta, isNewVenta = false, isEditingFinalized = false, onClose, onSave, clientes, productos, listasPrecios, 
   puntosVenta, lotesEtiquetados, setLotesEtiquetados, almacenes, 
   movimientos, setMovimientos, ventas, showNotification 
 }: any) => {
@@ -13473,6 +14308,11 @@ const VentaForm = ({
                        <div className="space-y-2">
                           <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nº Comprobante</label>
                           <input type="text" readOnly value={form.comprobante} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg outline-none font-black text-slate-600 opacity-70 cursor-not-allowed" />
+                          {isNewVenta && (
+                            <span className="text-[9px] text-amber-500 font-bold uppercase tracking-widest block mt-1">
+                              Nº provisorio — se confirma al guardar
+                            </span>
+                          )}
                        </div>
                        <div className="space-y-2">
                           <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Punto de Venta *</label>
@@ -20603,6 +21443,7 @@ export default function App() {
                 productos={productos}
                 listasPrecios={listasPrecios}
                 puntosVenta={puntosVenta}
+                familias={familias}
               />
             )}
             {activeModule === 'VENTAS' && activeSubSection === 'Clientes' && (
