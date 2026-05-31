@@ -69,7 +69,8 @@ import {
   Home,
   Flame,
   ShoppingCart,
-  Truck
+  Truck,
+  RotateCcw
 } from 'lucide-react';
 import { 
   Chart as ChartJS, 
@@ -13365,9 +13366,13 @@ const VentasPedidosView = ({
   };
 
   const handleDelete = (venta: any) => {
-    confirmDialog(`¿Estás seguro de eliminar el pedido ${venta.comprobante}? Esta acción no se puede deshacer.`, () => {
-      setVentas(ventas.filter((v: any) => v.id !== venta.id));
-      showNotification(`Pedido ${venta.comprobante} eliminado.`, 'success');
+    confirmDialog(`¿Estás seguro de eliminar el pedido ${venta.comprobante}?`, () => {
+      setVentas((prev: any[]) => prev.map((v: any) => 
+        v.id === venta.id 
+          ? { ...v, estado: 'Eliminado', fechaEliminacion: new Date().toISOString(), eliminadoPor: currentUser.name }
+          : v
+      ));
+      showNotification(`Pedido ${venta.comprobante} marcado como eliminado.`, 'success');
     });
   };
 
@@ -13552,37 +13557,92 @@ const VentasPedidosView = ({
             return;
           }
 
-          // Si es venta nueva, generar comprobante definitivo ANTES de procesar stock
+          // Si es venta nueva, generar comprobante definitivo DENTRO del setVentas funcional
+          // para usar siempre el estado más actualizado
           let ventaFinal = { ...savedVenta };
-          if (isNewVenta) {
+
+          // Para ventas que NO son nuevas (ediciones), procesar normalmente
+          if (!isNewVenta) {
+            let finalMovimientos = [...movimientos];
+            if (shouldFinalize) {
+              const fracc = aplicarFEFOMostradorFraccionado({
+                items: ventaFinal.productos || [],
+                lotesEtiquetados,
+                lotesStock,
+                puntosVenta,
+                almacenes,
+                puntoVentaId: ventaFinal.puntoVentaId,
+                comprobante: ventaFinal.comprobante,
+                usuario: currentUser.name,
+              });
+              if (fracc.ok === false) {
+                showNotification(fracc.error, 'error');
+                return;
+              }
+              const ventaConFracc = { ...ventaFinal, productos: fracc.items };
+              const newMovs = generarMovimientosSalidaVenta(
+                ventaConFracc.productos,
+                ventaConFracc,
+                finalMovimientos,
+                productos,
+                currentUser.name,
+                fracc.lotesEtiquetados,
+                almacenesPV
+              );
+              const updatedLE = JSON.parse(JSON.stringify(fracc.lotesEtiquetados));
+              const movsFinal = fracc.movimientosExtra.length > 0 ? [...fracc.movimientosExtra, ...newMovs] : newMovs;
+              setMovimientos([...movsFinal, ...finalMovimientos]);
+              setLotesEtiquetados(
+                aplicarBajaEnvasesPorVenta(updatedLE, ventaConFracc.productos, {
+                  id: ventaFinal.id,
+                  comprobante: ventaFinal.comprobante,
+                })
+              );
+              showNotification(`Venta ${ventaFinal.comprobante} finalizada. Stock descontado.`, 'success');
+            } else {
+              setMovimientos(finalMovimientos);
+              showNotification(`Pedido ${ventaFinal.comprobante} guardado.`, 'info');
+            }
+            setVentas((prevVentas: any[]) =>
+              prevVentas.map((v: any) => (v.id === ventaFinal.id ? ventaFinal : v))
+            );
+            clearVentaEditState();
+            setView('list');
+            return;
+          }
+
+          // VENTA NUEVA: generar comprobante DENTRO de setVentas para garantizar unicidad
+          setVentas((prevVentas: any[]) => {
             const fechaVenta = savedVenta.fecha || safeFormat(new Date(), 'yyyy-MM-dd');
-            const comprobanteDefinitivo = generarComprobanteVenta(ventas, fechaVenta);
+            const comprobanteDefinitivo = generarComprobanteVenta(prevVentas, fechaVenta);
             ventaFinal = {
               ...savedVenta,
               id: comprobanteDefinitivo,
               comprobante: comprobanteDefinitivo,
+              estado: shouldFinalize ? 'Finalizado' : 'En Proceso',
             };
-          }
+            return [ventaFinal, ...prevVentas];
+          });
 
-          let finalMovimientos = [...movimientos];
-
+          // Procesar stock DESPUÉS de asignar el comprobante
           if (shouldFinalize) {
             const fracc = aplicarFEFOMostradorFraccionado({
-              items: ventaFinal.productos || [],
+              items: savedVenta.productos || [],
               lotesEtiquetados,
               lotesStock,
               puntosVenta,
               almacenes,
-              puntoVentaId: ventaFinal.puntoVentaId,
+              puntoVentaId: savedVenta.puntoVentaId,
               comprobante: ventaFinal.comprobante,
               usuario: currentUser.name,
             });
             if (fracc.ok === false) {
               showNotification(fracc.error, 'error');
+              setVentas((prev: any[]) => prev.filter((v: any) => v.id !== ventaFinal.id));
               return;
             }
             const ventaConFracc = { ...ventaFinal, productos: fracc.items };
-
+            let finalMovimientos = [...movimientos];
             const newMovs = generarMovimientosSalidaVenta(
               ventaConFracc.productos,
               ventaConFracc,
@@ -13593,7 +13653,6 @@ const VentasPedidosView = ({
               almacenesPV
             );
             const updatedLE = JSON.parse(JSON.stringify(fracc.lotesEtiquetados));
-
             const movsFinal = fracc.movimientosExtra.length > 0 ? [...fracc.movimientosExtra, ...newMovs] : newMovs;
             setMovimientos([...movsFinal, ...finalMovimientos]);
             setLotesEtiquetados(
@@ -13602,29 +13661,12 @@ const VentasPedidosView = ({
                 comprobante: ventaFinal.comprobante,
               })
             );
+            setVentas((prev: any[]) => prev.map((v: any) => 
+              v.id === ventaFinal.id ? { ...ventaConFracc, estado: 'Finalizado' } : v
+            ));
             showNotification(`Venta ${ventaFinal.comprobante} finalizada. Stock descontado.`, 'success');
           } else {
-            setMovimientos(finalMovimientos);
             showNotification(`Pedido ${ventaFinal.comprobante} guardado como borrador.`, 'info');
-          }
-
-          // Persistir la venta con comprobante definitivo
-          if (isNewVenta) {
-            setVentas((prevVentas: Venta[]) => {
-              if (prevVentas.some((v: any) => v.id === ventaFinal.id)) {
-                const nuevoComp = generarComprobanteVenta(prevVentas, ventaFinal.fecha);
-                ventaFinal = { ...ventaFinal, id: nuevoComp, comprobante: nuevoComp };
-                showNotification(
-                  `Numeración ajustada automáticamente a ${nuevoComp}.`,
-                  'warning'
-                );
-              }
-              return [ventaFinal, ...prevVentas];
-            });
-          } else {
-            setVentas((prevVentas: Venta[]) =>
-              prevVentas.map((v: any) => (v.id === ventaFinal.id ? ventaFinal : v))
-            );
           }
           clearVentaEditState();
           setView('list');
@@ -13717,6 +13759,7 @@ const VentasPedidosView = ({
                 <option value="En Proceso">En Proceso</option>
                 <option value="Finalizado">Finalizado</option>
                 <option value="Anulado">Anulado</option>
+                <option value="Eliminado">Eliminado</option>
              </select>
           </div>
         </div>
@@ -13779,7 +13822,12 @@ const VentasPedidosView = ({
                       $ {formatCurrency(venta.total)}
                     </td>
                     <td className="px-8 py-5 text-center">
-                      <Badge variant={venta.estado === 'Finalizado' ? 'success' : venta.estado === 'Anulado' ? 'danger' : 'info'}>
+                      <Badge variant={
+                        venta.estado === 'Finalizado' ? 'success' 
+                        : venta.estado === 'Anulado' ? 'danger' 
+                        : venta.estado === 'Eliminado' ? 'default'
+                        : 'info'
+                      }>
                         {venta.estado}
                       </Badge>
                     </td>
@@ -13814,6 +13862,20 @@ const VentasPedidosView = ({
                             <button onClick={() => handleAnnulClick(venta)} className="p-2 text-slate-400 hover:text-sleek-danger transition-all" title="Anular">
                                <XCircle className="w-4 h-4" />
                             </button>
+                         )}
+                         {venta.estado === 'Eliminado' && (
+                           <button 
+                             onClick={() => {
+                               setVentas((prev: any[]) => prev.map((v: any) => 
+                                 v.id === venta.id ? { ...v, estado: 'En Proceso', fechaEliminacion: undefined, eliminadoPor: undefined } : v
+                               ));
+                               showNotification(`Pedido ${venta.comprobante} restaurado.`, 'success');
+                             }} 
+                             className="p-2 text-slate-400 hover:text-emerald-600 transition-all" 
+                             title="Restaurar pedido"
+                           >
+                             <RotateCcw className="w-4 h-4" />
+                           </button>
                          )}
                        </div>
                     </td>
