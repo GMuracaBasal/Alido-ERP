@@ -2798,6 +2798,89 @@ const resolveProximoCodigoEnvaseUnico = (
   return { numero, codigoBarras };
 };
 
+/**
+ * Merge inteligente de lotesEtiquetados: combina datos locales y remotos
+ * sin perder envases de ninguno de los dos lados.
+ */
+const mergeLotesEtiquetados = (local: any[], remote: any[]): any[] => {
+  const localMap = new Map<string, any>();
+  (local || []).forEach((le) => {
+    if (le.loteId) localMap.set(le.loteId, le);
+  });
+
+  const remoteMap = new Map<string, any>();
+  (remote || []).forEach((le) => {
+    if (le.loteId) remoteMap.set(le.loteId, le);
+  });
+
+  const allLoteIds = new Set([...localMap.keys(), ...remoteMap.keys()]);
+  const merged: any[] = [];
+
+  allLoteIds.forEach((loteId) => {
+    const localLe = localMap.get(loteId);
+    const remoteLe = remoteMap.get(loteId);
+
+    if (!localLe && remoteLe) {
+      merged.push(remoteLe);
+      return;
+    }
+    if (localLe && !remoteLe) {
+      merged.push(localLe);
+      return;
+    }
+
+    const localEnvases = localLe.envases || [];
+    const remoteEnvases = remoteLe.envases || [];
+    const envMap = new Map<string, any>();
+
+    remoteEnvases.forEach((env: any) => {
+      const code = normalizeEtiquetaCodigo(env.codigoBarras || env.codigo || '');
+      if (code) envMap.set(code, env);
+    });
+
+    localEnvases.forEach((env: any) => {
+      const code = normalizeEtiquetaCodigo(env.codigoBarras || env.codigo || '');
+      if (!code) return;
+
+      const existing = envMap.get(code);
+      if (!existing) {
+        envMap.set(code, env);
+      } else {
+        const localTime = new Date(env.fechaBaja || env.fechaHora || '1970-01-01').getTime();
+        const remoteTime = new Date(existing.fechaBaja || existing.fechaHora || '1970-01-01').getTime();
+        if (localTime > remoteTime) {
+          envMap.set(code, env);
+        }
+      }
+    });
+
+    localEnvases.forEach((env: any) => {
+      const code = normalizeEtiquetaCodigo(env.codigoBarras || env.codigo || '');
+      if (!code) {
+        envMap.set(`no-code-${Math.random()}`, env);
+      }
+    });
+
+    const mergedEnvases = Array.from(envMap.values());
+    const pesoTotalEtiquetado = mergedEnvases
+      .filter(isEnvaseVigente)
+      .reduce((s: number, e: any) => s + (getEnvaseKgDisponibles(e) || 0), 0);
+
+    const baseLe = (new Date(remoteLe.fechaModificacion || remoteLe.fecha || '1970-01-01').getTime() >=
+                    new Date(localLe.fechaModificacion || localLe.fecha || '1970-01-01').getTime())
+      ? remoteLe
+      : localLe;
+
+    merged.push({
+      ...baseLe,
+      envases: mergedEnvases,
+      pesoTotalEtiquetado,
+    });
+  });
+
+  return merged;
+};
+
 /** Número de lote de un corte de despiece: {lotePadre}-{códigoProducto} */
 const getNumeroLoteCorteDespiece = (
   numeroLotePadre: string,
@@ -7843,12 +7926,30 @@ const EtiquetasView = ({
         esDespieceEtiquetado,
         corteKeyEtiquetado
       );
-      const { numero: envNumero, codigoBarras: envCodigo } = resolveProximoCodigoEnvaseUnico(
+      let { numero: envNumero, codigoBarras: envCodigo } = resolveProximoCodigoEnvaseUnico(
         selectedLote.numeroLote,
         envasesActuales,
         esDespieceEtiquetado,
         codigoProductoCorte
       );
+
+      // Verificación global: buscar en TODOS los envases del sistema
+      const todosLosCodigos = new Set<string>();
+      (prev || []).forEach((le: any) => {
+        (le.envases || []).forEach((e: any) => {
+          const c = normalizeEtiquetaCodigo(e.codigoBarras || e.codigo || '');
+          if (c) todosLosCodigos.add(c);
+        });
+      });
+
+      let guardGlobal = 0;
+      while (todosLosCodigos.has(normalizeEtiquetaCodigo(envCodigo)) && guardGlobal < 9999) {
+        guardGlobal += 1;
+        envNumero += 1;
+        envCodigo = esDespieceEtiquetado && codigoProductoCorte
+          ? `${selectedLote.numeroLote}-${codigoProductoCorte}-${String(envNumero).padStart(3, '0')}`
+          : `${selectedLote.numeroLote}-${String(envNumero).padStart(3, '0')}`;
+      }
 
       registeredEnvase = {
         numero: envNumero,
@@ -20912,6 +21013,14 @@ export default function App() {
                 );
                 return;
               }
+            }
+
+            // MERGE ESPECIAL para alido_lotes_etiquetados
+            if (key === 'alido_lotes_etiquetados' && Array.isArray(value)) {
+              setLotesEtiquetados((localData: any[]) => {
+                return mergeLotesEtiquetados(localData, value);
+              });
+              return;
             }
 
             setter(value);
