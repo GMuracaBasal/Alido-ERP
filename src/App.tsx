@@ -548,7 +548,8 @@ const generarMovimientosSalidaVenta = (
   productosList: any[],
   usuario: string,
   lotesEtiquetados: any[] = [],
-  almacenIdsPV: string[] = []
+  almacenIdsPV: string[] = [],
+  modoVenta: 'escaneo' | 'mostrador' = 'escaneo'
 ): any[] => {
   const newMovs: any[] = [];
   items.forEach((item: any) => {
@@ -587,6 +588,12 @@ const generarMovimientosSalidaVenta = (
         referencia: savedVenta.comprobante,
         observaciones: `Envase: ${item.codigoBarras}`,
       });
+      return;
+    }
+
+    // Si el PV es de tipo 'escaneo' y el item es manual (sin código de barras),
+    // NO generar movimiento de stock.
+    if (modoVenta === 'escaneo' && !item.codigoBarras) {
       return;
     }
 
@@ -651,27 +658,7 @@ const generarMovimientosSalidaVenta = (
       pending -= toTake;
     });
     if (pending > 0) {
-      const defaultAlmacen =
-        batches.length > 0 ? batches[0].almacenId : (almacenIdsPV.length > 0 ? almacenIdsPV[0] : 'a1');
-      newMovs.push({
-        id: `MOV-${Date.now()}-neg-${pending}`,
-        tipo: 'salida',
-        productoId: item.productoId,
-        almacenId: defaultAlmacen,
-        cantidad: pending,
-        unidad: item.unidad,
-        cantidadKg: isKg ? pending : pending * (prod?.pesoNetoUnidad || 0),
-        motivo: `Venta ${savedVenta.comprobante}`,
-        loteNumero: 'STK-NEGATIVO',
-        fechaIngreso: safeFormat(new Date(), 'yyyy-MM-dd'),
-        fechaVencimiento: '',
-        origen: 'manual',
-        usuario,
-        fechaHora: new Date().toISOString(),
-        anulado: false,
-        referencia: savedVenta.comprobante,
-        observaciones: 'Stock insuficiente (Salida forzada)',
-      });
+      console.warn(`⚠️ Stock insuficiente para ${item.productoId}: faltan ${pending} ${item.unidad}. No se genera movimiento negativo.`);
     }
   });
   return newMovs;
@@ -711,10 +698,17 @@ const aplicarFEFOMostradorFraccionado = (args: {
   puntoVentaId: string;
   comprobante: string;
   usuario: string;
+  modoVenta?: 'escaneo' | 'mostrador';
 }): { ok: true; lotesEtiquetados: any[]; items: VentaProducto[]; movimientosExtra: any[] } | { ok: false; error: string } => {
-  const { items, lotesEtiquetados, lotesStock = [], puntosVenta, almacenes, puntoVentaId, comprobante, usuario } = args;
+  const { items, lotesEtiquetados, lotesStock = [], puntosVenta, almacenes, puntoVentaId, comprobante, usuario, modoVenta } = args;
   const pvSeleccionado = (puntosVenta || []).find((pv: any) => pv.id === puntoVentaId);
   const almacenesPV: string[] = (pvSeleccionado?.almacenIds || []) as string[];
+  const modo = modoVenta || pvSeleccionado?.modoVenta || 'escaneo';
+
+  // Si el PV es de tipo 'escaneo', NO aplicar FEFO fraccionado en items manuales
+  if (modo === 'escaneo') {
+    return { ok: true, lotesEtiquetados: JSON.parse(JSON.stringify(lotesEtiquetados || [])), items: JSON.parse(JSON.stringify(items || [])), movimientosExtra: [] };
+  }
 
   // Si el PV no tiene almacenes configurados, no aplicar FEFO fraccionado
   if (almacenesPV.length === 0) {
@@ -1709,6 +1703,7 @@ interface PuntoVenta {
   responsableId: string;
   estado: 'Activo' | 'Inactiva';
   almacenIds?: string[]; // IDs de los almacenes asociados a este PV
+  modoVenta?: 'escaneo' | 'mostrador'; // 'escaneo' = Planta (items manuales no descuentan stock), 'mostrador' = FEFO fraccionado en items manuales
 }
 
 interface VentaProducto {
@@ -1724,6 +1719,7 @@ interface VentaProducto {
   // Venta de mostrador fraccionada (FEFO por envases etiquetados)
   descuentoEnvases?: { envaseId: string; loteId: string; kgDescontados: number }[];
   origenVenta?: 'manual_mostrador';
+  pendienteDescuento?: boolean; // true si el item fue manual en PV escaneo y no se descontó stock
 }
 
 interface Cobro {
@@ -2022,7 +2018,8 @@ const INITIAL_RECETAS: Receta[] = [
 const INITIAL_RECETAS_HISTORIAL: RecetaHistorial[] = [];
 
 const INITIAL_PUNTOS_VENTA: PuntoVenta[] = [
-  { id: 'pv1', nombre: 'Planta Alido', direccion: 'Calle Falsa 123', responsableId: '1', estado: 'Activo' }
+  { id: 'pv1', nombre: 'Planta Alido', direccion: 'Calle Falsa 123', responsableId: '1', estado: 'Activo', modoVenta: 'escaneo' },
+  { id: 'pv2', nombre: 'Mostrador', direccion: 'Planta Alido', responsableId: '1', estado: 'Activo', modoVenta: 'mostrador' },
 ];
 
 const INITIAL_LISTAS_PRECIOS: ListaPrecio[] = [
@@ -13531,6 +13528,17 @@ const VentasPedidosView = ({
           const originalProducts = editingOriginalProductsRef.current;
           const pvSeleccionado = puntosVenta.find((pv: any) => pv.id === savedVenta.puntoVentaId);
           const almacenesPV: string[] = pvSeleccionado?.almacenIds || [];
+          const modoVentaPV: 'escaneo' | 'mostrador' =
+            pvSeleccionado?.modoVenta ||
+            (pvSeleccionado?.nombre?.toLowerCase().includes('mostrador') ? 'mostrador' : 'escaneo');
+
+          // Marcar items manuales como pendientes de descuento si el PV es de tipo escaneo
+          if (modoVentaPV === 'escaneo') {
+            savedVenta.productos = (savedVenta.productos || []).map((p: any) => ({
+              ...p,
+              pendienteDescuento: !p.codigoBarras ? true : false,
+            }));
+          }
 
           // --- Edición inteligente de venta finalizada (DIFF) ---
           if (isEditingVenta && originalProducts && shouldFinalize && oldVenta?.estado === 'Finalizado') {
@@ -13588,6 +13596,7 @@ const VentasPedidosView = ({
               puntoVentaId: savedVenta.puntoVentaId,
               comprobante: savedVenta.comprobante,
               usuario: currentUser.name,
+              modoVenta: modoVentaPV,
             });
             if (fracc.ok === false) {
               showNotification(fracc.error, 'error');
@@ -13602,7 +13611,8 @@ const VentasPedidosView = ({
               productos,
               currentUser.name,
               updatedLE,
-              almacenesPV
+              almacenesPV,
+              modoVentaPV
             );
             finalMovimientos = [...salidasNuevas, ...entradasDevolucion, ...finalMovimientos];
             if (fracc.movimientosExtra.length > 0) {
@@ -13675,6 +13685,7 @@ const VentasPedidosView = ({
                 puntoVentaId: ventaFinal.puntoVentaId,
                 comprobante: ventaFinal.comprobante,
                 usuario: currentUser.name,
+                modoVenta: modoVentaPV,
               });
               if (fracc.ok === false) {
                 showNotification(fracc.error, 'error');
@@ -13688,7 +13699,8 @@ const VentasPedidosView = ({
                 productos,
                 currentUser.name,
                 fracc.lotesEtiquetados,
-                almacenesPV
+                almacenesPV,
+                modoVentaPV
               );
               const updatedLE = JSON.parse(JSON.stringify(fracc.lotesEtiquetados));
               const movsFinal = fracc.movimientosExtra.length > 0 ? [...fracc.movimientosExtra, ...newMovs] : newMovs;
@@ -13736,6 +13748,7 @@ const VentasPedidosView = ({
               puntoVentaId: savedVenta.puntoVentaId,
               comprobante: ventaFinal.comprobante,
               usuario: currentUser.name,
+              modoVenta: modoVentaPV,
             });
             if (fracc.ok === false) {
               showNotification(fracc.error, 'error');
@@ -13751,7 +13764,8 @@ const VentasPedidosView = ({
               productos,
               currentUser.name,
               fracc.lotesEtiquetados,
-              almacenesPV
+              almacenesPV,
+              modoVentaPV
             );
             const updatedLE = JSON.parse(JSON.stringify(fracc.lotesEtiquetados));
             const movsFinal = fracc.movimientosExtra.length > 0 ? [...fracc.movimientosExtra, ...newMovs] : newMovs;
@@ -13918,6 +13932,11 @@ const VentasPedidosView = ({
                     </td>
                     <td className="px-8 py-5 text-center">
                       <Badge variant="default">{venta.productos.length} productos</Badge>
+                      {venta.productos?.some((p: any) => p.pendienteDescuento) && (
+                        <span className="bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full text-[8px] font-bold uppercase tracking-widest ml-2">
+                          Pendiente stock
+                        </span>
+                      )}
                     </td>
                     <td className="px-8 py-5 text-right font-black text-sleek-dark text-[11px]">
                       $ {formatCurrency(venta.total)}
@@ -19474,6 +19493,7 @@ const PuntosVentaView = ({ puntosVenta, setPuntosVenta, users, almacenes, showNo
       responsableId: users[0]?.id || '',
       estado: 'Activo',
       almacenIds: [],
+      modoVenta: 'escaneo',
     });
     setIsModalOpen(true);
   };
@@ -19642,6 +19662,20 @@ const PuntosVentaView = ({ puntosVenta, setPuntosVenta, users, almacenes, showNo
                   <option value="Inactiva">Inactiva</option>
                 </select>
               </div>
+            </div>
+
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">
+                Modo de Venta
+              </label>
+              <select
+                value={editingPV.modoVenta || 'escaneo'}
+                onChange={(e) => setEditingPV({ ...editingPV, modoVenta: e.target.value as 'escaneo' | 'mostrador' })}
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg outline-none text-sm"
+              >
+                <option value="escaneo">Escaneo (items manuales no descuentan stock)</option>
+                <option value="mostrador">Mostrador (FEFO fraccionado en items manuales)</option>
+              </select>
             </div>
 
             <div className="space-y-2">
@@ -20702,7 +20736,12 @@ export default function App() {
       setDescuentosPendientes(d.alido_descuentos_pendientes);
       setClientes(d.alido_clientes);
       setListasPrecios(d.alido_listas_precios);
-      setPuntosVenta(d.alido_puntos_venta);
+      setPuntosVenta(
+        (d.alido_puntos_venta || []).map((pv: any) => ({
+          ...pv,
+          modoVenta: pv.modoVenta || (pv.nombre?.toLowerCase().includes('mostrador') ? 'mostrador' : 'escaneo'),
+        }))
+      );
       setVentas(d.alido_ventas);
       setCobrosClientes(d.alido_cobros_clientes);
       setPlanCuentas(d.alido_plan_cuentas);
