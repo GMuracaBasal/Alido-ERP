@@ -6277,7 +6277,7 @@ const LotesProduccionView = ({
                         const isBaja = isEnvaseEnBaja(env);
                         const enStock = isEnvaseVigente(env);
                         return (
-                          <tr key={eidx} className={cn("transition-colors", isBaja ? "opacity-50 bg-slate-50" : "hover:bg-slate-50/50")}>
+                          <tr key={eidx} className="transition-colors hover:bg-slate-50/50">
                             <td className="px-6 py-3 font-bold text-slate-400">#{env.numero}</td>
                             <td className="px-6 py-3 font-mono font-bold text-sleek-dark lowercase">{env.codigoBarras}</td>
                             <td className="px-6 py-3 font-black text-sleek-dark">{displayNum(env.pesoNeto)} kg</td>
@@ -13916,10 +13916,7 @@ const VentasPedidosView = ({
                 const sucursal = cliente?.sucursales.find((s: any) => s.id === venta.sucursalId);
                 
                 return (
-                  <tr key={venta.id} className={cn(
-                    "hover:bg-slate-50/50 transition-all group",
-                    venta.estado === 'Anulado' && "opacity-40 grayscale-[0.5]"
-                  )}>
+                  <tr key={venta.id} className="hover:bg-slate-50/50 transition-all group">
                     <td className="px-8 py-5">
                       <p className="text-[11px] font-bold text-slate-500">{safeFormat(venta.fecha, 'dd/MM/yyyy')}</p>
                     </td>
