@@ -314,6 +314,26 @@ export async function crearMovimientoCobro(mov: {
   return mapMovimiento(data);
 }
 
+export async function anularMovimientosCobroDeVenta(ventaId: string): Promise<boolean> {
+  const { error } = await supabase
+    .from('tesoreria_movimientos')
+    .update({
+      anulado: true,
+      anulado_motivo: 'Regenerado por edición de venta',
+      anulado_at: nowIso(),
+      updated_by: SESSION_ID,
+      updated_at: nowIso(),
+    })
+    .eq('origen_tipo', 'cobro')
+    .eq('origen_id', ventaId)
+    .eq('anulado', false);
+  if (error) {
+    console.error('anularMovimientosCobroDeVenta:', error);
+    return false;
+  }
+  return true;
+}
+
 export async function anularMovimiento(id: string, motivo: string): Promise<boolean> {
   const { error } = await supabase
     .from('tesoreria_movimientos')

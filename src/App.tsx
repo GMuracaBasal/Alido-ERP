@@ -13,6 +13,7 @@ import {
   saveMedioPago,
   crearMovimientoManual,
   crearMovimientoCobro,
+  anularMovimientosCobroDeVenta,
   anularMovimiento,
   crearTransferencia,
   anularTransferencia,
@@ -13631,6 +13632,26 @@ const VentasPedidosView = ({
     showNotification(`Venta ${venta.comprobante} anulada. Stock revertido.`, 'success');
   };
 
+  const sincronizarCobrosTesoreria = async (ventaFin: any, esEdicion: boolean) => {
+    if (esEdicion) {
+      await anularMovimientosCobroDeVenta(ventaFin.id);
+    }
+    for (const cobro of ventaFin.cobros || []) {
+      if (!cobro.cuentaTesoreriaId || cobro.monto <= 0) continue;
+      const cliente = clientes.find((c: any) => c.id === ventaFin.clienteId);
+      const clienteNombre = cliente?.razonSocial || 'Consumidor Final';
+      await crearMovimientoCobro({
+        cuentaId: cobro.cuentaTesoreriaId,
+        fecha: cobro.fecha || ventaFin.fecha,
+        debe: cobro.monto,
+        detalle: `Cobro venta ${ventaFin.comprobante} (${cobro.metodo})`,
+        contraparte: clienteNombre,
+        origenId: ventaFin.id,
+        origenReferencia: ventaFin.comprobante,
+      });
+    }
+  };
+
   if (view === 'form') {
     return (
       <VentaForm 
@@ -13766,6 +13787,7 @@ const VentasPedidosView = ({
             setMovimientos(finalMovimientos);
             setLotesEtiquetados(updatedLE);
             setVentas(ventas.map((v: any) => (v.id === ventaEditada.id ? ventaEditada : v)));
+            sincronizarCobrosTesoreria(ventaEditada, true);
             clearVentaEditState();
             setView('list');
             showNotification(`Venta ${ventaEditada.comprobante} actualizada.`, 'success');
@@ -13896,22 +13918,7 @@ const VentasPedidosView = ({
             ));
             showNotification(`Venta ${ventaFinal.comprobante} finalizada. Stock descontado.`, 'success');
 
-            (async () => {
-              for (const cobro of ventaConFracc.cobros || []) {
-                if (!cobro.cuentaTesoreriaId || cobro.monto <= 0) continue;
-                const cliente = clientes.find((c: any) => c.id === ventaFinal.clienteId);
-                const clienteNombre = cliente?.razonSocial || 'Consumidor Final';
-                await crearMovimientoCobro({
-                  cuentaId: cobro.cuentaTesoreriaId,
-                  fecha: cobro.fecha || ventaFinal.fecha,
-                  debe: cobro.monto,
-                  detalle: `Cobro venta ${ventaFinal.comprobante} (${cobro.metodo})`,
-                  contraparte: clienteNombre,
-                  origenId: ventaFinal.id,
-                  origenReferencia: ventaFinal.comprobante,
-                });
-              }
-            })();
+            sincronizarCobrosTesoreria(ventaConFracc, false);
           } else {
             showNotification(`Pedido ${ventaFinal.comprobante} guardado como borrador.`, 'info');
           }
@@ -14218,6 +14225,7 @@ const VentaForm = ({
   const [showSearch, setShowSearch] = useState(false);
   const barcodeInputRef = useRef<HTMLInputElement>(null);
   const [isCobroModalOpen, setIsCobroModalOpen] = useState(false);
+  const [editingCobroIdx, setEditingCobroIdx] = useState<number | null>(null);
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   
@@ -14497,24 +14505,38 @@ const VentaForm = ({
     updateTotals(news);
   };
 
+  const handleEditCobro = (idx: number) => {
+    setNewCobro({ ...form.cobros[idx] });
+    setEditingCobroIdx(idx);
+    setIsCobroModalOpen(true);
+  };
+
+  const resetCobroModal = () => {
+    setIsCobroModalOpen(false);
+    setEditingCobroIdx(null);
+    setNewCobro({ monto: 0, metodo: 'Efectivo', fecha: safeFormat(new Date(), 'yyyy-MM-dd'), observaciones: '', cuentaTesoreriaId: '' });
+  };
+
   const handleAddCobro = () => {
     if (newCobro.monto <= 0) return;
     if (!newCobro.cuentaTesoreriaId) {
       showNotification('Elegí la cuenta de tesorería del cobro', 'error');
       return;
     }
-    const totalCob = safeRound(form.totalCobrado + newCobro.monto, 2);
+    const cobros = editingCobroIdx !== null
+      ? form.cobros.map((c: any, i: number) => (i === editingCobroIdx ? newCobro : c))
+      : [...form.cobros, newCobro];
+    const totalCob = safeRound(cobros.reduce((sum: number, c: any) => sum + c.monto, 0), 2);
     const pending = safeRound(Math.max(0, form.total - totalCob), 2);
     const updatedForm = {
       ...form,
-      cobros: [...form.cobros, newCobro],
+      cobros,
       totalCobrado: totalCob,
       saldoPendiente: pending,
       estadoCobro: totalCob === 0 ? 'Pendiente' : (pending <= 0 ? 'Cobrado' : 'Parcial')
     };
     setForm(updatedForm);
-    setIsCobroModalOpen(false);
-    setNewCobro({ monto: 0, metodo: 'Efectivo', fecha: safeFormat(new Date(), 'yyyy-MM-dd'), observaciones: '', cuentaTesoreriaId: '' });
+    resetCobroModal();
   };
 
   const removeCobro = (idx: number) => {
@@ -14911,21 +14933,28 @@ const VentaForm = ({
                     <div className="space-y-4 pt-6 border-t border-white/10">
                         <div className="flex justify-between items-center">
                            <h3 className="text-[10px] font-black uppercase tracking-[.2em] text-white/40">💰 Registro de Cobros</h3>
-                           <button onClick={() => setIsCobroModalOpen(true)} className="p-2 hover:bg-white/10 rounded transition-all"><Plus className="w-4 h-4 text-sleek-accent" /></button>
+                           <button onClick={() => { setNewCobro({ monto: 0, metodo: 'Efectivo', fecha: safeFormat(new Date(), 'yyyy-MM-dd'), observaciones: '', cuentaTesoreriaId: '' }); setEditingCobroIdx(null); setIsCobroModalOpen(true); }} className="p-2 hover:bg-white/10 rounded transition-all"><Plus className="w-4 h-4 text-sleek-accent" /></button>
                         </div>
                         <div className="space-y-2">
-                           {form.cobros.map((cob: any, idx: number) => (
+                           {form.cobros.map((cob: any, idx: number) => {
+                             const cuentaCobro = tesoreriaCuentas.find((c: CuentaTesoreria) => c.id === cob.cuentaTesoreriaId);
+                             return (
                              <div key={idx} className="flex justify-between items-center p-3 bg-white/5 rounded-lg group">
                                 <div>
                                    <p className="text-[10px] font-black uppercase tracking-widest">{cob.metodo}</p>
                                    <p className="text-[8px] font-bold text-white/30 italic">{safeFormat(cob.fecha, 'dd/MM/yyyy')}</p>
+                                   <p className="text-[8px] font-bold text-sleek-accent/70 uppercase tracking-widest">
+                                     {cuentaCobro ? cuentaCobro.nombre : 'Sin cuenta'}
+                                   </p>
                                 </div>
                                 <div className="flex items-center gap-3">
                                    <span className="text-xs font-black">$ {formatCurrency(cob.monto)}</span>
+                                   <button onClick={() => handleEditCobro(idx)} className="text-white/20 hover:text-sleek-accent p-1"><Edit2 className="w-3 h-3" /></button>
                                    <button onClick={() => removeCobro(idx)} className="text-white/20 hover:text-rose-500 p-1"><X className="w-3 h-3" /></button>
                                 </div>
                              </div>
-                           ))}
+                             );
+                           })}
                            {form.cobros.length === 0 && (
                              <p className="text-[10px] text-center py-4 text-white/20 font-bold uppercase italic border border-white/5 rounded-lg border-dashed">Sin pagos registrados</p>
                            )}
@@ -15007,7 +15036,7 @@ const VentaForm = ({
         {isCobroModalOpen && (
           <div className="fixed inset-0 z-[60] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
              <div className="bg-white rounded-3xl p-8 w-full max-w-md animate-in zoom-in-95 shadow-2xl">
-                <h3 className="text-sm font-black uppercase tracking-[0.2em] mb-8 text-sleek-dark">Registrar Ingreso</h3>
+                <h3 className="text-sm font-black uppercase tracking-[0.2em] mb-8 text-sleek-dark">{editingCobroIdx !== null ? 'Editar cobro' : 'Registrar Ingreso'}</h3>
                 <div className="space-y-6 mb-8">
                    <div className="space-y-1">
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Monto ($)</label>
@@ -15044,7 +15073,7 @@ const VentaForm = ({
                    </div>
                 </div>
                 <div className="flex gap-4">
-                  <button onClick={() => setIsCobroModalOpen(false)} className="flex-1 py-4 font-black uppercase text-[10px] tracking-widest text-slate-400">Cancelar</button>
+                  <button onClick={resetCobroModal} className="flex-1 py-4 font-black uppercase text-[10px] tracking-widest text-slate-400">Cancelar</button>
                   <button onClick={handleAddCobro} className="flex-2 py-4 bg-sleek-dark text-white font-black rounded-2xl uppercase text-[10px] tracking-widest shadow-xl">Aceptar</button>
                 </div>
              </div>
