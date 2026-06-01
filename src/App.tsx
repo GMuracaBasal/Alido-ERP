@@ -2583,11 +2583,60 @@ function displayNum(valor: any, decimales: number = 3) {
   return formatNumber(num, decimales);
 }
 
+const modalDismissStack: Array<() => void> = [];
+let modalEscListenerActive = false;
+
+const handleModalEscape = (e: KeyboardEvent) => {
+  if (e.key !== 'Escape') return;
+  const topDismiss = modalDismissStack[modalDismissStack.length - 1];
+  if (topDismiss) {
+    e.preventDefault();
+    topDismiss();
+  }
+};
+
+const ensureModalEscListener = () => {
+  if (modalEscListenerActive) return;
+  modalEscListenerActive = true;
+  document.addEventListener('keydown', handleModalEscape);
+};
+
+const removeModalEscListenerIfEmpty = () => {
+  if (modalDismissStack.length === 0 && modalEscListenerActive) {
+    document.removeEventListener('keydown', handleModalEscape);
+    modalEscListenerActive = false;
+  }
+};
+
+function useModalDismiss(onClose: () => void, isOpen: boolean) {
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const dismiss = () => onCloseRef.current();
+    modalDismissStack.push(dismiss);
+    ensureModalEscListener();
+    return () => {
+      const idx = modalDismissStack.lastIndexOf(dismiss);
+      if (idx !== -1) modalDismissStack.splice(idx, 1);
+      removeModalEscListenerIfEmpty();
+    };
+  }, [isOpen]);
+}
+
 const Modal = ({ isOpen, onClose, title, children, className }: { isOpen: boolean, onClose: () => void, title: string, children: React.ReactNode, className?: string }) => {
+  useModalDismiss(onClose, isOpen);
   if (!isOpen) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-sleek-dark/60 backdrop-blur-sm p-4">
-      <div className={cn("bg-white rounded shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col border-t-8 border-sleek-accent", className)}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-sleek-dark/60 backdrop-blur-sm p-4"
+      onClick={onClose}
+    >
+      <div
+        className={cn("bg-white rounded shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col border-t-8 border-sleek-accent", className)}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className={cn("px-8 py-6 border-b border-slate-100 flex justify-between items-center bg-white", className?.includes('modal-egreso') && 'modal-egreso-header')}>
           <h3 className="text-sm font-bold text-sleek-dark uppercase tracking-widest">{title}</h3>
           <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded transition-all text-slate-400 hover:text-sleek-dark">
@@ -13508,6 +13557,9 @@ const VentasPedidosView = ({
   const [ventaToAnnul, setVentaToAnnul] = useState<any>(null);
   const [isRemitoOpen, setIsRemitoOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useModalDismiss(() => setIsRemitoOpen(false), isRemitoOpen && !!selectedVenta);
+  useModalDismiss(() => setIsAnnulModalOpen(false), isAnnulModalOpen && !!ventaToAnnul);
   
   // List Filters — por defecto: comprobantes del día actual
   const [dateRange, setDateRange] = useState(() => ({ from: todayIso(), to: todayIso() }));
@@ -14154,8 +14206,14 @@ const VentasPedidosView = ({
 
       {/* Modal de Remito / Comprobante */}
       {isRemitoOpen && selectedVenta && (
-        <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl w-full max-w-[95%] h-[95%] flex flex-col overflow-hidden animate-in zoom-in-95 shadow-2xl relative">
+        <div
+          className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-md flex items-center justify-center p-4"
+          onClick={() => setIsRemitoOpen(false)}
+        >
+          <div
+            className="bg-white rounded-3xl w-full max-w-[95%] h-[95%] flex flex-col overflow-hidden animate-in zoom-in-95 shadow-2xl relative"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="h-14 bg-sleek-dark flex items-center justify-between px-6 shrink-0">
               <div className="flex items-center gap-4">
                 <Printer className="w-4 h-4 text-sleek-accent" />
@@ -14182,8 +14240,14 @@ const VentasPedidosView = ({
 
       {/* Modal de Anulación */}
       {isAnnulModalOpen && ventaToAnnul && (
-        <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-           <div className="bg-white rounded-3xl p-8 w-full max-w-md animate-in zoom-in-95 shadow-2xl">
+        <div
+          className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setIsAnnulModalOpen(false)}
+        >
+           <div
+             className="bg-white rounded-3xl p-8 w-full max-w-md animate-in zoom-in-95 shadow-2xl"
+             onClick={(e) => e.stopPropagation()}
+           >
               <div className="w-16 h-16 bg-rose-100 rounded-full flex items-center justify-center mb-6 mx-auto">
                  <XCircle className="w-8 h-8 text-rose-500" />
               </div>
@@ -14564,6 +14628,11 @@ const VentaForm = ({
     }
     onClose();
   };
+
+  useModalDismiss(handleClose, true);
+  useModalDismiss(() => setIsConfirmModalOpen(false), isConfirmModalOpen);
+  useModalDismiss(resetCobroModal, isCobroModalOpen);
+  useModalDismiss(() => { setIsReturnModalOpen(false); setReturnItemIdx(null); }, isReturnModalOpen && returnItemIdx !== null);
 
   const handleFinalizeClick = () => {
     if (!form.clienteId) {
@@ -15008,8 +15077,14 @@ const VentaForm = ({
 
         {/* Global Confirmation Modal */}
         {isConfirmModalOpen && (
-          <div className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-             <div className="bg-white rounded-3xl p-8 w-full max-w-md animate-in zoom-in-95 shadow-2xl text-center">
+          <div
+            className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+            onClick={() => setIsConfirmModalOpen(false)}
+          >
+             <div
+               className="bg-white rounded-3xl p-8 w-full max-w-md animate-in zoom-in-95 shadow-2xl text-center"
+               onClick={(e) => e.stopPropagation()}
+             >
                 <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mb-6 mx-auto">
                    <AlertCircle className="w-8 h-8 text-amber-500" />
                 </div>
@@ -15034,8 +15109,14 @@ const VentaForm = ({
         )}
 
         {isCobroModalOpen && (
-          <div className="fixed inset-0 z-[60] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-             <div className="bg-white rounded-3xl p-8 w-full max-w-md animate-in zoom-in-95 shadow-2xl">
+          <div
+            className="fixed inset-0 z-[60] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4"
+            onClick={resetCobroModal}
+          >
+             <div
+               className="bg-white rounded-3xl p-8 w-full max-w-md animate-in zoom-in-95 shadow-2xl"
+               onClick={(e) => e.stopPropagation()}
+             >
                 <h3 className="text-sm font-black uppercase tracking-[0.2em] mb-8 text-sleek-dark">{editingCobroIdx !== null ? 'Editar cobro' : 'Registrar Ingreso'}</h3>
                 <div className="space-y-6 mb-8">
                    <div className="space-y-1">
@@ -15081,8 +15162,14 @@ const VentaForm = ({
         )}
         
         {isReturnModalOpen && returnItemIdx !== null && (
-          <div className="fixed inset-0 z-[110] bg-black/70 backdrop-blur-md flex items-center justify-center p-4">
-             <div className="bg-white rounded-[2.5rem] p-10 w-full max-w-lg shadow-2xl animate-in zoom-in-95 duration-300">
+          <div
+            className="fixed inset-0 z-[110] bg-black/70 backdrop-blur-md flex items-center justify-center p-4"
+            onClick={() => { setIsReturnModalOpen(false); setReturnItemIdx(null); }}
+          >
+             <div
+               className="bg-white rounded-[2.5rem] p-10 w-full max-w-lg shadow-2xl animate-in zoom-in-95 duration-300"
+               onClick={(e) => e.stopPropagation()}
+             >
                 <div className="w-20 h-20 bg-amber-50 rounded-full flex items-center justify-center mb-8 mx-auto">
                    <Package className="w-10 h-10 text-amber-500" />
                 </div>
@@ -21502,6 +21589,8 @@ const TesoreriaView = ({
 export default function App() {
   const [confirmModal, setConfirmModal] = useState<{msg: string, onConfirm: () => void} | null>(null);
 
+  useModalDismiss(() => setConfirmModal(null), !!confirmModal);
+
   useEffect(() => {
     globalConfirmAction = (msg, onConfirm) => {
       setConfirmModal({ msg, onConfirm });
@@ -22819,8 +22908,14 @@ export default function App() {
       </Modal>
 
       {confirmModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl animate-in zoom-in-95 duration-200">
+        <div
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4"
+          onClick={() => setConfirmModal(null)}
+        >
+          <div
+            className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl animate-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
             <h3 className="text-sleek-dark font-black text-lg mb-2">Confirmación</h3>
             <p className="text-slate-600 font-medium text-sm mb-6">{confirmModal.msg}</p>
             <div className="flex gap-2 justify-end">
