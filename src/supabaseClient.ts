@@ -283,6 +283,37 @@ export async function crearMovimientoManual(mov: {
   return mapMovimiento(data);
 }
 
+export async function crearMovimientoCobro(mov: {
+  cuentaId: string;
+  fecha: string;
+  debe: number;
+  detalle?: string;
+  contraparte?: string;
+  origenId: string;
+  origenReferencia: string;
+}): Promise<MovimientoTesoreriaRow | null> {
+  const row = {
+    cuenta_id: mov.cuentaId,
+    fecha: mov.fecha,
+    origen_tipo: 'cobro',
+    origen_id: mov.origenId,
+    origen_referencia: mov.origenReferencia,
+    detalle: mov.detalle || null,
+    contraparte: mov.contraparte || null,
+    debe: mov.debe,
+    haber: 0,
+    es_manual: false,
+    updated_by: SESSION_ID,
+    updated_at: nowIso(),
+  };
+  const { data, error } = await supabase.from('tesoreria_movimientos').insert(row).select().single();
+  if (error) {
+    console.error('crearMovimientoCobro:', error);
+    return null;
+  }
+  return mapMovimiento(data);
+}
+
 export async function anularMovimiento(id: string, motivo: string): Promise<boolean> {
   const { error } = await supabase
     .from('tesoreria_movimientos')
