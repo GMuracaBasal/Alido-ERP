@@ -12,6 +12,7 @@ import {
   saveCuenta,
   saveMedioPago,
   crearMovimientoManual,
+  crearMovimientoCobro,
   anularMovimiento,
   crearTransferencia,
   anularTransferencia,
@@ -1742,6 +1743,7 @@ interface Cobro {
   metodo: 'Efectivo' | 'Transferencia' | 'Cheque' | 'Otro';
   fecha: string;
   observaciones?: string;
+  cuentaTesoreriaId: string;
 }
 
 interface Venta {
@@ -2241,7 +2243,7 @@ const INITIAL_VENTAS: Venta[] = [
       { productoId: 'pt2', codigoBarras: null, cantidad: 10, unidad: 'un', precioUnitario: 9500, descuento: 21.05, subtotal: 75000 }
     ],
     cobros: [
-      { monto: 50000, metodo: 'Transferencia', fecha: '2024-04-18', observaciones: 'Pago inicial' }
+      { monto: 50000, metodo: 'Transferencia', fecha: '2024-04-18', observaciones: 'Pago inicial', cuentaTesoreriaId: '' }
     ],
     usuario: 'GuidoM',
     fechaCreacion: '2024-04-18T10:00:00Z'
@@ -13493,7 +13495,7 @@ const VentasDashboardView = ({
 const VentasPedidosView = ({ 
   ventas, setVentas, clientes, listasPrecios, puntosVenta, productos, 
   lotesStock, movimientos, setMovimientos, lotesEtiquetados, setLotesEtiquetados,
-  unidades, almacenes, currentUser, showNotification 
+  unidades, almacenes, currentUser, showNotification, tesoreriaCuentas,
 }: any) => {
   const [view, setView] = useState<'list' | 'form' | 'print'>('list');
   const [selectedVenta, setSelectedVenta] = useState<any>(null);
@@ -13893,6 +13895,23 @@ const VentasPedidosView = ({
               v.id === ventaFinal.id ? { ...ventaConFracc, estado: 'Finalizado' } : v
             ));
             showNotification(`Venta ${ventaFinal.comprobante} finalizada. Stock descontado.`, 'success');
+
+            (async () => {
+              for (const cobro of ventaConFracc.cobros || []) {
+                if (!cobro.cuentaTesoreriaId || cobro.monto <= 0) continue;
+                const cliente = clientes.find((c: any) => c.id === ventaFinal.clienteId);
+                const clienteNombre = cliente?.razonSocial || 'Consumidor Final';
+                await crearMovimientoCobro({
+                  cuentaId: cobro.cuentaTesoreriaId,
+                  fecha: cobro.fecha || ventaFinal.fecha,
+                  debe: cobro.monto,
+                  detalle: `Cobro venta ${ventaFinal.comprobante} (${cobro.metodo})`,
+                  contraparte: clienteNombre,
+                  origenId: ventaFinal.id,
+                  origenReferencia: ventaFinal.comprobante,
+                });
+              }
+            })();
           } else {
             showNotification(`Pedido ${ventaFinal.comprobante} guardado como borrador.`, 'info');
           }
@@ -13910,6 +13929,7 @@ const VentasPedidosView = ({
         setMovimientos={setMovimientos}
         ventas={ventas}
         showNotification={showNotification}
+        tesoreriaCuentas={tesoreriaCuentas}
       />
     );
   }
@@ -14191,7 +14211,7 @@ const VentasPedidosView = ({
 const VentaForm = ({ 
   venta, isNewVenta = false, isEditingFinalized = false, onClose, onSave, clientes, productos, listasPrecios, 
   puntosVenta, lotesEtiquetados, setLotesEtiquetados, almacenes, 
-  movimientos, setMovimientos, ventas, showNotification 
+  movimientos, setMovimientos, ventas, showNotification, tesoreriaCuentas = [],
 }: any) => {
   const [form, setForm] = useState(venta);
   const [barcodeInput, setBarcodeInput] = useState('');
@@ -14209,7 +14229,8 @@ const VentaForm = ({
     monto: 0,
     metodo: 'Efectivo',
     fecha: safeFormat(new Date(), 'yyyy-MM-dd'),
-    observaciones: ''
+    observaciones: '',
+    cuentaTesoreriaId: '',
   });
   
   // Bug 5: Scanner vs Tipping logic
@@ -14478,6 +14499,10 @@ const VentaForm = ({
 
   const handleAddCobro = () => {
     if (newCobro.monto <= 0) return;
+    if (!newCobro.cuentaTesoreriaId) {
+      showNotification('Elegí la cuenta de tesorería del cobro', 'error');
+      return;
+    }
     const totalCob = safeRound(form.totalCobrado + newCobro.monto, 2);
     const pending = safeRound(Math.max(0, form.total - totalCob), 2);
     const updatedForm = {
@@ -14489,7 +14514,7 @@ const VentaForm = ({
     };
     setForm(updatedForm);
     setIsCobroModalOpen(false);
-    setNewCobro({ monto: 0, metodo: 'Efectivo', fecha: safeFormat(new Date(), 'yyyy-MM-dd'), observaciones: '' });
+    setNewCobro({ monto: 0, metodo: 'Efectivo', fecha: safeFormat(new Date(), 'yyyy-MM-dd'), observaciones: '', cuentaTesoreriaId: '' });
   };
 
   const removeCobro = (idx: number) => {
@@ -14998,6 +15023,19 @@ const VentaForm = ({
                          <option value="Transferencia">Transferencia</option>
                          <option value="Cheque">Cheque</option>
                          <option value="Otro">Otro</option>
+                      </select>
+                   </div>
+                   <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Cuenta de tesorería</label>
+                      <select
+                        value={newCobro.cuentaTesoreriaId}
+                        onChange={(e) => setNewCobro({ ...newCobro, cuentaTesoreriaId: e.target.value })}
+                        className="w-full px-4 py-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none font-bold text-slate-700"
+                      >
+                        <option value="">Seleccionar cuenta...</option>
+                        {tesoreriaCuentas.filter((c: CuentaTesoreria) => c.habilitada).map((c: CuentaTesoreria) => (
+                          <option key={c.id} value={c.id}>{c.nombre} ({c.moneda})</option>
+                        ))}
                       </select>
                    </div>
                    <div className="space-y-1">
@@ -21545,6 +21583,13 @@ export default function App() {
     }
   }, [activeModule, currentUser, reloadTesoreria]);
 
+  useEffect(() => {
+    if (!currentUser || isLoading) return;
+    loadTesoreria()
+      .then((data) => setTesoreriaCuentas(data.cuentas))
+      .catch((err) => console.error('Error cargando cuentas de tesorería:', err));
+  }, [currentUser, isLoading]);
+
   // --- Cargar datos desde Supabase al iniciar ---
   useEffect(() => {
     const DATA_KEYS = [
@@ -22527,6 +22572,7 @@ export default function App() {
                 almacenes={almacenes}
                 currentUser={currentUser}
                 showNotification={showNotification}
+                tesoreriaCuentas={tesoreriaCuentas}
               />
             )}
             {activeModule === 'VENTAS' && activeSubSection === 'Dashboard Ventas' && (
