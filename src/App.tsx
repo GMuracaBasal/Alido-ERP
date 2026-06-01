@@ -4,7 +4,18 @@
  */
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { loadAllData, saveToSupabase, checkForUpdates } from './supabaseClient';
+import {
+  loadAllData,
+  saveToSupabase,
+  checkForUpdates,
+  loadTesoreria,
+  saveCuenta,
+  saveMedioPago,
+  crearMovimientoManual,
+  anularMovimiento,
+  crearTransferencia,
+  anularTransferencia,
+} from './supabaseClient';
 import { 
   LayoutDashboard, 
   Package, 
@@ -70,7 +81,9 @@ import {
   Flame,
   ShoppingCart,
   Truck,
-  RotateCcw
+  RotateCcw,
+  Wallet,
+  Ban
 } from 'lucide-react';
 import { 
   Chart as ChartJS, 
@@ -1325,6 +1338,7 @@ interface Permisos {
   produccion: PermisosModulo;
   ventas: PermisosModulo;
   egresos: PermisosModulo;
+  finanzas: PermisosModulo;
   usuarios: PermisosModulo;
 }
 
@@ -1372,6 +1386,7 @@ const DEFAULT_PERMISSIONS: Permisos = {
   produccion: { lotes_produccion: true, lotes_despiece: true, recetas_estandar: true, plantillas_despiece: true, etiquetas: true, dashboard: true, trazabilidad: true },
   ventas: { ventas_pedidos: true, dashboard_ventas: true, clientes: true, listas_precios: true, puntos_venta: true },
   egresos: { egresos_compras: true, proveedores: true, tipos_egreso: true, plan_cuentas: true },
+  finanzas: { tesoreria: true },
   usuarios: { gestion_usuarios: true }
 };
 
@@ -1865,6 +1880,101 @@ interface MercaderiaPendiente {
   fechaCompra: string;
 }
 
+interface CuentaTesoreria {
+  id: string;
+  nombre: string;
+  tipo: 'banco' | 'efectivo' | 'billetera' | 'otra';
+  banco?: string;
+  numeroCuenta?: string;
+  moneda: 'ARS' | 'USD';
+  observacion?: string;
+  saldoInicial: number;
+  fechaApertura: string;
+  habilitada: boolean;
+}
+
+interface MedioPago {
+  id: string;
+  nombre: string;
+  tipoBase: 'efectivo' | 'transferencia' | 'cheque' | 'billetera' | 'tarjeta' | 'otro';
+  habilitado: boolean;
+}
+
+interface MovimientoTesoreria {
+  id: string;
+  cuentaId: string;
+  fecha: string;
+  medioPagoId?: string;
+  origenTipo: string;
+  origenId?: string;
+  origenReferencia?: string;
+  detalle?: string;
+  contraparte?: string;
+  debe: number;
+  haber: number;
+  transferenciaId?: string;
+  esManual: boolean;
+  motivo?: string;
+  anulado: boolean;
+  anuladoMotivo?: string;
+  createdAt?: string;
+}
+
+interface TransferenciaTesoreria {
+  id: string;
+  fecha: string;
+  cuentaOrigenId: string;
+  cuentaDestinoId: string;
+  monto: number;
+  medioPagoId?: string;
+  detalle?: string;
+  anulado: boolean;
+}
+
+const roundSaldoTes = (x: number) => Math.round(x * 100) / 100;
+
+const formatSaldoTes = (x: number) => formatNumber(roundSaldoTes(x), 2);
+
+const TIPO_CUENTA_TES_LABEL: Record<CuentaTesoreria['tipo'], string> = {
+  banco: 'Banco',
+  efectivo: 'Efectivo',
+  billetera: 'Billetera',
+  otra: 'Otra',
+};
+
+const verComprobanteTesoreria = (_mov: MovimientoTesoreria) => {
+  // TODO: integración ventas/egresos — próximo prompt
+};
+
+const buildMayorTesoreria = (
+  cuentaId: string,
+  movimientos: MovimientoTesoreria[],
+  saldoInicial: number
+): (MovimientoTesoreria & { saldoCorrido: number | null })[] => {
+  const cuentaMovs = movimientos.filter((m) => m.cuentaId === cuentaId);
+  const asc = [...cuentaMovs].sort((a, b) => {
+    const fd = a.fecha.localeCompare(b.fecha);
+    if (fd !== 0) return fd;
+    return (a.createdAt || '').localeCompare(b.createdAt || '');
+  });
+  const saldoMap = new Map<string, number | null>();
+  let saldo = roundSaldoTes(saldoInicial);
+  for (const m of asc) {
+    if (!m.anulado) {
+      saldo = roundSaldoTes(saldo + m.debe - m.haber);
+      saldoMap.set(m.id, saldo);
+    } else {
+      saldoMap.set(m.id, null);
+    }
+  }
+  const desc = [...cuentaMovs].sort((a, b) => {
+    const fd = b.fecha.localeCompare(a.fecha);
+    if (fd !== 0) return fd;
+    return (b.createdAt || '').localeCompare(a.createdAt || '');
+  });
+  return desc.map((m) => ({ ...m, saldoCorrido: saldoMap.get(m.id) ?? null }));
+};
+
 // --- Constants ---
 
 const ALERGENOS_OPTIONS = ['Gluten', 'Lácteos', 'Soja', 'Huevo', 'Frutos Secos', 'Maní', 'Pescado', 'Mariscos', 'Otro'];
@@ -1878,6 +1988,7 @@ const INITIAL_USERS: User[] = [
     produccion: { lotes_produccion: true, lotes_despiece: true, recetas_estandar: true, plantillas_despiece: true, etiquetas: true, dashboard: true, trazabilidad: true },
     ventas: { ventas_pedidos: true, dashboard_ventas: true, clientes: true, listas_precios: true, puntos_venta: true },
     egresos: { egresos_compras: true, proveedores: true, tipos_egreso: true, plan_cuentas: true },
+    finanzas: { tesoreria: true },
     usuarios: { gestion_usuarios: true }
   }},
   { id: '2', username: 'Operario1', password: '123', role: 'Operario', name: 'Juan Pérez', estado: 'activo', inicioConfig: { ...DEFAULT_INICIO_CONFIG }, permisos: {
@@ -1885,6 +1996,7 @@ const INITIAL_USERS: User[] = [
     produccion: { lotes_produccion: true, lotes_despiece: true, recetas_estandar: false, plantillas_despiece: false, etiquetas: true, dashboard: false, trazabilidad: false },
     ventas: { ventas_pedidos: true, dashboard_ventas: false, clientes: false, listas_precios: false, puntos_venta: false },
     egresos: { egresos_compras: false, proveedores: false, tipos_egreso: false, plan_cuentas: false },
+    finanzas: { tesoreria: false },
     usuarios: { gestion_usuarios: false }
   }}
 ];
@@ -9576,6 +9688,7 @@ const UserForm = ({ editingItem, loggedUser, onSave, onClose }: any) => {
     { key: 'produccion', label: '🏭 PRODUCCIÓN', color: 'bg-emerald-50 outline-emerald-200', sections: [ {key: 'lotes_produccion', label: 'Lotes de Producción'}, {key: 'lotes_despiece', label: 'Lotes de Despiece'}, {key: 'recetas_estandar', label: 'Recetas Estándar'}, {key: 'plantillas_despiece', label: 'Plantillas de Despiece'}, {key: 'etiquetas', label: 'Etiquetas'}, {key: 'dashboard', label: 'Dashboard'}, {key: 'trazabilidad', label: 'Trazabilidad'} ] },
     { key: 'ventas', label: '💰 VENTAS', color: 'bg-amber-50 outline-amber-200', sections: [ {key: 'ventas_pedidos', label: 'Ventas y Pedidos'}, {key: 'dashboard_ventas', label: 'Dashboard de Ventas'}, {key: 'clientes', label: 'Clientes'}, {key: 'listas_precios', label: 'Listas de Precios'}, {key: 'puntos_venta', label: 'Puntos de Venta'} ] },
     { key: 'egresos', label: '📤 EGRESOS', color: 'bg-rose-50 outline-rose-200', sections: [ {key: 'egresos_compras', label: 'Egresos y Compras'}, {key: 'proveedores', label: 'Proveedores'}, {key: 'tipos_egreso', label: 'Tipos de Egreso'}, {key: 'plan_cuentas', label: 'Plan de Cuentas'} ] },
+    { key: 'finanzas', label: '💳 FINANZAS', color: 'bg-violet-50 outline-violet-200', sections: [ {key: 'tesoreria', label: 'Tesorería'} ] },
     { key: 'usuarios', label: '👤 USUARIOS', color: 'bg-slate-100 outline-slate-300', sections: [ {key: 'gestion_usuarios', label: 'Gestión de Usuarios'} ] }
   ];
 
@@ -20590,6 +20703,733 @@ const buildAlmacenSelectOptions = (almacenes: any[]): SearchableSelectOption[] =
     sublabel: a.tipo || a.tipoAlmacenamiento,
   }));
 
+// --- Tesorería (Finanzas) ---
+
+const TesoreriaView = ({
+  cuentas,
+  medios,
+  movimientos,
+  saldos,
+  loading,
+  onReload,
+  showNotification,
+}: {
+  cuentas: CuentaTesoreria[];
+  medios: MedioPago[];
+  movimientos: MovimientoTesoreria[];
+  saldos: Record<string, number>;
+  loading: boolean;
+  onReload: () => Promise<void>;
+  showNotification: (msg: string, type: 'success' | 'error') => void;
+}) => {
+  const [vista, setVista] = useState<'lista' | 'detalle'>('lista');
+  const [cuentaSel, setCuentaSel] = useState<CuentaTesoreria | null>(null);
+  const [modal, setModal] = useState<'cuenta' | 'movimiento' | 'transferencia' | 'anular' | 'medios' | ''>('');
+  const [editingCuenta, setEditingCuenta] = useState<CuentaTesoreria | null>(null);
+  const [editingMedio, setEditingMedio] = useState<MedioPago | null>(null);
+  const [movAnular, setMovAnular] = useState<MovimientoTesoreria | null>(null);
+  const [motivoAnular, setMotivoAnular] = useState('');
+  const [showAnulados, setShowAnulados] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const hoy = safeFormat(new Date(), 'yyyy-MM-dd');
+
+  const [formCuenta, setFormCuenta] = useState<Partial<CuentaTesoreria>>({});
+  const [formMov, setFormMov] = useState({
+    fecha: hoy,
+    medioPagoId: '',
+    tipo: 'debe' as 'debe' | 'haber',
+    monto: '',
+    detalle: '',
+    contraparte: '',
+    motivo: '',
+    origenTipo: 'manual' as 'manual' | 'ajuste',
+  });
+  const [formTransf, setFormTransf] = useState({
+    fecha: hoy,
+    origenId: '',
+    destinoId: '',
+    monto: '',
+    medioPagoId: '',
+    detalle: '',
+  });
+
+  const totalesPosicion = useMemo(() => {
+    let ars = 0;
+    let usd = 0;
+    cuentas.forEach((c) => {
+      if (!c.habilitada) return;
+      const s = roundSaldoTes(saldos[c.id] ?? c.saldoInicial);
+      if (c.moneda === 'USD') usd += s;
+      else ars += s;
+    });
+    return { ars: roundSaldoTes(ars), usd: roundSaldoTes(usd) };
+  }, [cuentas, saldos]);
+
+  const cuentaDetalle = cuentaSel
+    ? cuentas.find((c) => c.id === cuentaSel.id) || cuentaSel
+    : null;
+  const saldoActualCuenta = cuentaDetalle
+    ? roundSaldoTes(saldos[cuentaDetalle.id] ?? cuentaDetalle.saldoInicial)
+    : 0;
+
+  const mayorRows = useMemo(() => {
+    if (!cuentaDetalle) return [];
+    return buildMayorTesoreria(cuentaDetalle.id, movimientos, cuentaDetalle.saldoInicial);
+  }, [cuentaDetalle, movimientos]);
+
+  const mayorVisible = useMemo(
+    () => (showAnulados ? mayorRows : mayorRows.filter((m) => !m.anulado)),
+    [mayorRows, showAnulados]
+  );
+
+  const getMedioNombre = (id?: string) =>
+    id ? medios.find((m) => m.id === id)?.nombre || '—' : '—';
+
+  const openNuevaCuenta = () => {
+    setEditingCuenta(null);
+    setFormCuenta({
+      nombre: '',
+      tipo: 'efectivo',
+      banco: '',
+      numeroCuenta: '',
+      moneda: 'ARS',
+      observacion: '',
+      saldoInicial: 0,
+      fechaApertura: hoy,
+      habilitada: true,
+    });
+    setModal('cuenta');
+  };
+
+  const openEditarCuenta = () => {
+    if (!cuentaDetalle) return;
+    setEditingCuenta(cuentaDetalle);
+    setFormCuenta({ ...cuentaDetalle });
+    setModal('cuenta');
+  };
+
+  const openMovimiento = () => {
+    setFormMov({
+      fecha: hoy,
+      medioPagoId: medios.find((m) => m.habilitado)?.id || '',
+      tipo: 'debe',
+      monto: '',
+      detalle: '',
+      contraparte: '',
+      motivo: '',
+      origenTipo: 'manual',
+    });
+    setModal('movimiento');
+  };
+
+  const openTransferencia = (prefillOrigen?: string) => {
+    setFormTransf({
+      fecha: hoy,
+      origenId: prefillOrigen || cuentaDetalle?.id || '',
+      destinoId: '',
+      monto: '',
+      medioPagoId: medios.find((m) => m.habilitado)?.id || '',
+      detalle: '',
+    });
+    setModal('transferencia');
+  };
+
+  const handleSaveCuenta = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formCuenta.nombre?.trim()) {
+      showNotification('El nombre de la cuenta es obligatorio', 'error');
+      return;
+    }
+    setSaving(true);
+    const payload: CuentaTesoreria = {
+      id: editingCuenta?.id || '',
+      nombre: formCuenta.nombre!.trim(),
+      tipo: (formCuenta.tipo as CuentaTesoreria['tipo']) || 'efectivo',
+      banco: formCuenta.tipo === 'banco' ? formCuenta.banco : undefined,
+      numeroCuenta: formCuenta.tipo === 'banco' ? formCuenta.numeroCuenta : undefined,
+      moneda: formCuenta.moneda || 'ARS',
+      observacion: formCuenta.observacion,
+      saldoInicial: roundSaldoTes(Number(formCuenta.saldoInicial) || 0),
+      fechaApertura: formCuenta.fechaApertura || hoy,
+      habilitada: formCuenta.habilitada !== false,
+    };
+    const saved = await saveCuenta(payload);
+    setSaving(false);
+    if (!saved) {
+      showNotification('No se pudo guardar la cuenta', 'error');
+      return;
+    }
+    showNotification(editingCuenta ? 'Cuenta actualizada' : 'Cuenta creada', 'success');
+    setModal('');
+    await onReload();
+  };
+
+  const handleSaveMovimiento = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!cuentaDetalle) return;
+    const monto = parseFloat(formMov.monto);
+    if (!monto || monto <= 0) {
+      showNotification('Ingresá un monto mayor a cero', 'error');
+      return;
+    }
+    if (!formMov.motivo.trim()) {
+      showNotification('El motivo es obligatorio en movimientos manuales', 'error');
+      return;
+    }
+    setSaving(true);
+    const saved = await crearMovimientoManual({
+      cuentaId: cuentaDetalle.id,
+      fecha: formMov.fecha,
+      medioPagoId: formMov.medioPagoId || undefined,
+      origenTipo: formMov.origenTipo,
+      detalle: formMov.detalle || undefined,
+      contraparte: formMov.contraparte || undefined,
+      debe: formMov.tipo === 'debe' ? monto : 0,
+      haber: formMov.tipo === 'haber' ? monto : 0,
+      motivo: formMov.motivo.trim(),
+    });
+    setSaving(false);
+    if (!saved) {
+      showNotification('No se pudo registrar el movimiento', 'error');
+      return;
+    }
+    showNotification('Movimiento registrado', 'success');
+    setModal('');
+    await onReload();
+  };
+
+  const handleSaveTransferencia = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const monto = parseFloat(formTransf.monto);
+    if (!formTransf.origenId || !formTransf.destinoId) {
+      showNotification('Seleccioná origen y destino', 'error');
+      return;
+    }
+    if (formTransf.origenId === formTransf.destinoId) {
+      showNotification('Origen y destino deben ser distintos', 'error');
+      return;
+    }
+    if (!monto || monto <= 0) {
+      showNotification('El monto debe ser mayor a cero', 'error');
+      return;
+    }
+    const co = cuentas.find((c) => c.id === formTransf.origenId);
+    const cd = cuentas.find((c) => c.id === formTransf.destinoId);
+    if (co && cd && co.moneda !== cd.moneda) {
+      showNotification('Las cuentas deben ser de la misma moneda', 'error');
+      return;
+    }
+    setSaving(true);
+    const id = await crearTransferencia({
+      fecha: formTransf.fecha,
+      origen: formTransf.origenId,
+      destino: formTransf.destinoId,
+      monto,
+      medio: formTransf.medioPagoId || undefined,
+      detalle: formTransf.detalle || undefined,
+    });
+    setSaving(false);
+    if (!id) {
+      showNotification('No se pudo crear la transferencia', 'error');
+      return;
+    }
+    showNotification('Transferencia registrada', 'success');
+    setModal('');
+    await onReload();
+  };
+
+  const handleConfirmAnular = async () => {
+    if (!movAnular || !motivoAnular.trim()) {
+      showNotification('Indicá el motivo de anulación', 'error');
+      return;
+    }
+    setSaving(true);
+    let ok = false;
+    if (movAnular.transferenciaId) {
+      ok = await anularTransferencia(movAnular.transferenciaId, motivoAnular.trim());
+    } else {
+      ok = await anularMovimiento(movAnular.id, motivoAnular.trim());
+    }
+    setSaving(false);
+    if (!ok) {
+      showNotification('No se pudo anular', 'error');
+      return;
+    }
+    showNotification('Movimiento anulado', 'success');
+    setModal('');
+    setMovAnular(null);
+    setMotivoAnular('');
+    await onReload();
+  };
+
+  const handleSaveMedio = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingMedio?.nombre?.trim()) {
+      showNotification('El nombre es obligatorio', 'error');
+      return;
+    }
+    setSaving(true);
+    const saved = await saveMedioPago({
+      id: editingMedio.id || '',
+      nombre: editingMedio.nombre.trim(),
+      tipoBase: editingMedio.tipoBase,
+      habilitado: editingMedio.habilitado,
+    });
+    setSaving(false);
+    if (!saved) {
+      showNotification('No se pudo guardar el medio de pago', 'error');
+      return;
+    }
+    showNotification('Medio de pago guardado', 'success');
+    setEditingMedio(null);
+    await onReload();
+  };
+
+  const origenMonedaTransf = cuentas.find((c) => c.id === formTransf.origenId)?.moneda;
+
+  if (vista === 'detalle' && cuentaDetalle) {
+    return (
+      <div className="space-y-6 animate-in fade-in duration-300">
+        <button
+          type="button"
+          onClick={() => { setVista('lista'); setCuentaSel(null); setShowAnulados(false); }}
+          className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest hover:text-sleek-accent"
+        >
+          <ArrowLeft className="w-4 h-4" /> Volver a cuentas
+        </button>
+
+        <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
+          <div>
+            <h2 className="text-2xl font-black text-sleek-dark uppercase tracking-tighter">{cuentaDetalle.nombre}</h2>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mt-1">
+              {TIPO_CUENTA_TES_LABEL[cuentaDetalle.tipo]} · {cuentaDetalle.moneda}
+              {cuentaDetalle.habilitada ? (
+                <Badge variant="success" className="ml-2">Habilitada</Badge>
+              ) : (
+                <Badge variant="danger" className="ml-2">Inhabilitada</Badge>
+              )}
+            </p>
+          </div>
+          <div className="text-right">
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Saldo actual</p>
+            <p className="text-3xl font-black text-sleek-accent font-mono">{formatSaldoTes(saldoActualCuenta)}</p>
+            <p className="text-[10px] text-slate-400 font-bold">{cuentaDetalle.moneda}</p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={openEditarCuenta} className="px-4 py-2 border border-slate-200 rounded text-[10px] font-black uppercase tracking-widest hover:bg-slate-50">
+            <Edit2 className="w-3 h-3 inline mr-1" /> Editar
+          </button>
+          <button type="button" onClick={openMovimiento} className="px-4 py-2 bg-sleek-dark text-white rounded text-[10px] font-black uppercase tracking-widest">
+            <Plus className="w-3 h-3 inline mr-1" /> Nuevo movimiento
+          </button>
+          <button type="button" onClick={() => openTransferencia(cuentaDetalle.id)} className="px-4 py-2 bg-sleek-accent text-white rounded text-[10px] font-black uppercase tracking-widest">
+            <ArrowRightLeft className="w-3 h-3 inline mr-1" /> Transferencia
+          </button>
+        </div>
+
+        <Card className="p-0 overflow-hidden">
+          <div className="p-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+            <h3 className="text-sm font-black text-sleek-dark uppercase tracking-widest">Mayor de cuenta</h3>
+            <label className="flex items-center gap-2 text-[10px] font-bold text-slate-500 uppercase tracking-widest cursor-pointer">
+              <input type="checkbox" checked={showAnulados} onChange={(e) => setShowAnulados(e.target.checked)} className="rounded" />
+              Mostrar anulados
+            </label>
+          </div>
+          {loading ? (
+            <p className="p-8 text-center text-slate-400 text-xs font-bold uppercase">Cargando...</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="bg-slate-50 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                    <th className="px-4 py-3">Fecha</th>
+                    <th className="px-4 py-3">Tipo</th>
+                    <th className="px-4 py-3">Comprobante</th>
+                    <th className="px-4 py-3">Detalle</th>
+                    <th className="px-4 py-3">Emisor</th>
+                    <th className="px-4 py-3 text-right">Debe</th>
+                    <th className="px-4 py-3 text-right">Haber</th>
+                    <th className="px-4 py-3 text-right">Saldo</th>
+                    <th className="px-4 py-3 w-10" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {mayorVisible.length === 0 ? (
+                    <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400 text-xs font-bold uppercase">Sin movimientos</td></tr>
+                  ) : mayorVisible.map((m) => (
+                    <tr key={m.id} className={cn(m.anulado && 'opacity-50 line-through bg-slate-50/50')}>
+                      <td className="px-4 py-3 text-xs font-mono">{safeFormat(m.fecha, 'dd/MM/yyyy')}</td>
+                      <td className="px-4 py-3 text-xs">{getMedioNombre(m.medioPagoId)}</td>
+                      <td className="px-4 py-3 text-xs">
+                        {m.origenReferencia ? (
+                          m.origenId ? (
+                            <button type="button" onClick={() => verComprobanteTesoreria(m)} className="text-blue-600 hover:underline font-bold no-underline line-through-none" style={{ textDecoration: m.anulado ? 'line-through' : 'none' }}>
+                              {m.origenReferencia}
+                            </button>
+                          ) : (
+                            <span>{m.origenReferencia}</span>
+                          )
+                        ) : '—'}
+                      </td>
+                      <td className="px-4 py-3 text-xs max-w-[200px] truncate">{m.detalle || '—'}</td>
+                      <td className="px-4 py-3 text-xs">{m.contraparte || '—'}</td>
+                      <td className="px-4 py-3 text-xs text-right font-mono text-emerald-700">{m.debe > 0 ? formatSaldoTes(m.debe) : ''}</td>
+                      <td className="px-4 py-3 text-xs text-right font-mono text-rose-700">{m.haber > 0 ? formatSaldoTes(m.haber) : ''}</td>
+                      <td className="px-4 py-3 text-xs text-right font-mono font-bold">
+                        {m.anulado || m.saldoCorrido === null ? '' : formatSaldoTes(m.saldoCorrido)}
+                      </td>
+                      <td className="px-4 py-3">
+                        {!m.anulado && (
+                          <button
+                            type="button"
+                            title="Anular"
+                            onClick={() => {
+                              setMovAnular(m);
+                              setMotivoAnular('');
+                              setModal('anular');
+                            }}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 rounded"
+                          >
+                            <Ban className="w-4 h-4" />
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+
+        {/* Modales detalle — reutilizados abajo vía fragment al cerrar vista */}
+        {renderTesoreriaModals()}
+      </div>
+    );
+  }
+
+  function renderTesoreriaModals() {
+    return (
+      <>
+        <Modal isOpen={modal === 'cuenta'} onClose={() => setModal('')} title={editingCuenta ? 'Editar cuenta' : 'Nueva cuenta'}>
+          <form onSubmit={handleSaveCuenta} className="space-y-4">
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Nombre</label>
+              <input required value={formCuenta.nombre || ''} onChange={(e) => setFormCuenta({ ...formCuenta, nombre: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Tipo</label>
+                <select value={formCuenta.tipo || 'efectivo'} onChange={(e) => setFormCuenta({ ...formCuenta, tipo: e.target.value as CuentaTesoreria['tipo'] })} className="w-full px-4 py-3 bg-slate-50 border rounded-lg text-sm">
+                  <option value="banco">Banco</option>
+                  <option value="efectivo">Efectivo</option>
+                  <option value="billetera">Billetera</option>
+                  <option value="otra">Otra</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Moneda</label>
+                <select value={formCuenta.moneda || 'ARS'} onChange={(e) => setFormCuenta({ ...formCuenta, moneda: e.target.value as 'ARS' | 'USD' })} className="w-full px-4 py-3 bg-slate-50 border rounded-lg text-sm">
+                  <option value="ARS">ARS</option>
+                  <option value="USD">USD</option>
+                </select>
+              </div>
+            </div>
+            {formCuenta.tipo === 'banco' && (
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Banco</label>
+                  <input value={formCuenta.banco || ''} onChange={(e) => setFormCuenta({ ...formCuenta, banco: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border rounded-lg text-sm" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Número de cuenta</label>
+                  <input value={formCuenta.numeroCuenta || ''} onChange={(e) => setFormCuenta({ ...formCuenta, numeroCuenta: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border rounded-lg text-sm" />
+                </div>
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Saldo inicial</label>
+                <input type="number" step="0.01" value={formCuenta.saldoInicial ?? 0} onChange={(e) => setFormCuenta({ ...formCuenta, saldoInicial: parseFloat(e.target.value) || 0 })} className="w-full px-4 py-3 bg-slate-50 border rounded-lg text-sm" />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Fecha apertura</label>
+                <input type="date" required value={formCuenta.fechaApertura || hoy} onChange={(e) => setFormCuenta({ ...formCuenta, fechaApertura: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border rounded-lg text-sm" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Observación</label>
+              <textarea value={formCuenta.observacion || ''} onChange={(e) => setFormCuenta({ ...formCuenta, observacion: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border rounded-lg text-sm" rows={2} />
+            </div>
+            <label className="flex items-center gap-2 text-xs font-bold text-slate-600">
+              <input type="checkbox" checked={formCuenta.habilitada !== false} onChange={(e) => setFormCuenta({ ...formCuenta, habilitada: e.target.checked })} />
+              Cuenta habilitada
+            </label>
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={() => setModal('')} className="px-4 py-2 text-slate-500 font-bold text-sm">Cancelar</button>
+              <button type="submit" disabled={saving} className="px-6 py-2 bg-sleek-accent text-white font-bold rounded-lg text-sm">{saving ? 'Guardando...' : 'Guardar'}</button>
+            </div>
+          </form>
+        </Modal>
+
+        <Modal isOpen={modal === 'movimiento'} onClose={() => setModal('')} title="Nuevo movimiento manual">
+          <form onSubmit={handleSaveMovimiento} className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Fecha</label>
+                <input type="date" required value={formMov.fecha} onChange={(e) => setFormMov({ ...formMov, fecha: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border rounded-lg text-sm" />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Medio de pago</label>
+                <select value={formMov.medioPagoId} onChange={(e) => setFormMov({ ...formMov, medioPagoId: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border rounded-lg text-sm">
+                  <option value="">—</option>
+                  {medios.filter((m) => m.habilitado).map((m) => (
+                    <option key={m.id} value={m.id}>{m.nombre}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Tipo movimiento</label>
+                <select value={formMov.tipo} onChange={(e) => setFormMov({ ...formMov, tipo: e.target.value as 'debe' | 'haber' })} className="w-full px-4 py-3 bg-slate-50 border rounded-lg text-sm">
+                  <option value="debe">Debe (entra plata)</option>
+                  <option value="haber">Haber (sale plata)</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Monto</label>
+                <input type="number" step="0.01" required min="0.01" value={formMov.monto} onChange={(e) => setFormMov({ ...formMov, monto: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border rounded-lg text-sm" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Origen</label>
+              <select value={formMov.origenTipo} onChange={(e) => setFormMov({ ...formMov, origenTipo: e.target.value as 'manual' | 'ajuste' })} className="w-full px-4 py-3 bg-slate-50 border rounded-lg text-sm">
+                <option value="manual">Manual</option>
+                <option value="ajuste">Ajuste</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Detalle</label>
+              <input value={formMov.detalle} onChange={(e) => setFormMov({ ...formMov, detalle: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border rounded-lg text-sm" />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Emisor / contraparte</label>
+              <input value={formMov.contraparte} onChange={(e) => setFormMov({ ...formMov, contraparte: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border rounded-lg text-sm" />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Motivo *</label>
+              <textarea required value={formMov.motivo} onChange={(e) => setFormMov({ ...formMov, motivo: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border rounded-lg text-sm" rows={2} />
+            </div>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setModal('')} className="px-4 py-2 text-slate-500 font-bold text-sm">Cancelar</button>
+              <button type="submit" disabled={saving} className="px-6 py-2 bg-sleek-accent text-white font-bold rounded-lg text-sm">Registrar</button>
+            </div>
+          </form>
+        </Modal>
+
+        <Modal isOpen={modal === 'transferencia'} onClose={() => setModal('')} title="Transferencia entre cuentas">
+          <form onSubmit={handleSaveTransferencia} className="space-y-4">
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Fecha</label>
+              <input type="date" required value={formTransf.fecha} onChange={(e) => setFormTransf({ ...formTransf, fecha: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border rounded-lg text-sm" />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Cuenta origen</label>
+              <select required value={formTransf.origenId} onChange={(e) => setFormTransf({ ...formTransf, origenId: e.target.value, destinoId: '' })} className="w-full px-4 py-3 bg-slate-50 border rounded-lg text-sm">
+                <option value="">Seleccionar...</option>
+                {cuentas.filter((c) => c.habilitada).map((c) => (
+                  <option key={c.id} value={c.id}>{c.nombre} ({c.moneda})</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Cuenta destino</label>
+              <select required value={formTransf.destinoId} onChange={(e) => setFormTransf({ ...formTransf, destinoId: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border rounded-lg text-sm">
+                <option value="">Seleccionar...</option>
+                {cuentas.filter((c) => c.habilitada && c.id !== formTransf.origenId).map((c) => {
+                  const otraMoneda = origenMonedaTransf && c.moneda !== origenMonedaTransf;
+                  return (
+                    <option key={c.id} value={c.id} disabled={otraMoneda}>
+                      {c.nombre} ({c.moneda}){otraMoneda ? ' — otra moneda' : ''}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Monto</label>
+                <input type="number" step="0.01" required min="0.01" value={formTransf.monto} onChange={(e) => setFormTransf({ ...formTransf, monto: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border rounded-lg text-sm" />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Medio de pago</label>
+                <select value={formTransf.medioPagoId} onChange={(e) => setFormTransf({ ...formTransf, medioPagoId: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border rounded-lg text-sm">
+                  <option value="">—</option>
+                  {medios.filter((m) => m.habilitado).map((m) => (
+                    <option key={m.id} value={m.id}>{m.nombre}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Detalle</label>
+              <input value={formTransf.detalle} onChange={(e) => setFormTransf({ ...formTransf, detalle: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border rounded-lg text-sm" />
+            </div>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setModal('')} className="px-4 py-2 text-slate-500 font-bold text-sm">Cancelar</button>
+              <button type="submit" disabled={saving} className="px-6 py-2 bg-sleek-accent text-white font-bold rounded-lg text-sm">Transferir</button>
+            </div>
+          </form>
+        </Modal>
+
+        <Modal isOpen={modal === 'anular'} onClose={() => { setModal(''); setMovAnular(null); }} title="Anular movimiento">
+          {movAnular?.transferenciaId && (
+            <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4 font-medium">
+              Este movimiento pertenece a una transferencia. Se anulará la transferencia completa (ambas patas).
+            </p>
+          )}
+          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Motivo</label>
+          <textarea required value={motivoAnular} onChange={(e) => setMotivoAnular(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border rounded-lg text-sm mb-4" rows={3} />
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={() => { setModal(''); setMovAnular(null); }} className="px-4 py-2 text-slate-500 font-bold text-sm">Cancelar</button>
+            <button type="button" disabled={saving} onClick={handleConfirmAnular} className="px-6 py-2 bg-rose-600 text-white font-bold rounded-lg text-sm">Anular</button>
+          </div>
+        </Modal>
+
+        <Modal isOpen={modal === 'medios'} onClose={() => setModal('')} title="Medios de pago" className="max-w-2xl">
+          <div className="space-y-4 max-h-[60vh] overflow-y-auto">
+            <button
+              type="button"
+              onClick={() => setEditingMedio({ id: '', nombre: '', tipoBase: 'efectivo', habilitado: true })}
+              className="text-[10px] font-black uppercase tracking-widest text-sleek-accent flex items-center gap-1"
+            >
+              <Plus className="w-4 h-4" /> Nuevo medio
+            </button>
+            {medios.map((m) => (
+              <div key={m.id} className="flex items-center justify-between p-3 border border-slate-100 rounded-lg">
+                <div>
+                  <p className="font-bold text-sm text-sleek-dark">{m.nombre}</p>
+                  <p className="text-[10px] text-slate-400 uppercase">{m.tipoBase} · {m.habilitado ? 'Habilitado' : 'Inhabilitado'}</p>
+                </div>
+                <button type="button" onClick={() => setEditingMedio({ ...m })} className="p-2 text-sleek-accent"><Edit2 className="w-4 h-4" /></button>
+              </div>
+            ))}
+            {editingMedio && (
+              <form onSubmit={handleSaveMedio} className="p-4 bg-slate-50 rounded-xl space-y-3 border border-slate-200">
+                <input required value={editingMedio.nombre} onChange={(e) => setEditingMedio({ ...editingMedio, nombre: e.target.value })} placeholder="Nombre" className="w-full px-3 py-2 border rounded text-sm" />
+                <select value={editingMedio.tipoBase} onChange={(e) => setEditingMedio({ ...editingMedio, tipoBase: e.target.value as MedioPago['tipoBase'] })} className="w-full px-3 py-2 border rounded text-sm">
+                  <option value="efectivo">Efectivo</option>
+                  <option value="transferencia">Transferencia</option>
+                  <option value="cheque">Cheque</option>
+                  <option value="billetera">Billetera</option>
+                  <option value="tarjeta">Tarjeta</option>
+                  <option value="otro">Otro</option>
+                </select>
+                <label className="flex items-center gap-2 text-xs font-bold">
+                  <input type="checkbox" checked={editingMedio.habilitado} onChange={(e) => setEditingMedio({ ...editingMedio, habilitado: e.target.checked })} />
+                  Habilitado
+                </label>
+                <div className="flex gap-2 justify-end">
+                  <button type="button" onClick={() => setEditingMedio(null)} className="text-xs font-bold text-slate-500">Cancelar</button>
+                  <button type="submit" disabled={saving} className="px-4 py-2 bg-sleek-accent text-white text-xs font-bold rounded">Guardar</button>
+                </div>
+              </form>
+            )}
+          </div>
+        </Modal>
+      </>
+    );
+  }
+
+  return (
+    <div className="space-y-8 animate-in fade-in duration-500">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-black text-sleek-dark uppercase tracking-tighter">Tesorería</h2>
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mt-1">Cuentas y movimientos de disponibilidades</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={openNuevaCuenta} className="bg-sleek-dark text-white px-5 py-3 rounded text-[10px] font-black uppercase tracking-widest flex items-center gap-2">
+            <Plus className="w-4 h-4" /> Nueva cuenta
+          </button>
+          <button type="button" onClick={() => openTransferencia()} className="bg-white border border-slate-200 px-5 py-3 rounded text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-slate-50">
+            <ArrowRightLeft className="w-4 h-4" /> Transferencia
+          </button>
+          <button type="button" onClick={() => { setEditingMedio(null); setModal('medios'); }} className="bg-white border border-slate-200 px-5 py-3 rounded text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-slate-50">
+            <CreditCard className="w-4 h-4" /> Medios de pago
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <Card className="p-6 border-l-4 border-l-sleek-accent">
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Posición tesorería — ARS</p>
+          <p className="text-2xl font-black text-sleek-dark font-mono">{formatSaldoTes(totalesPosicion.ars)}</p>
+          <p className="text-[10px] text-slate-400 mt-1">Solo cuentas habilitadas</p>
+        </Card>
+        <Card className="p-6 border-l-4 border-l-sky-500">
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Posición tesorería — USD</p>
+          <p className="text-2xl font-black text-sleek-dark font-mono">{formatSaldoTes(totalesPosicion.usd)}</p>
+          <p className="text-[10px] text-slate-400 mt-1">Solo cuentas habilitadas</p>
+        </Card>
+      </div>
+
+      <Card className="p-0 overflow-hidden">
+        {loading ? (
+          <p className="p-12 text-center text-slate-400 text-xs font-bold uppercase">Cargando tesorería...</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="bg-slate-50 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                  <th className="px-4 py-3 w-12 text-center">Est.</th>
+                  <th className="px-4 py-3">Cuenta</th>
+                  <th className="px-4 py-3">Tipo</th>
+                  <th className="px-4 py-3">Banco</th>
+                  <th className="px-4 py-3">Número</th>
+                  <th className="px-4 py-3">Moneda</th>
+                  <th className="px-4 py-3 text-right">Saldo</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {cuentas.length === 0 ? (
+                  <tr><td colSpan={7} className="px-4 py-12 text-center text-slate-400 text-xs font-bold uppercase">No hay cuentas. Creá la primera.</td></tr>
+                ) : (
+                  [...cuentas].sort((a, b) => a.nombre.localeCompare(b.nombre)).map((c) => (
+                    <tr
+                      key={c.id}
+                      onClick={() => { setCuentaSel(c); setVista('detalle'); setShowAnulados(false); }}
+                      className="hover:bg-slate-50 cursor-pointer transition-colors"
+                    >
+                      <td className="px-4 py-3 text-center">
+                        {c.habilitada ? <CheckCircle2 className="w-4 h-4 text-emerald-500 inline" /> : <XCircle className="w-4 h-4 text-slate-300 inline" />}
+                      </td>
+                      <td className="px-4 py-3 font-bold text-sleek-dark">{c.nombre}</td>
+                      <td className="px-4 py-3 text-xs uppercase text-slate-500">{TIPO_CUENTA_TES_LABEL[c.tipo]}</td>
+                      <td className="px-4 py-3 text-xs text-slate-500">{c.banco || '—'}</td>
+                      <td className="px-4 py-3 text-xs font-mono text-slate-500">{c.numeroCuenta || '—'}</td>
+                      <td className="px-4 py-3 text-xs font-bold">{c.moneda}</td>
+                      <td className="px-4 py-3 text-right font-mono font-black text-sleek-dark">
+                        {formatSaldoTes(saldos[c.id] ?? c.saldoInicial)}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      {renderTesoreriaModals()}
+    </div>
+  );
+};
+
 // --- Main Application ---
 
 export default function App() {
@@ -20607,7 +21447,7 @@ export default function App() {
     const stored = localStorage.getItem('alido_logged_user');
     return stored ? JSON.parse(stored) : null;
   });
-  const [activeModule, setActiveModule] = useState<'INICIO' | 'INVENTARIO' | 'PRODUCCIÓN' | 'VENTAS' | 'EGRESOS' | 'USUARIOS'>('INICIO');
+  const [activeModule, setActiveModule] = useState<'INICIO' | 'INVENTARIO' | 'PRODUCCIÓN' | 'VENTAS' | 'EGRESOS' | 'FINANZAS' | 'USUARIOS'>('INICIO');
   const [activeSubSection, setActiveSubSection] = useState<string>('Inicio');
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
   const [expandedModule, setExpandedModule] = useState<string | null>(null);
@@ -20616,12 +21456,13 @@ export default function App() {
   useEffect(() => {
     if (activeModule === 'INICIO') return;
     if (currentUser && !hasPermission(currentUser, activeModule, activeSubSection)) {
-      const ms = ['INVENTARIO', 'PRODUCCIÓN', 'VENTAS', 'EGRESOS', 'USUARIOS'];
+      const ms = ['INVENTARIO', 'PRODUCCIÓN', 'VENTAS', 'EGRESOS', 'FINANZAS', 'USUARIOS'];
       const defaultSub = {
         'INVENTARIO': ['Dashboard', 'Almacenes', 'Productos', 'Movimientos', 'Alertas', 'Reportes'],
         'PRODUCCIÓN': ['Lotes de Producción', 'Lotes de Despiece', 'Recetas Estándar', 'Plantillas de Despiece', 'Etiquetas', 'Dashboard', 'Trazabilidad'],
         'VENTAS': ['Ventas y Pedidos', 'Dashboard Ventas', 'Clientes', 'Listas de Precios', 'Puntos de Venta'],
         'EGRESOS': ['Egresos y Compras', 'Proveedores', 'Tipos de Egreso', 'Plan de Cuentas'],
+        'FINANZAS': ['Tesorería'],
         'USUARIOS': ['Gestión de Usuarios']
       };
 
@@ -20677,6 +21518,32 @@ export default function App() {
   const [pagosProveedores, setPagosProveedores] = useState<PagoProveedor[]>(INITIAL_PAGOS_PROVEEDORES);
   const [plantillasEgresos, setPlantillasEgresos] = useState<PlantillaEgreso[]>(INITIAL_PLANTILLAS_EGRESOS);
   const [mercaderiaPendiente, setMercaderiaPendiente] = useState<MercaderiaPendiente[]>(INITIAL_MERCADERIA_PENDIENTE);
+
+  // Tesorería (tablas relacionales — no app_data)
+  const [tesoreriaCuentas, setTesoreriaCuentas] = useState<CuentaTesoreria[]>([]);
+  const [tesoreriaMedios, setTesoreriaMedios] = useState<MedioPago[]>([]);
+  const [tesoreriaMovimientos, setTesoreriaMovimientos] = useState<MovimientoTesoreria[]>([]);
+  const [tesoreriaSaldos, setTesoreriaSaldos] = useState<Record<string, number>>({});
+  const [tesoreriaLoading, setTesoreriaLoading] = useState(false);
+
+  const reloadTesoreria = useCallback(async () => {
+    setTesoreriaLoading(true);
+    try {
+      const data = await loadTesoreria();
+      setTesoreriaCuentas(data.cuentas);
+      setTesoreriaMedios(data.medios);
+      setTesoreriaMovimientos(data.movimientos);
+      setTesoreriaSaldos(data.saldos);
+    } finally {
+      setTesoreriaLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeModule === 'FINANZAS' && currentUser && hasPermission(currentUser, 'FINANZAS', 'Tesorería')) {
+      reloadTesoreria();
+    }
+  }, [activeModule, currentUser, reloadTesoreria]);
 
   // --- Cargar datos desde Supabase al iniciar ---
   useEffect(() => {
@@ -21336,6 +22203,20 @@ export default function App() {
             currentUser={currentUser}
           />
           <SidebarItem 
+            icon={Wallet} 
+            label="FINANZAS" 
+            module="FINANZAS" 
+            activeModule={activeModule}
+            activeSubSection={activeSubSection}
+            expandedModule={expandedModule}
+            setExpandedModule={setExpandedModule}
+            setActiveModule={setActiveModule}
+            setActiveSubSection={setActiveSubSection}
+            subItems={['Tesorería']} 
+            sidebarExpanded={sidebarExpanded}
+            currentUser={currentUser}
+          />
+          <SidebarItem 
             icon={CreditCard} 
             label="EGRESOS" 
             module="EGRESOS" 
@@ -21742,9 +22623,20 @@ export default function App() {
                 showNotification={showNotification}
               />
             )}
+            {activeModule === 'FINANZAS' && activeSubSection === 'Tesorería' && (
+              <TesoreriaView
+                cuentas={tesoreriaCuentas}
+                medios={tesoreriaMedios}
+                movimientos={tesoreriaMovimientos}
+                saldos={tesoreriaSaldos}
+                loading={tesoreriaLoading}
+                onReload={reloadTesoreria}
+                showNotification={showNotification}
+              />
+            )}
             
             {/* Placeholder for other views */}
-            {activeModule !== 'INICIO' && !['Dashboard', 'Almacenes', 'Productos', 'Movimientos', 'Etiquetas', 'Lotes de Producción', 'Lotes de Despiece', 'Recetas Estándar', 'Plantillas de Despiece', 'Gestión de Usuarios', 'Ventas y Pedidos', 'Clientes', 'Listas de Precios', 'Puntos de Venta', 'Egresos y Compras', 'Proveedores', 'Tipos de Egreso', 'Plan de Cuentas', 'Inicio'].includes(activeSubSection) && (
+            {activeModule !== 'INICIO' && !['Dashboard', 'Almacenes', 'Productos', 'Movimientos', 'Etiquetas', 'Lotes de Producción', 'Lotes de Despiece', 'Recetas Estándar', 'Plantillas de Despiece', 'Gestión de Usuarios', 'Ventas y Pedidos', 'Clientes', 'Listas de Precios', 'Puntos de Venta', 'Egresos y Compras', 'Proveedores', 'Tipos de Egreso', 'Plan de Cuentas', 'Tesorería', 'Inicio'].includes(activeSubSection) && (
               <div className="flex flex-col items-center justify-center h-[60vh] text-slate-300">
                 <Settings className="w-16 h-16 mb-4 opacity-10" />
                 <p className="text-lg font-bold uppercase tracking-widest">Módulo en Desarrollo</p>
