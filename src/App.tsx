@@ -20734,6 +20734,14 @@ const SearchableSelect = ({
   const inputRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number; width: number } | null>(null);
+
+  const updateMenuPos = () => {
+    const el = inputRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setMenuPos({ top: r.bottom + 4, left: r.left, width: r.width });
+  };
 
   const sortedOptions = useMemo(
     () =>
@@ -20766,6 +20774,18 @@ const SearchableSelect = ({
     document.addEventListener('mousedown', onDocMouseDown);
     return () => document.removeEventListener('mousedown', onDocMouseDown);
   }, [selected?.label]);
+
+  useEffect(() => {
+    if (!open) return;
+    updateMenuPos();
+    const handler = () => updateMenuPos();
+    window.addEventListener('scroll', handler, true);
+    window.addEventListener('resize', handler);
+    return () => {
+      window.removeEventListener('scroll', handler, true);
+      window.removeEventListener('resize', handler);
+    };
+  }, [open]);
 
   const filteredOptions = useMemo(() => {
     const q = normalizeText(query.trim());
@@ -20821,6 +20841,7 @@ const SearchableSelect = ({
             if (disabled) return;
             setOpen(true);
             setQuery(selected?.label || '');
+            updateMenuPos();
           }}
           onChange={(e) => {
             const v = e.target.value;
@@ -20839,7 +20860,10 @@ const SearchableSelect = ({
         />
       </div>
       {open && !disabled && (
-        <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-[250px] overflow-y-auto custom-scrollbar">
+        <div
+          className="fixed z-[9999] bg-white border border-slate-200 rounded-lg shadow-lg max-h-[250px] overflow-y-auto custom-scrollbar"
+          style={menuPos ? { top: menuPos.top, left: menuPos.left, width: menuPos.width } : undefined}
+        >
           {filteredOptions.length === 0 ? (
             <div className="px-3 py-2 text-slate-400 text-sm italic">Sin resultados</div>
           ) : (
