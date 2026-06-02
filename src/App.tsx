@@ -13900,14 +13900,30 @@ const VentasPedidosView = ({
                   comprobante: ventaFinal.comprobante,
                 })
               );
+              // Persistencia inmediata al finalizar: no depender del debounce
+              setVentas((prevVentas: any[]) => {
+                const next = prevVentas.map((v: any) => (v.id === ventaFinal.id ? ventaConFracc : v));
+                try {
+                  saveToSupabase('alido_ventas', next);
+                  try { localStorage.setItem('alido_ventas', JSON.stringify(next)); } catch {}
+                } catch {}
+                return next;
+              });
               showNotification(`Venta ${ventaFinal.comprobante} finalizada. Stock descontado.`, 'success');
             } else {
               setMovimientos(finalMovimientos);
+              // Persistencia inmediata del borrador
+              setVentas((prevVentas: any[]) => {
+                const next = prevVentas.map((v: any) => (v.id === ventaFinal.id ? ventaFinal : v));
+                try {
+                  saveToSupabase('alido_ventas', next);
+                  try { localStorage.setItem('alido_ventas', JSON.stringify(next)); } catch {}
+                } catch {}
+                return next;
+              });
               showNotification(`Pedido ${ventaFinal.comprobante} guardado.`, 'info');
             }
-            setVentas((prevVentas: any[]) =>
-              prevVentas.map((v: any) => (v.id === ventaFinal.id ? ventaFinal : v))
-            );
+            // setVentas se maneja arriba (con persistencia inmediata)
             clearVentaEditState();
             setView('list');
             return;
@@ -13921,9 +13937,17 @@ const VentasPedidosView = ({
               ...savedVenta,
               id: comprobanteDefinitivo,
               comprobante: comprobanteDefinitivo,
-              estado: shouldFinalize ? 'Finalizado' : 'En Proceso',
+              // Siempre creamos el registro como borrador primero para evitar "desapariciones"
+              // si la finalización falla o si el usuario imprime/cierra antes del debounce.
+              estado: 'En Proceso',
             };
-            return [ventaFinal, ...prevVentas];
+            const next = [ventaFinal, ...prevVentas];
+            // Persistencia inmediata: no depender del debounce para ventas nuevas
+            try {
+              saveToSupabase('alido_ventas', next);
+              try { localStorage.setItem('alido_ventas', JSON.stringify(next)); } catch {}
+            } catch {}
+            return next;
           });
 
           // Procesar stock DESPUÉS de asignar el comprobante
@@ -13940,8 +13964,24 @@ const VentasPedidosView = ({
               modoVenta: modoVentaPV,
             });
             if (fracc.ok === false) {
-              showNotification(fracc.error, 'error');
-              setVentas((prev: any[]) => prev.filter((v: any) => v.id !== ventaFinal.id));
+              showNotification(`${fracc.error}. El pedido quedó guardado en “En Proceso”.`, 'warning');
+              setVentas((prev: any[]) => {
+                const next = prev.map((v: any) =>
+                  v.id === ventaFinal.id
+                    ? {
+                        ...v,
+                        estado: 'En Proceso',
+                        finalizacionError: fracc.error,
+                        finalizacionErrorAt: new Date().toISOString(),
+                      }
+                    : v
+                );
+                try {
+                  saveToSupabase('alido_ventas', next);
+                  try { localStorage.setItem('alido_ventas', JSON.stringify(next)); } catch {}
+                } catch {}
+                return next;
+              });
               return;
             }
             const ventaConFracc = { ...ventaFinal, productos: fracc.items };
@@ -13965,9 +14005,16 @@ const VentasPedidosView = ({
                 comprobante: ventaFinal.comprobante,
               })
             );
-            setVentas((prev: any[]) => prev.map((v: any) => 
-              v.id === ventaFinal.id ? { ...ventaConFracc, estado: 'Finalizado' } : v
-            ));
+            setVentas((prev: any[]) => {
+              const next = prev.map((v: any) =>
+                v.id === ventaFinal.id ? { ...ventaConFracc, estado: 'Finalizado' } : v
+              );
+              try {
+                saveToSupabase('alido_ventas', next);
+                try { localStorage.setItem('alido_ventas', JSON.stringify(next)); } catch {}
+              } catch {}
+              return next;
+            });
             showNotification(`Venta ${ventaFinal.comprobante} finalizada. Stock descontado.`, 'success');
 
             sincronizarCobrosTesoreria(ventaConFracc, false);
@@ -21664,6 +21711,7 @@ export default function App() {
   const [listasPrecios, setListasPrecios] = useState<ListaPrecio[]>(INITIAL_LISTAS_PRECIOS);
   const [puntosVenta, setPuntosVenta] = useState<PuntoVenta[]>(INITIAL_PUNTOS_VENTA);
   const [ventas, setVentas] = useState<Venta[]>(INITIAL_VENTAS);
+  const ventasRef = useRef<Venta[]>(INITIAL_VENTAS);
   const [cobrosClientes, setCobrosClientes] = useState<any[]>([]);
 
   // Egresos State
@@ -21707,6 +21755,10 @@ export default function App() {
       .then((data) => setTesoreriaCuentas(data.cuentas))
       .catch((err) => console.error('Error cargando cuentas de tesorería:', err));
   }, [currentUser, isLoading]);
+
+  useEffect(() => {
+    ventasRef.current = ventas;
+  }, [ventas]);
 
   // --- Cargar datos desde Supabase al iniciar ---
   useEffect(() => {
@@ -22186,6 +22238,12 @@ export default function App() {
 
         const comprobante =
           remitoContainer.querySelector('.remito-nro')?.textContent?.replace(/^Nº\s*/i, '').trim() || 'Remito';
+        // Persistencia inmediata: imprimir NO debe depender del debounce
+        try {
+          const current = ventasRef.current;
+          saveToSupabase('alido_ventas', current);
+          try { localStorage.setItem('alido_ventas', JSON.stringify(current)); } catch {}
+        } catch {}
         openRemitoPrintWindow(remitoContainer.innerHTML, comprobante);
       }
     };
