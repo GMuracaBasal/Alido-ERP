@@ -20769,13 +20769,16 @@ const SearchableSelect = ({
 
   const filteredOptions = useMemo(() => {
     const q = normalizeText(query.trim());
-    if (!q) return sortedOptions;
+    const selLabel = normalizeText((selected?.label || '').trim());
+    // Si el query coincide con el label ya seleccionado (recién abrió, no tipeó nada),
+    // mostrar la lista completa en vez de filtrar a una sola opción.
+    if (!q || q === selLabel) return sortedOptions;
     return sortedOptions.filter(
       (o) =>
         normalizeText(o.label).includes(q) ||
         (o.sublabel && normalizeText(o.sublabel).includes(q))
     );
-  }, [sortedOptions, query]);
+  }, [sortedOptions, query, selected?.label]);
 
   const pickOption = (opt: SearchableSelectOption) => {
     onChange(opt.value);
@@ -21837,6 +21840,9 @@ export default function App() {
       if (d.alido_lotes_despiece?.length > 0) lastKnownLotesDespieceRef.current = d.alido_lotes_despiece;
       if (d.alido_movimientos?.length > 0) lastKnownMovimientosRef.current = d.alido_movimientos;
       if (d.alido_ventas?.length > 0) lastKnownVentasRef.current = d.alido_ventas;
+      MAESTROS_KEYS.forEach((k) => {
+        if (Array.isArray((d as any)[k]) && (d as any)[k].length > 0) lastKnownMaestrosRef.current[k] = (d as any)[k];
+      });
 
       setIsLoading(false);
     });
@@ -21970,6 +21976,12 @@ export default function App() {
   const lastKnownLotesDespieceRef = useRef<any[] | null>(null);
   const lastKnownMovimientosRef = useRef<any[] | null>(null);
   const lastKnownVentasRef = useRef<any[] | null>(null);
+  // --- Protección extendida para datos maestros/financieros ---
+  const lastKnownMaestrosRef = useRef<Record<string, any[]>>({});
+  const MAESTROS_KEYS = [
+    'alido_proveedores', 'alido_egresos', 'alido_pagos_proveedores',
+    'alido_tipos_egreso', 'alido_plan_cuentas', 'alido_clientes', 'alido_cobros_clientes',
+  ];
 
   // --- NUEVO: Trackear última versión válida de datos críticos ---
   useEffect(() => {
@@ -21991,6 +22003,18 @@ export default function App() {
   useEffect(() => {
     if (ventas.length > 0) lastKnownVentasRef.current = ventas;
   }, [ventas]);
+
+  useEffect(() => {
+    const snap: Record<string, any[]> = {
+      alido_proveedores: proveedores, alido_egresos: egresos,
+      alido_pagos_proveedores: pagosProveedores, alido_tipos_egreso: tiposEgreso,
+      alido_plan_cuentas: planCuentas, alido_clientes: clientes,
+      alido_cobros_clientes: cobrosClientes,
+    };
+    MAESTROS_KEYS.forEach((k) => {
+      if (Array.isArray(snap[k]) && snap[k].length > 0) lastKnownMaestrosRef.current[k] = snap[k];
+    });
+  }, [proveedores, egresos, pagosProveedores, tiposEgreso, planCuentas, clientes, cobrosClientes]);
 
   useEffect(() => {
     if (isLoading) return; // Don't save while loading from Supabase
@@ -22057,6 +22081,14 @@ export default function App() {
             return;
           }
         }
+        if (MAESTROS_KEYS.includes(key)) {
+          const currentIsEmpty = !Array.isArray(value) || value.length === 0;
+          const lastKnown = lastKnownMaestrosRef.current[key];
+          if (currentIsEmpty && Array.isArray(lastKnown) && lastKnown.length > 0) {
+            console.error(`⚠️ PROTECCIÓN: Se bloqueó el guardado de ${key} (vacío pero antes tenía ${lastKnown.length} registros).`);
+            return;
+          }
+        }
         saveToSupabase(key, value);
       });
       // Also keep localStorage as offline cache
@@ -22067,6 +22099,11 @@ export default function App() {
           const hadData =
             protection.lastKnown.current !== null && protection.lastKnown.current.length > 0;
           if (currentIsEmpty && hadData) return;
+        }
+        if (MAESTROS_KEYS.includes(key)) {
+          const currentIsEmpty = !Array.isArray(value) || value.length === 0;
+          const lastKnown = lastKnownMaestrosRef.current[key];
+          if (currentIsEmpty && Array.isArray(lastKnown) && lastKnown.length > 0) return;
         }
         try {
           localStorage.setItem(key, JSON.stringify(value));
@@ -22129,6 +22166,15 @@ export default function App() {
                 console.error(
                   `⚠️ SYNC PROTECCIÓN: Se bloqueó la sincronización de ${key} porque el valor remoto está vacío pero localmente hay ${lastKnown.length} registros.`
                 );
+                return;
+              }
+            }
+
+            if (MAESTROS_KEYS.includes(key)) {
+              const isEmpty = !Array.isArray(value) || value.length === 0;
+              const lastKnown = lastKnownMaestrosRef.current[key];
+              if (isEmpty && Array.isArray(lastKnown) && lastKnown.length > 0) {
+                console.error(`⚠️ SYNC PROTECCIÓN: Se bloqueó la sincronización de ${key} (remoto vacío, local tiene ${lastKnown.length}).`);
                 return;
               }
             }
