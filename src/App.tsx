@@ -499,9 +499,16 @@ const validateEtiquetasEnVenta = (
     }
     const { env } = found;
     if (isEnvaseEnBaja(env) || env.estado === 'Vendido') {
-      if (env.referenciaBaja !== ventaActualId && env.ventaId !== ventaActualId) {
+      const esBajaPorEstaVenta =
+        env.referenciaBaja === ventaActualId ||
+        env.ventaId === ventaActualId ||
+        (ventaActualId && env.motivoBaja === `Venta ${ventaActualId}`);
+      if (!esBajaPorEstaVenta) {
         return `La etiqueta ${p.codigoBarras} ya fue dada de baja en otra venta. No se puede finalizar.`;
       }
+      // La baja fue por esta misma venta (re-finalización o edición):
+      // es válida, saltar el resto de las validaciones para este producto.
+      continue;
     }
     if (!isEnvaseVigente(env)) {
       return `La etiqueta ${p.codigoBarras} no está disponible (estado: ${env.estado || 'N/A'}).`;
