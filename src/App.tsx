@@ -7852,6 +7852,7 @@ const EtiquetasView = ({
   const [searchTerm, setSearchTerm] = useState('');
 
   const barcodeRef = useRef<HTMLCanvasElement>(null);
+  const isRegisteringRef = useRef(false);
 
   useEffect(() => {
     if (!('serial' in navigator)) {
@@ -8066,20 +8067,24 @@ const EtiquetasView = ({
   const registerEnvase = (print: boolean) => {
     if (!selectedLoteId || currentPackagingWeight <= 0 || !selectedLote?.numeroLote) return;
     if (selectedLote?.tipo === 'despiece' && !selectedCorteId) return;
-
-    const leKey =
-      corteKeyEtiquetado ||
-      lotesEtiquetados.find(
-        (l: any) =>
-          l.loteId === selectedLoteId ||
-          l.loteId === selectedLote.numeroLote ||
-          l.loteNumero === selectedLote.numeroLote
-      )?.loteId ||
-      selectedLoteId;
+    // Guard contra doble registro rápido (Enter mantenido, doble click, print focus)
+    if (isRegisteringRef.current) return;
+    isRegisteringRef.current = true;
+    setTimeout(() => { isRegisteringRef.current = false; }, 1500);
 
       let registeredEnvase: any = null;
 
     setLotesEtiquetados((prev) => {
+      const leKey =
+        corteKeyEtiquetado ||
+        prev.find(
+          (l: any) =>
+            l.loteId === selectedLoteId ||
+            l.loteId === selectedLote.numeroLote ||
+            l.loteNumero === selectedLote.numeroLote
+        )?.loteId ||
+        selectedLoteId;
+
       const envasesActuales = getEnvasesDelLoteParaSecuencial(
         selectedLoteId,
         selectedLote.numeroLote,
@@ -8143,7 +8148,16 @@ const EtiquetasView = ({
           corteId: selectedCorteId,
         };
 
-      const updatedEnvases = [...(existingLe.envases || []), registeredEnvase];
+      const updatedEnvasesRaw = [...(existingLe.envases || []), registeredEnvase];
+      // Deduplicar envases por código de barras (protección contra registros dobles)
+      const seenCodigos = new Set<string>();
+      const updatedEnvases = updatedEnvasesRaw.filter((e: any) => {
+        const codigo = normalizeEtiquetaCodigo(e.codigoBarras || e.codigo || '');
+        if (!codigo) return true;
+        if (seenCodigos.has(codigo)) return false;
+        seenCodigos.add(codigo);
+        return true;
+      });
       const pesoTotalEtiquetado = updatedEnvases
         .filter(isEnvaseVigente)
         .reduce((s: number, e: any) => s + (getEnvaseKgDisponibles(e) || 0), 0);
@@ -8313,7 +8327,7 @@ const EtiquetasView = ({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
+    if (e.key === 'Enter' && !e.repeat) {
       registerEnvase(true);
     }
   };
