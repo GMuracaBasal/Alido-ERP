@@ -15662,7 +15662,7 @@ const RemitoView = ({ venta, cliente, productos, onBack }: any) => {
    );
 };
 
-const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas, setVentas, cobrosClientes, setCobrosClientes, currentUser, showNotification }: any) => {
+const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas, setVentas, cobrosClientes, setCobrosClientes, currentUser, showNotification, tesoreriaCuentas = [] }: any) => {
   const [view, setView] = useState<'list' | 'detail' | 'form'>('list');
   const [selectedCliente, setSelectedCliente] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -15690,6 +15690,7 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
     observaciones: '',
     comprobante: `REC-${Date.now()}`,
     tipoMovimiento: 'Cobro' as 'Cobro' | 'Ajuste',
+    cuentaTesoreriaId: '',
   });
 
   // Form State
@@ -15875,6 +15876,22 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
                 />
               </div>
             </div>
+
+            {cobroFormData.tipoMovimiento === 'Cobro' && (
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Cuenta de Tesorería (Destino)</label>
+                <select
+                  value={cobroFormData.cuentaTesoreriaId}
+                  onChange={(e) => setCobroFormData({ ...cobroFormData, cuentaTesoreriaId: e.target.value })}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
+                >
+                  <option value="">Seleccionar cuenta...</option>
+                  {tesoreriaCuentas.filter((c: any) => c.habilitada).map((c: any) => (
+                    <option key={c.id} value={c.id}>{c.nombre}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             <div className="space-y-2">
               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Observaciones Internas</label>
@@ -16110,6 +16127,7 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
       observaciones: '',
       comprobante: `REC-${format(new Date(), 'yyyyMMdd')}-${(recCount + 1).toString().padStart(3, '0')}`,
       tipoMovimiento: 'Cobro',
+      cuentaTesoreriaId: '',
     });
     setCobroMontoInput(String(monto));
     setIsCobroModalOpen(true);
@@ -16127,6 +16145,7 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
       observaciones: cobro.observaciones || '',
       comprobante: cobro.comprobante,
       tipoMovimiento: tipoMov,
+      cuentaTesoreriaId: cobro.cuentaTesoreriaId || '',
     });
     setCobroMontoInput(String(monto));
     setIsCobroModalOpen(true);
@@ -16135,6 +16154,10 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
   const handleDeleteCobro = (cobro: any) => {
     confirmDialog('¿Estás seguro de eliminar este cobro?', () => {
       setCobrosClientes((cobrosClientes || []).filter((c: any) => c.id !== cobro.id));
+      // Anular el movimiento de tesorería asociado (si lo tiene)
+      if (cobro.cuentaTesoreriaId) {
+        anularMovimientosCobroDeVenta(cobro.id);
+      }
       showNotification('Cobro eliminado', 'success');
     });
   };
@@ -16148,7 +16171,15 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
       esAjuste ? (parsedAjuste ?? cobroFormData.monto) : Math.abs(cobroFormData.monto),
       2
     );
+
+    // Validar cuenta de tesorería para cobros (no para ajustes)
+    if (!esAjuste && !cobroFormData.cuentaTesoreriaId) {
+      showNotification('Seleccioná la cuenta de Tesorería de destino del cobro', 'error');
+      return;
+    }
+
     if (editingCobroId) {
+      const cobroAnterior = (cobrosClientes || []).find((c: any) => c.id === editingCobroId);
       setCobrosClientes((cobrosClientes || []).map((c: any) =>
         c.id === editingCobroId
           ? {
@@ -16159,9 +16190,25 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
               referencia: cobroFormData.referencia,
               observaciones: cobroFormData.observaciones,
               tipoMovimiento: cobroFormData.tipoMovimiento,
+              cuentaTesoreriaId: esAjuste ? undefined : cobroFormData.cuentaTesoreriaId,
             }
           : c
       ));
+      // Re-sincronizar tesorería: anular movimiento anterior y crear el nuevo
+      if (!esAjuste) {
+        (async () => {
+          await anularMovimientosCobroDeVenta(editingCobroId);
+          await crearMovimientoCobro({
+            cuentaId: cobroFormData.cuentaTesoreriaId,
+            fecha: cobroFormData.fecha,
+            debe: monto,
+            detalle: `Cobro cuenta corriente ${cobroAnterior?.comprobante || ''} (${cobroFormData.metodo})`,
+            contraparte: selectedCliente.razonSocial,
+            origenId: editingCobroId,
+            origenReferencia: cobroAnterior?.comprobante || editingCobroId,
+          });
+        })();
+      }
       showNotification('Cobro actualizado', 'success');
     } else {
       const prefix = esAjuste ? 'AJC' : 'REC';
@@ -16170,6 +16217,7 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
         ...cobroFormData,
         monto,
         tipoMovimiento: cobroFormData.tipoMovimiento,
+        cuentaTesoreriaId: esAjuste ? undefined : cobroFormData.cuentaTesoreriaId,
         comprobante: `${prefix}-${format(new Date(), 'yyyyMMdd')}-${(count + 1).toString().padStart(3, '0')}`,
         id: `cbr-${Date.now()}`,
         clienteId: selectedCliente.id,
@@ -16178,6 +16226,18 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
         fechaCreacion: new Date().toISOString(),
       };
       setCobrosClientes([...(cobrosClientes || []), nuevoCobro]);
+      // Crear movimiento en Tesorería (solo cobros, no ajustes)
+      if (!esAjuste) {
+        crearMovimientoCobro({
+          cuentaId: nuevoCobro.cuentaTesoreriaId!,
+          fecha: nuevoCobro.fecha,
+          debe: monto,
+          detalle: `Cobro cuenta corriente ${nuevoCobro.comprobante} (${nuevoCobro.metodo})`,
+          contraparte: selectedCliente.razonSocial,
+          origenId: nuevoCobro.id,
+          origenReferencia: nuevoCobro.comprobante,
+        });
+      }
       showNotification(esAjuste ? 'Ajuste registrado con éxito' : 'Cobro registrado con éxito', 'success');
     }
     setIsCobroModalOpen(false);
@@ -16581,7 +16641,7 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
           id: `${v.id}-cobro-${idx}`,
           fecha: c.fecha,
           tipo: 'Cobro (Venta)',
-          detalle: `Cobro en venta ${v.comprobante} - ${c.metodo}`,
+          detalle: `Cobro en venta ${v.comprobante} - ${c.metodo}${(() => { const ct = (tesoreriaCuentas || []).find((tc: any) => tc.id === c.cuentaTesoreriaId); return ct ? ` → ${ct.nombre}` : ''; })()}`,
           comprobante: v.comprobante,
           sucursalId: v.sucursalId,
           debe: 0,
@@ -16600,7 +16660,7 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
             id: c.id,
             fecha: c.fecha,
             tipo: esAjuste ? 'AJUSTE' : 'Pago Recibido',
-            detalle: `${esAjuste ? 'Ajuste' : 'Cobro independiente'} - ${c.metodo} ${c.referencia ? `(${c.referencia})` : ''}`,
+            detalle: `${esAjuste ? 'Ajuste' : 'Cobro independiente'} - ${c.metodo} ${c.referencia ? `(${c.referencia})` : ''}${(() => { const ct = (tesoreriaCuentas || []).find((tc: any) => tc.id === c.cuentaTesoreriaId); return ct ? ` → ${ct.nombre}` : ''; })()}`,
             comprobante: c.comprobante,
             sucursalId: null,
             debe,
@@ -22864,6 +22924,7 @@ export default function App() {
                 setCobrosClientes={setCobrosClientes}
                 currentUser={currentUser}
                 showNotification={showNotification}
+                tesoreriaCuentas={tesoreriaCuentas}
               />
             )}
             {activeModule === 'VENTAS' && activeSubSection === 'Listas de Precios' && (
