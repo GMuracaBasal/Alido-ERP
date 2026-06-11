@@ -14,6 +14,8 @@ import {
   crearMovimientoManual,
   crearMovimientoCobro,
   anularMovimientosCobroDeVenta,
+  crearMovimientoPago,
+  anularMovimientosPago,
   anularMovimiento,
   crearTransferencia,
   anularTransferencia,
@@ -1831,6 +1833,7 @@ interface PagoProveedor {
   comprobante: string; // OP-YYYYMMDD-NNN | AJ-YYYYMMDD-NNN
   observaciones?: string;
   tipoMovimiento?: 'Pago' | 'Ajuste';
+  cuentaTesoreriaId?: string;
 }
 
 interface EgresoItem {
@@ -18092,7 +18095,7 @@ const TiposEgresoView = ({ tiposEgreso, setTiposEgreso, planCuentas, showNotific
   );
 };
 
-const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPagosProveedores, egresos, tiposEgreso, planCuentas, showNotification }: any) => {
+const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPagosProveedores, egresos, tiposEgreso, planCuentas, showNotification, tesoreriaCuentas = [] }: any) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isPagoModalOpen, setIsPagoModalOpen] = useState(false);
@@ -18104,6 +18107,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
     referencia: '',
     observaciones: '',
     tipoMovimiento: 'Pago' as 'Pago' | 'Ajuste',
+    cuentaTesoreriaId: '',
   });
   const [editingPagoId, setEditingPagoId] = useState<string | null>(null);
   const [pagoMontoInput, setPagoMontoInput] = useState('0');
@@ -18185,6 +18189,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
       referencia: '',
       observaciones: '',
       tipoMovimiento: 'Pago',
+      cuentaTesoreriaId: '',
     });
     setPagoMontoInput(String(monto));
     setIsPagoModalOpen(true);
@@ -18200,6 +18205,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
       referencia: pago.referencia || '',
       observaciones: pago.observaciones || '',
       tipoMovimiento: tipoMov,
+      cuentaTesoreriaId: pago.cuentaTesoreriaId || '',
     });
     setPagoMontoInput(String(monto));
     setIsPagoModalOpen(true);
@@ -18208,6 +18214,10 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
   const handleDeleteMovimiento = (pago: PagoProveedor) => {
     confirmDialog('¿Estás seguro de eliminar este movimiento?', () => {
       setPagosProveedores(pagosProveedores.filter((p: any) => p.id !== pago.id));
+      // Anular el movimiento de tesorería asociado (si lo tiene)
+      if (pago.cuentaTesoreriaId) {
+        anularMovimientosPago(pago.id);
+      }
       showNotification('Movimiento eliminado', 'success');
     });
   };
@@ -18220,7 +18230,15 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
       esAjuste ? (parsedAjuste ?? pagoData.monto) : Math.abs(pagoData.monto),
       2
     );
+
+    // Validar cuenta de tesorería para pagos (no para ajustes)
+    if (!esAjuste && !pagoData.cuentaTesoreriaId) {
+      showNotification('Seleccioná la cuenta de Tesorería de origen del pago', 'error');
+      return;
+    }
+
     if (editingPagoId) {
+      const pagoAnterior = (pagosProveedores || []).find((p: any) => p.id === editingPagoId);
       setPagosProveedores(pagosProveedores.map((p: any) =>
         p.id === editingPagoId
           ? {
@@ -18230,9 +18248,25 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
               referencia: pagoData.referencia,
               observaciones: pagoData.observaciones,
               tipoMovimiento: pagoData.tipoMovimiento,
+              cuentaTesoreriaId: esAjuste ? undefined : pagoData.cuentaTesoreriaId,
             }
           : p
       ));
+      // Re-sincronizar tesorería: anular movimiento anterior y crear el nuevo
+      if (!esAjuste) {
+        (async () => {
+          await anularMovimientosPago(editingPagoId);
+          await crearMovimientoPago({
+            cuentaId: pagoData.cuentaTesoreriaId,
+            fecha: pagoAnterior?.fecha || new Date().toISOString().split('T')[0],
+            haber: monto,
+            detalle: `Pago cuenta corriente ${pagoAnterior?.comprobante || ''} (${pagoData.metodo})`,
+            contraparte: selectedProveedor.razonSocial,
+            origenId: editingPagoId,
+            origenReferencia: pagoAnterior?.comprobante || editingPagoId,
+          });
+        })();
+      }
       showNotification('Movimiento actualizado', 'success');
     } else {
       const prefix = esAjuste ? 'AJ' : 'OP';
@@ -18247,8 +18281,21 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
         comprobante: `${prefix}-${format(new Date(), 'yyyyMMdd')}-${(count + 1).toString().padStart(3, '0')}`,
         observaciones: pagoData.observaciones,
         tipoMovimiento: pagoData.tipoMovimiento,
+        cuentaTesoreriaId: esAjuste ? undefined : pagoData.cuentaTesoreriaId,
       };
       setPagosProveedores([...pagosProveedores, newPago]);
+      // Crear movimiento en Tesorería (solo pagos, no ajustes)
+      if (!esAjuste) {
+        crearMovimientoPago({
+          cuentaId: newPago.cuentaTesoreriaId!,
+          fecha: newPago.fecha,
+          haber: monto,
+          detalle: `Pago cuenta corriente ${newPago.comprobante} (${newPago.metodo})`,
+          contraparte: selectedProveedor.razonSocial,
+          origenId: newPago.id,
+          origenReferencia: newPago.comprobante,
+        });
+      }
       showNotification(esAjuste ? 'Ajuste registrado con éxito' : 'Movimiento registrado con éxito', 'success');
     }
     setIsPagoModalOpen(false);
@@ -18421,6 +18468,10 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
                         </td>
                         <td className="px-6 py-4">
                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{item.comprobante}</p>
+                           {item.type === 'PAGO' && !isAjuste && item.cuentaTesoreriaId && (() => {
+                             const ct = (tesoreriaCuentas || []).find((tc: any) => tc.id === item.cuentaTesoreriaId);
+                             return ct ? <p className="text-[9px] font-bold text-sleek-accent/70 uppercase tracking-widest mt-0.5">→ {ct.nombre}</p> : null;
+                           })()}
                         </td>
                         <td className={cn("px-6 py-4 text-right font-black text-xs", debe > 0 ? "text-[#EF4444]" : "text-slate-400")}>
                            {debe > 0 ? `$ ${formatCurrency(debe)}` : '-'}
@@ -18780,6 +18831,22 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
                 />
               </div>
            </div>
+
+           {pagoData.tipoMovimiento === 'Pago' && (
+             <div className="space-y-2">
+               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Cuenta de Tesorería (Origen)</label>
+               <select
+                 value={pagoData.cuentaTesoreriaId}
+                 onChange={(e) => setPagoData({ ...pagoData, cuentaTesoreriaId: e.target.value })}
+                 className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
+               >
+                 <option value="">Seleccionar cuenta...</option>
+                 {tesoreriaCuentas.filter((c: any) => c.habilitada).map((c: any) => (
+                   <option key={c.id} value={c.id}>{c.nombre}</option>
+                 ))}
+               </select>
+             </div>
+           )}
 
            <div className="space-y-2">
               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Observaciones Internas</label>
@@ -22980,6 +23047,7 @@ export default function App() {
                 planCuentas={planCuentas}
                 currentUser={currentUser}
                 showNotification={showNotification}
+                tesoreriaCuentas={tesoreriaCuentas}
               />
             )}
             {activeModule === 'EGRESOS' && activeSubSection === 'Tipos de Egreso' && (
