@@ -7,6 +7,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import {
   loadAllData,
   saveToSupabase,
+  loadFromSupabase,
   checkForUpdates,
   loadTesoreria,
   saveCuenta,
@@ -3050,6 +3051,46 @@ const mergeLotesEtiquetados = (local: any[], remote: any[]): any[] => {
   });
 
   return merged;
+};
+
+/**
+ * Une dos arrays de objetos por su campo `id`, sin perder ningún registro.
+ * Los registros de `primary` tienen prioridad en caso de conflicto (mismo id).
+ * Los registros que solo están en `secondary` se conservan igual.
+ * Uso:
+ *   - Al guardar: unionById(local, remoto)  → local gana, pero no se pierde nada del remoto
+ *   - Al leer:    unionById(remoto, local)  → remoto gana, pero no se pierde nada local
+ */
+const unionById = (primary: any[], secondary: any[], idKey: string = 'id'): any[] => {
+  const map = new Map<string, any>();
+  (Array.isArray(secondary) ? secondary : []).forEach((item) => {
+    if (item && item[idKey] != null) map.set(String(item[idKey]), item);
+  });
+  (Array.isArray(primary) ? primary : []).forEach((item) => {
+    if (item && item[idKey] != null) map.set(String(item[idKey]), item);
+  });
+  return Array.from(map.values());
+};
+
+// Guarda en Supabase pero ANTES combina con lo que ya hay en la base,
+// para no pisar registros que existan remotamente pero no en el estado local.
+const persistMerged = async (
+  key: string,
+  localValue: any[],
+  mergeFn: (local: any[], remote: any[]) => any[]
+): Promise<void> => {
+  try {
+    const remote = await loadFromSupabase(key, []);
+    const merged = Array.isArray(remote) && remote.length > 0
+      ? mergeFn(localValue, remote)
+      : localValue;
+    await saveToSupabase(key, merged);
+    try { localStorage.setItem(key, JSON.stringify(merged)); } catch {}
+  } catch {
+    // Si falla la lectura remota, guardar el local (mejor eso que perder el guardado)
+    await saveToSupabase(key, localValue);
+    try { localStorage.setItem(key, JSON.stringify(localValue)); } catch {}
+  }
 };
 
 /** Número de lote de un corte de despiece: {lotePadre}-{códigoProducto} */
@@ -13939,8 +13980,7 @@ const VentasPedidosView = ({
               setVentas((prevVentas: any[]) => {
                 const next = prevVentas.map((v: any) => (v.id === ventaFinal.id ? ventaConFracc : v));
                 try {
-                  saveToSupabase('alido_ventas', next);
-                  try { localStorage.setItem('alido_ventas', JSON.stringify(next)); } catch {}
+                  persistMerged('alido_ventas', next, (local, remote) => unionById(local, remote));
                 } catch {}
                 return next;
               });
@@ -13951,8 +13991,7 @@ const VentasPedidosView = ({
               setVentas((prevVentas: any[]) => {
                 const next = prevVentas.map((v: any) => (v.id === ventaFinal.id ? ventaFinal : v));
                 try {
-                  saveToSupabase('alido_ventas', next);
-                  try { localStorage.setItem('alido_ventas', JSON.stringify(next)); } catch {}
+                  persistMerged('alido_ventas', next, (local, remote) => unionById(local, remote));
                 } catch {}
                 return next;
               });
@@ -13979,8 +14018,7 @@ const VentasPedidosView = ({
             const next = [ventaFinal, ...prevVentas];
             // Persistencia inmediata: no depender del debounce para ventas nuevas
             try {
-              saveToSupabase('alido_ventas', next);
-              try { localStorage.setItem('alido_ventas', JSON.stringify(next)); } catch {}
+              persistMerged('alido_ventas', next, (local, remote) => unionById(local, remote));
             } catch {}
             return next;
           });
@@ -14012,8 +14050,7 @@ const VentasPedidosView = ({
                     : v
                 );
                 try {
-                  saveToSupabase('alido_ventas', next);
-                  try { localStorage.setItem('alido_ventas', JSON.stringify(next)); } catch {}
+                  persistMerged('alido_ventas', next, (local, remote) => unionById(local, remote));
                 } catch {}
                 return next;
               });
@@ -14045,8 +14082,7 @@ const VentasPedidosView = ({
                 v.id === ventaFinal.id ? { ...ventaConFracc, estado: 'Finalizado' } : v
               );
               try {
-                saveToSupabase('alido_ventas', next);
-                try { localStorage.setItem('alido_ventas', JSON.stringify(next)); } catch {}
+                persistMerged('alido_ventas', next, (local, remote) => unionById(local, remote));
               } catch {}
               return next;
             });
@@ -22979,10 +23015,20 @@ export default function App() {
             return;
           }
         }
-        saveToSupabase(key, value);
+        // Keys críticas: guardar con merge para no perder registros remotos
+        if (key === 'alido_ventas' || key === 'alido_movimientos') {
+          persistMerged(key, value, (local, remote) => unionById(local, remote));
+        } else if (key === 'alido_lotes_etiquetados') {
+          persistMerged(key, value, (local, remote) => mergeLotesEtiquetados(local, remote));
+        } else {
+          saveToSupabase(key, value);
+        }
       });
       // Also keep localStorage as offline cache
       Object.entries(dataMap).forEach(([key, value]) => {
+        if (key === 'alido_ventas' || key === 'alido_movimientos' || key === 'alido_lotes_etiquetados') {
+          return; // Ya persistido (Supabase + localStorage) por persistMerged
+        }
         const protection = protectedKeys[key];
         if (protection) {
           const currentIsEmpty = !Array.isArray(protection.current) || protection.current.length === 0;
@@ -23074,6 +23120,18 @@ export default function App() {
               setLotesEtiquetados((localData: any[]) => {
                 return mergeLotesEtiquetados(localData, value);
               });
+              return;
+            }
+
+            // MERGE para ventas: no perder ventas locales no sincronizadas
+            if (key === 'alido_ventas' && Array.isArray(value)) {
+              setVentas((localData: any[]) => unionById(value, localData));
+              return;
+            }
+
+            // MERGE para movimientos: no perder movimientos locales no sincronizados
+            if (key === 'alido_movimientos' && Array.isArray(value)) {
+              setMovimientos((localData: any[]) => unionById(value, localData));
               return;
             }
 
