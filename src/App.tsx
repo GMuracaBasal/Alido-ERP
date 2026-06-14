@@ -12518,6 +12518,17 @@ const MESES_DASHBOARD = [
 
 const COLORS_CHART = ['#F27D26', '#1A2B3C', '#10B981', '#3B82F6', '#8B5CF6', '#F59E0B', '#EF4444', '#06B6D4', '#EC4899', '#14B8A6'];
 
+const TAILWIND_HEX: Record<string, string> = {
+  emerald: '#10B981', green: '#22C55E', lime: '#84CC16', teal: '#14B8A6',
+  cyan: '#06B6D4', sky: '#0EA5E9', blue: '#3B82F6', indigo: '#6366F1',
+  violet: '#8B5CF6', purple: '#A855F7', fuchsia: '#D946EF', pink: '#EC4899',
+  rose: '#F43F5E', red: '#EF4444', orange: '#F97316', amber: '#F59E0B',
+  yellow: '#EAB308', slate: '#64748B', gray: '#6B7280', zinc: '#71717A',
+  stone: '#78716C', neutral: '#737373',
+};
+const colorDeTipo = (color: string | undefined, fallbackIdx: number): string =>
+  (color && TAILWIND_HEX[color]) || COLORS_CHART[fallbackIdx % COLORS_CHART.length];
+
 const ventaEnMesAnio = (v: Venta, mes: number, anio: number) => {
   if (v.estado !== 'Finalizado') return false;
   const d = parseISO(v.fecha);
@@ -19079,6 +19090,713 @@ const printComprobanteCobro = (cobro: any, cliente: any) => {
   printWindow.document.close();
 };
 
+const EgresosDashboardView = ({
+  egresos,
+  tiposEgreso,
+  proveedores,
+  planCuentas,
+  productos,
+}: {
+  egresos: Egreso[];
+  tiposEgreso: TipoEgreso[];
+  proveedores: Proveedor[];
+  planCuentas: PlanCuenta[];
+  productos: Producto[];
+}) => {
+  const hoy = new Date();
+  const [mesIdx, setMesIdx] = useState(hoy.getMonth());
+  const [anio, setAnio] = useState(hoy.getFullYear());
+  const [comparacion, setComparacion] = useState<'Mes anterior' | 'Mismo mes año anterior' | 'Sin comparación'>('Mes anterior');
+
+  const [filtroTipoEgresoId, setFiltroTipoEgresoId] = useState('');
+  const [filtroProveedorId, setFiltroProveedorId] = useState('');
+
+  const [dashTab, setDashTab] = useState<'tipo' | 'proveedor' | 'cuenta' | 'producto'>('tipo');
+
+  const tipoById = useMemo(() => {
+    const map = new Map<string, TipoEgreso>();
+    (tiposEgreso || []).forEach((t) => map.set(t.id, t));
+    return map;
+  }, [tiposEgreso]);
+
+  const proveedorById = useMemo(() => {
+    const map = new Map<string, Proveedor>();
+    (proveedores || []).forEach((p) => map.set(p.id, p));
+    return map;
+  }, [proveedores]);
+
+  const cuentaById = useMemo(() => {
+    const map = new Map<string, PlanCuenta>();
+    (planCuentas || []).forEach((c) => map.set(c.id, c));
+    return map;
+  }, [planCuentas]);
+
+  const productoById = useMemo(() => {
+    const map = new Map<string, Producto>();
+    (productos || []).forEach((p) => map.set(p.id, p));
+    return map;
+  }, [productos]);
+
+  const egresosValidos = useMemo(() => {
+    return (egresos || []).filter((e) => e.estado === 'Confirmado');
+  }, [egresos]);
+
+  const egresoEnMesAnio = (e: Egreso, mes: number, anioRef: number) => {
+    const d = parseISO(e.fecha);
+    if (!isValid(d)) return false;
+    return d.getMonth() === mes && d.getFullYear() === anioRef;
+  };
+
+  const pasaFiltros = (e: Egreso) => {
+    if (filtroTipoEgresoId && e.tipoEgresoId !== filtroTipoEgresoId) return false;
+    if (filtroProveedorId && e.proveedorId !== filtroProveedorId) return false;
+    return true;
+  };
+
+  const egresosDelPeriodo = useMemo(() => {
+    return egresosValidos.filter((e) => egresoEnMesAnio(e, mesIdx, anio) && pasaFiltros(e));
+  }, [egresosValidos, mesIdx, anio, filtroTipoEgresoId, filtroProveedorId]);
+
+  const periodoComparacion = useMemo(() => {
+    if (comparacion === 'Sin comparación') return null;
+    if (comparacion === 'Mes anterior') {
+      const d = new Date(anio, mesIdx - 1, 1);
+      return { mes: d.getMonth(), anio: d.getFullYear() };
+    }
+    return { mes: mesIdx, anio: anio - 1 };
+  }, [comparacion, mesIdx, anio]);
+
+  const egresosComparacion = useMemo(() => {
+    if (!periodoComparacion) return [];
+    return egresosValidos.filter((e) => egresoEnMesAnio(e, periodoComparacion.mes, periodoComparacion.anio) && pasaFiltros(e));
+  }, [egresosValidos, periodoComparacion, filtroTipoEgresoId, filtroProveedorId]);
+
+  const metricas = useMemo(() => {
+    const calc = (lista: Egreso[]) => {
+      const gastoTotal = lista.reduce((s, e) => s + (e.total || 0), 0);
+      const comprobantes = lista.length;
+      const ticket = comprobantes > 0 ? gastoTotal / comprobantes : 0;
+      return { gastoTotal, comprobantes, ticket };
+    };
+    return { actual: calc(egresosDelPeriodo), anterior: calc(egresosComparacion) };
+  }, [egresosDelPeriodo, egresosComparacion]);
+
+  const variacionPct = (actual: number, anterior: number) => {
+    if (!periodoComparacion || anterior === 0) return null;
+    return ((actual - anterior) / anterior) * 100;
+  };
+
+  const textoComparacion = useMemo(() => {
+    if (!periodoComparacion) return '';
+    if (comparacion === 'Mes anterior') return 'mes anterior';
+    return `${MESES_DASHBOARD[mesIdx]} ${anio - 1}`;
+  }, [periodoComparacion, comparacion, mesIdx, anio]);
+
+  const KpiCard = ({
+    label,
+    value,
+    variacion,
+    format: fmt = 'number',
+  }: {
+    label: string;
+    value: number;
+    variacion: number | null;
+    format?: 'money' | 'number' | 'percent';
+  }) => {
+    const display =
+      fmt === 'money'
+        ? `$ ${formatCurrency(value)}`
+        : fmt === 'percent'
+          ? `${formatNumber(value, 1)}%`
+          : displayNum(value, 0);
+    const varPos = variacion != null && variacion >= 0;
+    const varNeg = variacion != null && variacion < 0;
+    return (
+      <Card className="p-4 border border-slate-100 shadow-sm">
+        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">{label}</p>
+        <p className="text-2xl font-bold text-sleek-dark">{display}</p>
+        {variacion != null ? (
+          <p
+            className={cn(
+              'text-xs font-bold mt-2 flex items-center gap-1',
+              varPos ? 'text-emerald-500' : varNeg ? 'text-red-500' : 'text-slate-400'
+            )}
+          >
+            {varPos ? <TrendingUp className="w-3.5 h-3.5" /> : varNeg ? <TrendingDown className="w-3.5 h-3.5" /> : null}
+            {varPos ? '▲' : varNeg ? '▼' : ''} {formatNumber(Math.abs(variacion), 1)}% vs {textoComparacion}
+          </p>
+        ) : (
+          <p className="text-xs text-slate-400 mt-2">Sin comparación</p>
+        )}
+      </Card>
+    );
+  };
+
+  const aniosOpciones = useMemo(() => {
+    const set = new Set<number>();
+    (egresos || []).forEach((e) => {
+      const d = parseISO(e.fecha);
+      if (isValid(d)) set.add(d.getFullYear());
+    });
+    set.add(hoy.getFullYear());
+    return Array.from(set).sort((a, b) => b - a);
+  }, [egresos]);
+
+  const proveedoresOrdenados = useMemo(() => {
+    return [...(proveedores || [])].sort((a, b) => (a.razonSocial || '').localeCompare(b.razonSocial || ''));
+  }, [proveedores]);
+
+  const totalGastoPeriodo = metricas.actual.gastoTotal;
+
+  const datosPorTipo = useMemo(() => {
+    const acc: Record<string, any> = {};
+    egresosDelPeriodo.forEach((e) => {
+      const key = e.tipoEgresoId || 'sin-tipo';
+      const tipo = tipoById.get(e.tipoEgresoId);
+      if (!acc[key]) {
+        acc[key] = { tipoId: e.tipoEgresoId, nombre: tipo?.nombre || 'Sin tipo', colorToken: tipo?.color, monto: 0, comprobantes: 0 };
+      }
+      acc[key].monto += e.total || 0;
+      acc[key].comprobantes += 1;
+    });
+    const out = Object.values(acc).sort((a: any, b: any) => b.monto - a.monto);
+    out.forEach((d: any) => {
+      d.pct = totalGastoPeriodo > 0 ? (d.monto / totalGastoPeriodo) * 100 : 0;
+    });
+    return out;
+  }, [egresosDelPeriodo, tipoById, totalGastoPeriodo]);
+
+  const datosPorProveedor = useMemo(() => {
+    const acc: Record<string, any> = {};
+    egresosDelPeriodo.forEach((e) => {
+      const key = e.proveedorId || 'sin-proveedor';
+      const prov = e.proveedorId ? proveedorById.get(e.proveedorId) : undefined;
+      if (!acc[key]) {
+        acc[key] = {
+          proveedorId: e.proveedorId || 'sin-proveedor',
+          nombre: e.proveedorId ? (prov?.razonSocial || 'Sin proveedor') : 'Ocasional / Sin proveedor',
+          monto: 0,
+          comprobantes: 0,
+        };
+      }
+      acc[key].monto += e.total || 0;
+      acc[key].comprobantes += 1;
+    });
+    const out = Object.values(acc).sort((a: any, b: any) => b.monto - a.monto);
+    out.forEach((d: any) => {
+      d.pct = totalGastoPeriodo > 0 ? (d.monto / totalGastoPeriodo) * 100 : 0;
+    });
+    return out;
+  }, [egresosDelPeriodo, proveedorById, totalGastoPeriodo]);
+
+  const datosPorCuenta = useMemo(() => {
+    const acc: Record<string, any> = {};
+    egresosDelPeriodo.forEach((e) => {
+      const key = e.cuentaContableId || 'sin-cuenta';
+      const cuenta = cuentaById.get(e.cuentaContableId);
+      if (!acc[key]) {
+        acc[key] = {
+          cuentaId: e.cuentaContableId || 'sin-cuenta',
+          nombre: cuenta ? `${cuenta.codigo} - ${cuenta.nombre}` : 'Sin cuenta',
+          monto: 0,
+        };
+      }
+      acc[key].monto += e.total || 0;
+    });
+    const out = Object.values(acc).sort((a: any, b: any) => b.monto - a.monto);
+    out.forEach((d: any) => {
+      d.pct = totalGastoPeriodo > 0 ? (d.monto / totalGastoPeriodo) * 100 : 0;
+    });
+    return out;
+  }, [egresosDelPeriodo, cuentaById, totalGastoPeriodo]);
+
+  const datosPorProducto = useMemo(() => {
+    const acc: Record<string, any> = {};
+    egresosDelPeriodo.forEach((e) => {
+      (e.items || []).forEach((item) => {
+        if (!item.productoId) return;
+        const prod = productoById.get(item.productoId);
+        if (!acc[item.productoId]) {
+          acc[item.productoId] = { productoId: item.productoId, nombre: prod?.nombre || 'Sin producto', codigo: prod?.codigo || '-', monto: 0 };
+        }
+        acc[item.productoId].monto += item.subtotal || 0;
+      });
+    });
+    const out = Object.values(acc).sort((a: any, b: any) => b.monto - a.monto);
+    const total = out.reduce((s: number, d: any) => s + (d.monto || 0), 0);
+    out.forEach((d: any) => {
+      d.pct = total > 0 ? (d.monto / total) * 100 : 0;
+    });
+    return out;
+  }, [egresosDelPeriodo, productoById]);
+
+  const datosEvolucion = useMemo(() => {
+    const result: any[] = [];
+    for (let i = 11; i >= 0; i--) {
+      let m = mesIdx - i;
+      let a = anio;
+      while (m < 0) {
+        m += 12;
+        a -= 1;
+      }
+      const egresosMes = egresosValidos.filter((e) => egresoEnMesAnio(e, m, a) && pasaFiltros(e));
+      const label = new Date(a, m).toLocaleDateString('es-AR', { month: 'short', year: '2-digit' });
+      result.push({
+        label,
+        gastoTotal: egresosMes.reduce((s, e) => s + (e.total || 0), 0),
+      });
+    }
+    return result;
+  }, [egresosValidos, mesIdx, anio, filtroTipoEgresoId, filtroProveedorId]);
+
+  const datosComposicionApilados = useMemo(() => {
+    const tiposSet = new Set<string>();
+    const rows: any[] = [];
+    for (let i = 11; i >= 0; i--) {
+      let m = mesIdx - i;
+      let a = anio;
+      while (m < 0) {
+        m += 12;
+        a -= 1;
+      }
+      const egresosMes = egresosValidos.filter((e) => egresoEnMesAnio(e, m, a) && pasaFiltros(e));
+      const desglose: Record<string, number> = {};
+      egresosMes.forEach((e) => {
+        const key = e.tipoEgresoId || 'sin-tipo';
+        tiposSet.add(key);
+        desglose[key] = (desglose[key] || 0) + (e.total || 0);
+      });
+      const label = new Date(a, m).toLocaleDateString('es-AR', { month: 'short', year: '2-digit' });
+      rows.push({ label, ...desglose });
+    }
+    const ordenPorTipo = new Map<string, number>();
+    datosPorTipo.forEach((d: any, i: number) => ordenPorTipo.set(d.tipoId || 'sin-tipo', i));
+    const tipos = Array.from(tiposSet)
+      .sort((a, b) => {
+        const oa = ordenPorTipo.has(a) ? (ordenPorTipo.get(a) as number) : Number.MAX_SAFE_INTEGER;
+        const ob = ordenPorTipo.has(b) ? (ordenPorTipo.get(b) as number) : Number.MAX_SAFE_INTEGER;
+        return oa - ob;
+      })
+      .map((id) => ({
+        id,
+        nombre: tipoById.get(id)?.nombre || 'Sin tipo',
+        colorToken: tipoById.get(id)?.color,
+      }));
+    return { tipos, rows };
+  }, [egresosValidos, mesIdx, anio, filtroTipoEgresoId, filtroProveedorId, tipoById, datosPorTipo]);
+
+  return (
+    <div id="dashboard-egresos" className="space-y-8 animate-in fade-in duration-500 pb-12">
+      <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6">
+        <div>
+          <h1 className="text-2xl font-bold text-sleek-dark uppercase tracking-widest flex items-center gap-3">
+            <BarChart3 className="w-7 h-7 text-sleek-accent" />
+            Dashboard de Egresos
+          </h1>
+          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">
+            En qué se gasta — período seleccionado (total con IVA)
+          </p>
+        </div>
+        <div className="flex flex-col gap-4 bg-white p-4 rounded-xl border border-slate-100 shadow-sm w-full lg:w-auto">
+          <div className="flex flex-wrap gap-4 items-end">
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Período</label>
+              <div className="flex gap-2">
+                <select
+                  value={mesIdx}
+                  onChange={(e) => setMesIdx(parseInt(e.target.value, 10))}
+                  className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold uppercase tracking-widest"
+                >
+                  {MESES_DASHBOARD.map((m, i) => (
+                    <option key={m} value={i}>{m}</option>
+                  ))}
+                </select>
+                <select
+                  value={anio}
+                  onChange={(e) => setAnio(parseInt(e.target.value, 10))}
+                  className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold uppercase tracking-widest"
+                >
+                  {aniosOpciones.map((y) => (
+                    <option key={y} value={y}>{y}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Comparar con</label>
+              <select
+                value={comparacion}
+                onChange={(e) => setComparacion(e.target.value as typeof comparacion)}
+                className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold uppercase tracking-widest min-w-[180px]"
+              >
+                <option value="Mes anterior">Mes anterior</option>
+                <option value="Mismo mes año anterior">Mismo mes año anterior</option>
+                <option value="Sin comparación">Sin comparación</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-4 items-end">
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Tipo de egreso</label>
+              <select
+                value={filtroTipoEgresoId}
+                onChange={(e) => setFiltroTipoEgresoId(e.target.value)}
+                className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold uppercase tracking-widest min-w-[200px]"
+              >
+                <option value="">Todos los tipos</option>
+                {(tiposEgreso || []).map((t) => (
+                  <option key={t.id} value={t.id}>{t.nombre}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Proveedor</label>
+              <select
+                value={filtroProveedorId}
+                onChange={(e) => setFiltroProveedorId(e.target.value)}
+                className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold uppercase tracking-widest min-w-[220px]"
+              >
+                <option value="">Todos los proveedores</option>
+                {proveedoresOrdenados.map((p) => (
+                  <option key={p.id} value={p.id}>{p.razonSocial}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <KpiCard
+          label="Gasto total"
+          value={metricas.actual.gastoTotal}
+          variacion={variacionPct(metricas.actual.gastoTotal, metricas.anterior.gastoTotal)}
+          format="money"
+        />
+        <KpiCard
+          label="Nº de comprobantes"
+          value={metricas.actual.comprobantes}
+          variacion={variacionPct(metricas.actual.comprobantes, metricas.anterior.comprobantes)}
+        />
+        <KpiCard
+          label="Ticket promedio"
+          value={metricas.actual.ticket}
+          variacion={variacionPct(metricas.actual.ticket, metricas.anterior.ticket)}
+          format="money"
+        />
+      </div>
+
+      {/* Bloque 2 — Desgloses */}
+      <div className="bg-white border border-slate-100 rounded-lg shadow-sm">
+        <div className="flex border-b border-slate-200 overflow-x-auto">
+          {[
+            { key: 'tipo' as const, label: 'Por Tipo de Egreso' },
+            { key: 'proveedor' as const, label: 'Por Proveedor' },
+            { key: 'cuenta' as const, label: 'Por Cuenta Contable' },
+            { key: 'producto' as const, label: 'Por Producto / Insumo' },
+          ].map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setDashTab(tab.key)}
+              className={cn(
+                'px-4 py-3 text-[10px] uppercase tracking-widest font-bold whitespace-nowrap border-b-2 transition-colors',
+                dashTab === tab.key ? 'text-sleek-accent border-sleek-accent' : 'text-slate-400 border-transparent hover:text-slate-600'
+              )}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="p-6">
+          {dashTab === 'tipo' && (
+            <div className="space-y-6">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead className="bg-slate-50 border-b border-slate-200">
+                    <tr className="text-xs text-slate-500 font-semibold uppercase tracking-widest">
+                      <th className="px-4 py-3">Tipo de egreso</th>
+                      <th className="px-4 py-3 text-right">Monto</th>
+                      <th className="px-4 py-3 text-right">% del total</th>
+                      <th className="px-4 py-3 text-right">Nº comprobantes</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {datosPorTipo.map((d: any, i: number) => (
+                      <tr key={d.tipoId} className="hover:bg-slate-50">
+                        <td className="px-4 py-3 text-sm font-bold text-sleek-dark">
+                          <span className="inline-flex items-center gap-2">
+                            <span className="w-3 h-3 rounded-full" style={{ backgroundColor: colorDeTipo(d.colorToken, i) }} />
+                            {d.nombre}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-right font-mono font-bold">$ {formatCurrency(d.monto)}</td>
+                        <td className="px-4 py-3 text-sm text-right font-mono">{displayNum(d.pct, 1)}%</td>
+                        <td className="px-4 py-3 text-sm text-right font-mono">{d.comprobantes}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {datosPorTipo.length > 0 && (
+                <div className="mt-6" style={{ height: 360 }}>
+                  <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Distribución por Tipo de Egreso</h3>
+                  <Pie
+                    data={{
+                      labels: datosPorTipo.map((d: any) => d.nombre),
+                      datasets: [{
+                        data: datosPorTipo.map((d: any) => d.monto),
+                        backgroundColor: datosPorTipo.map((d: any, i: number) => colorDeTipo(d.colorToken, i)),
+                      }],
+                    }}
+                    options={{
+                      responsive: true,
+                      maintainAspectRatio: false,
+                      plugins: {
+                        legend: { position: 'bottom' as const },
+                        tooltip: { callbacks: { label: (ctx: any) => `$ ${formatCurrency(ctx.parsed)}` } },
+                      },
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {dashTab === 'proveedor' && (
+            <div className="space-y-6">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead className="bg-slate-50 border-b border-slate-200">
+                    <tr className="text-xs text-slate-500 font-semibold uppercase tracking-widest">
+                      <th className="px-4 py-3">Proveedor</th>
+                      <th className="px-4 py-3 text-right">Monto</th>
+                      <th className="px-4 py-3 text-right">% del total</th>
+                      <th className="px-4 py-3 text-right">Nº comprobantes</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {datosPorProveedor.map((d: any) => (
+                      <tr key={d.proveedorId} className="hover:bg-slate-50">
+                        <td className="px-4 py-3 text-sm font-bold text-sleek-dark">{d.nombre}</td>
+                        <td className="px-4 py-3 text-sm text-right font-mono font-bold">$ {formatCurrency(d.monto)}</td>
+                        <td className="px-4 py-3 text-sm text-right font-mono">{displayNum(d.pct, 1)}%</td>
+                        <td className="px-4 py-3 text-sm text-right font-mono">{d.comprobantes}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {datosPorProveedor.length > 0 && (
+                <div className="mt-6" style={{ height: 400 }}>
+                  <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Top 10 Proveedores por Monto</h3>
+                  <Bar
+                    data={{
+                      labels: datosPorProveedor.slice(0, 10).map((d: any) => d.nombre),
+                      datasets: [{
+                        label: 'Monto',
+                        data: datosPorProveedor.slice(0, 10).map((d: any) => d.monto),
+                        backgroundColor: '#F27D26',
+                        borderRadius: 4,
+                      }],
+                    }}
+                    options={{
+                      indexAxis: 'y' as const,
+                      responsive: true,
+                      maintainAspectRatio: false,
+                      plugins: { legend: { display: false } },
+                      scales: {
+                        x: { ticks: { callback: (v: any) => `$ ${(Number(v) / 1000).toFixed(0)}k` } },
+                      },
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {dashTab === 'cuenta' && (
+            <div className="space-y-6">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead className="bg-slate-50 border-b border-slate-200">
+                    <tr className="text-xs text-slate-500 font-semibold uppercase tracking-widest">
+                      <th className="px-4 py-3">Cuenta contable</th>
+                      <th className="px-4 py-3 text-right">Monto</th>
+                      <th className="px-4 py-3 text-right">% del total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {datosPorCuenta.map((d: any) => (
+                      <tr key={d.cuentaId} className="hover:bg-slate-50">
+                        <td className="px-4 py-3 text-sm font-bold text-sleek-dark">{d.nombre}</td>
+                        <td className="px-4 py-3 text-sm text-right font-mono font-bold">$ {formatCurrency(d.monto)}</td>
+                        <td className="px-4 py-3 text-sm text-right font-mono">{displayNum(d.pct, 1)}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {datosPorCuenta.length > 0 && (
+                <div className="mt-6" style={{ height: 360 }}>
+                  <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Gasto por Cuenta Contable</h3>
+                  <Bar
+                    data={{
+                      labels: datosPorCuenta.map((d: any) => d.nombre),
+                      datasets: [{
+                        label: 'Monto',
+                        data: datosPorCuenta.map((d: any) => d.monto),
+                        backgroundColor: COLORS_CHART.slice(0, datosPorCuenta.length),
+                        borderRadius: 4,
+                      }],
+                    }}
+                    options={{
+                      responsive: true,
+                      maintainAspectRatio: false,
+                      plugins: { legend: { display: false } },
+                      scales: {
+                        y: { ticks: { callback: (v: any) => `$ ${(Number(v) / 1000).toFixed(0)}k` } },
+                      },
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {dashTab === 'producto' && (
+            <div className="space-y-6">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead className="bg-slate-50 border-b border-slate-200">
+                    <tr className="text-xs text-slate-500 font-semibold uppercase tracking-widest">
+                      <th className="px-4 py-3">Producto / Insumo</th>
+                      <th className="px-4 py-3">Código</th>
+                      <th className="px-4 py-3 text-right">Monto (neto)</th>
+                      <th className="px-4 py-3 text-right">% del total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {datosPorProducto.map((d: any) => (
+                      <tr key={d.productoId} className="hover:bg-slate-50">
+                        <td className="px-4 py-3 text-sm font-bold text-sleek-dark">{d.nombre}</td>
+                        <td className="px-4 py-3 text-sm font-mono text-slate-500">{d.codigo}</td>
+                        <td className="px-4 py-3 text-sm text-right font-mono font-bold">$ {formatCurrency(d.monto)}</td>
+                        <td className="px-4 py-3 text-sm text-right font-mono">{displayNum(d.pct, 1)}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {datosPorProducto.length > 0 && (
+                <div className="mt-6" style={{ height: 400 }}>
+                  <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Top 10 Productos / Insumos por Monto (neto)</h3>
+                  <Bar
+                    data={{
+                      labels: datosPorProducto.slice(0, 10).map((d: any) => d.nombre),
+                      datasets: [{
+                        label: 'Monto',
+                        data: datosPorProducto.slice(0, 10).map((d: any) => d.monto),
+                        backgroundColor: '#F27D26',
+                        borderRadius: 4,
+                      }],
+                    }}
+                    options={{
+                      indexAxis: 'y' as const,
+                      responsive: true,
+                      maintainAspectRatio: false,
+                      plugins: { legend: { display: false } },
+                      scales: {
+                        x: { ticks: { callback: (v: any) => `$ ${(Number(v) / 1000).toFixed(0)}k` } },
+                      },
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Bloque 3 — Evolución temporal */}
+      <div className="space-y-4">
+        <h3 className="text-sm font-bold text-sleek-dark uppercase tracking-widest">Evolución Temporal</h3>
+
+        <div className="bg-white border border-slate-100 rounded-lg shadow-sm p-6">
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Gasto Total Mensual (últimos 12 meses)</span>
+          <div className="mt-4" style={{ height: 350 }}>
+            <Line
+              data={{
+                labels: datosEvolucion.map((d: any) => d.label),
+                datasets: [
+                  {
+                    label: 'Gasto total',
+                    data: datosEvolucion.map((d: any) => d.gastoTotal),
+                    borderColor: '#F27D26',
+                    backgroundColor: 'rgba(242,125,38,0.1)',
+                    borderWidth: 3,
+                    pointRadius: 4,
+                    tension: 0.3,
+                    fill: true,
+                  },
+                ],
+              }}
+              options={{
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                  legend: { position: 'bottom' as const },
+                  tooltip: {
+                    callbacks: {
+                      label: (ctx: any) => `${ctx.dataset.label}: $ ${formatCurrency(ctx.parsed.y)}`,
+                    },
+                  },
+                },
+                scales: {
+                  y: { ticks: { callback: (v: any) => `$ ${(Number(v) / 1000).toFixed(0)}k` } },
+                },
+              }}
+            />
+          </div>
+        </div>
+
+        <div className="bg-white border border-slate-100 rounded-lg shadow-sm p-6">
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Composición Mensual por Tipo de Egreso</span>
+          <div className="mt-4" style={{ height: 350 }}>
+            <Bar
+              data={{
+                labels: datosComposicionApilados.rows.map((d: any) => d.label),
+                datasets: datosComposicionApilados.tipos.map((t: any, i: number) => ({
+                  label: t.nombre,
+                  data: datosComposicionApilados.rows.map((d: any) => d[t.id] || 0),
+                  backgroundColor: colorDeTipo(t.colorToken, i),
+                })),
+              }}
+              options={{
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { position: 'bottom' as const } },
+                scales: {
+                  x: { stacked: true },
+                  y: {
+                    stacked: true,
+                    ticks: { callback: (v: any) => `$ ${(Number(v) / 1000).toFixed(0)}k` },
+                  },
+                },
+              }}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const EgresosView = ({ 
   egresos, setEgresos, 
   tiposEgreso, 
@@ -21839,7 +22557,7 @@ export default function App() {
         'INVENTARIO': ['Dashboard', 'Almacenes', 'Productos', 'Movimientos', 'Alertas', 'Reportes'],
         'PRODUCCIÓN': ['Lotes de Producción', 'Lotes de Despiece', 'Recetas Estándar', 'Plantillas de Despiece', 'Etiquetas', 'Dashboard', 'Trazabilidad'],
         'VENTAS': ['Ventas y Pedidos', 'Dashboard Ventas', 'Clientes', 'Listas de Precios', 'Puntos de Venta'],
-        'EGRESOS': ['Egresos y Compras', 'Proveedores', 'Tipos de Egreso', 'Plan de Cuentas'],
+        'EGRESOS': ['Egresos y Compras', 'Dashboard Egresos', 'Proveedores', 'Tipos de Egreso', 'Plan de Cuentas'],
         'FINANZAS': ['Tesorería'],
         'USUARIOS': ['Gestión de Usuarios']
       };
@@ -22665,7 +23383,7 @@ export default function App() {
             setExpandedModule={setExpandedModule}
             setActiveModule={setActiveModule}
             setActiveSubSection={setActiveSubSection}
-            subItems={['Egresos y Compras', 'Proveedores', 'Tipos de Egreso', 'Plan de Cuentas']} 
+            subItems={['Egresos y Compras', 'Dashboard Egresos', 'Proveedores', 'Tipos de Egreso', 'Plan de Cuentas']} 
             sidebarExpanded={sidebarExpanded}
             currentUser={currentUser}
           />
@@ -23036,6 +23754,15 @@ export default function App() {
                 showNotification={showNotification}
               />
             )}
+            {activeModule === 'EGRESOS' && activeSubSection === 'Dashboard Egresos' && (
+              <EgresosDashboardView
+                egresos={egresos}
+                tiposEgreso={tiposEgreso}
+                proveedores={proveedores}
+                planCuentas={planCuentas}
+                productos={productos}
+              />
+            )}
             {activeModule === 'EGRESOS' && activeSubSection === 'Proveedores' && (
               <ProveedoresView 
                 proveedores={proveedores}
@@ -23078,7 +23805,7 @@ export default function App() {
             )}
             
             {/* Placeholder for other views */}
-            {activeModule !== 'INICIO' && !['Dashboard', 'Almacenes', 'Productos', 'Movimientos', 'Etiquetas', 'Lotes de Producción', 'Lotes de Despiece', 'Recetas Estándar', 'Plantillas de Despiece', 'Gestión de Usuarios', 'Ventas y Pedidos', 'Clientes', 'Listas de Precios', 'Puntos de Venta', 'Egresos y Compras', 'Proveedores', 'Tipos de Egreso', 'Plan de Cuentas', 'Tesorería', 'Inicio'].includes(activeSubSection) && (
+            {activeModule !== 'INICIO' && !['Dashboard', 'Almacenes', 'Productos', 'Movimientos', 'Etiquetas', 'Lotes de Producción', 'Lotes de Despiece', 'Recetas Estándar', 'Plantillas de Despiece', 'Gestión de Usuarios', 'Ventas y Pedidos', 'Clientes', 'Listas de Precios', 'Puntos de Venta', 'Egresos y Compras', 'Dashboard Egresos', 'Proveedores', 'Tipos de Egreso', 'Plan de Cuentas', 'Tesorería', 'Inicio'].includes(activeSubSection) && (
               <div className="flex flex-col items-center justify-center h-[60vh] text-slate-300">
                 <Settings className="w-16 h-16 mb-4 opacity-10" />
                 <p className="text-lg font-bold uppercase tracking-widest">Módulo en Desarrollo</p>
