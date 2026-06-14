@@ -439,3 +439,277 @@ export async function anularTransferencia(id: string, motivo: string): Promise<b
   }
   return true;
 }
+
+// --- Cheques (tablas relacionales) ---
+
+export type ChequeRecibidoRow = {
+  id: string;
+  fechaRecepcion: string;
+  fechaCobro: string;
+  originario?: string;
+  recibidoDe?: string;
+  banco: string;
+  numero?: string;
+  monto: number;
+  tipo: 'fisico' | 'echeq';
+  estado: 'no_entregado' | 'en_cartera' | 'depositado' | 'acreditado' | 'endosado' | 'rechazado';
+  endosadoA?: string;
+  fechaEndoso?: string;
+  cuentaDestinoId?: string;
+  movimientoId?: string;
+  origenTipo?: string;
+  origenId?: string;
+  comentario?: string;
+  anulado: boolean;
+  createdAt?: string;
+};
+
+export type ChequeEmitidoRow = {
+  id: string;
+  fechaEmision: string;
+  fechaPago: string;
+  beneficiario?: string;
+  cuit?: string;
+  banco: string;
+  numero?: string;
+  monto: number;
+  tipo: 'fisico' | 'echeq';
+  estado: 'no_entregado' | 'pendiente' | 'debitado' | 'rechazado' | 'anulado';
+  cuentaOrigenId?: string;
+  movimientoId?: string;
+  origenTipo?: string;
+  origenId?: string;
+  chequeRecibidoId?: string;
+  comentario?: string;
+  anulado: boolean;
+  createdAt?: string;
+};
+
+export type ChequesBundle = {
+  recibidos: ChequeRecibidoRow[];
+  emitidos: ChequeEmitidoRow[];
+};
+
+function mapChequeRecibido(r: any): ChequeRecibidoRow {
+  return {
+    id: r.id,
+    fechaRecepcion: r.fecha_recepcion,
+    fechaCobro: r.fecha_cobro,
+    originario: r.originario ?? undefined,
+    recibidoDe: r.recibido_de ?? undefined,
+    banco: r.banco,
+    numero: r.numero ?? undefined,
+    monto: parseNum(r.monto),
+    tipo: r.tipo,
+    estado: r.estado,
+    endosadoA: r.endosado_a ?? undefined,
+    fechaEndoso: r.fecha_endoso ?? undefined,
+    cuentaDestinoId: r.cuenta_destino_id ?? undefined,
+    movimientoId: r.movimiento_id ?? undefined,
+    origenTipo: r.origen_tipo ?? undefined,
+    origenId: r.origen_id ?? undefined,
+    comentario: r.comentario ?? undefined,
+    anulado: !!r.anulado,
+    createdAt: r.created_at ?? undefined,
+  };
+}
+
+function mapChequeEmitido(r: any): ChequeEmitidoRow {
+  return {
+    id: r.id,
+    fechaEmision: r.fecha_emision,
+    fechaPago: r.fecha_pago,
+    beneficiario: r.beneficiario ?? undefined,
+    cuit: r.cuit ?? undefined,
+    banco: r.banco,
+    numero: r.numero ?? undefined,
+    monto: parseNum(r.monto),
+    tipo: r.tipo,
+    estado: r.estado,
+    cuentaOrigenId: r.cuenta_origen_id ?? undefined,
+    movimientoId: r.movimiento_id ?? undefined,
+    origenTipo: r.origen_tipo ?? undefined,
+    origenId: r.origen_id ?? undefined,
+    chequeRecibidoId: r.cheque_recibido_id ?? undefined,
+    comentario: r.comentario ?? undefined,
+    anulado: !!r.anulado,
+    createdAt: r.created_at ?? undefined,
+  };
+}
+
+export async function loadCheques(): Promise<ChequesBundle> {
+  const empty: ChequesBundle = { recibidos: [], emitidos: [] };
+  try {
+    const [recRes, emiRes] = await Promise.all([
+      supabase.from('cheques_recibidos').select('*').eq('anulado', false).order('fecha_cobro', { ascending: true }),
+      supabase.from('cheques_emitidos').select('*').eq('anulado', false).order('fecha_pago', { ascending: true }),
+    ]);
+
+    if (recRes.error || emiRes.error) {
+      console.error('Error cargando cheques:', recRes.error || emiRes.error);
+      return empty;
+    }
+
+    return {
+      recibidos: (recRes.data || []).map(mapChequeRecibido),
+      emitidos: (emiRes.data || []).map(mapChequeEmitido),
+    };
+  } catch (err) {
+    console.error('Error loadCheques:', err);
+    return empty;
+  }
+}
+
+export async function saveChequeRecibido(ch: ChequeRecibidoRow): Promise<ChequeRecibidoRow | null> {
+  const row: Record<string, any> = {
+    fecha_recepcion: ch.fechaRecepcion,
+    fecha_cobro: ch.fechaCobro,
+    originario: ch.originario || null,
+    recibido_de: ch.recibidoDe || null,
+    banco: ch.banco,
+    numero: ch.numero || null,
+    monto: ch.monto,
+    tipo: ch.tipo,
+    estado: ch.estado,
+    endosado_a: ch.endosadoA || null,
+    fecha_endoso: ch.fechaEndoso || null,
+    cuenta_destino_id: ch.cuentaDestinoId || null,
+    movimiento_id: ch.movimientoId || null,
+    origen_tipo: ch.origenTipo || null,
+    origen_id: ch.origenId || null,
+    comentario: ch.comentario || null,
+    anulado: ch.anulado,
+    updated_by: SESSION_ID,
+    updated_at: nowIso(),
+  };
+  if (ch.id) row.id = ch.id;
+  const { data, error } = await supabase.from('cheques_recibidos').upsert(row).select().single();
+  if (error) {
+    console.error('saveChequeRecibido:', error);
+    return null;
+  }
+  return mapChequeRecibido(data);
+}
+
+export async function saveChequeEmitido(ch: ChequeEmitidoRow): Promise<ChequeEmitidoRow | null> {
+  const row: Record<string, any> = {
+    fecha_emision: ch.fechaEmision,
+    fecha_pago: ch.fechaPago,
+    beneficiario: ch.beneficiario || null,
+    cuit: ch.cuit || null,
+    banco: ch.banco,
+    numero: ch.numero || null,
+    monto: ch.monto,
+    tipo: ch.tipo,
+    estado: ch.estado,
+    cuenta_origen_id: ch.cuentaOrigenId || null,
+    movimiento_id: ch.movimientoId || null,
+    origen_tipo: ch.origenTipo || null,
+    origen_id: ch.origenId || null,
+    cheque_recibido_id: ch.chequeRecibidoId || null,
+    comentario: ch.comentario || null,
+    anulado: ch.anulado,
+    updated_by: SESSION_ID,
+    updated_at: nowIso(),
+  };
+  if (ch.id) row.id = ch.id;
+  const { data, error } = await supabase.from('cheques_emitidos').upsert(row).select().single();
+  if (error) {
+    console.error('saveChequeEmitido:', error);
+    return null;
+  }
+  return mapChequeEmitido(data);
+}
+
+export async function cambiarEstadoChequeRecibido(
+  id: string,
+  nuevoEstado: ChequeRecibidoRow['estado'],
+  extra?: { endosadoA?: string; fechaEndoso?: string }
+): Promise<boolean> {
+  const row: Record<string, any> = {
+    estado: nuevoEstado,
+    updated_by: SESSION_ID,
+    updated_at: nowIso(),
+  };
+  if (extra?.endosadoA !== undefined) row.endosado_a = extra.endosadoA || null;
+  if (extra?.fechaEndoso !== undefined) row.fecha_endoso = extra.fechaEndoso || null;
+  const { error } = await supabase.from('cheques_recibidos').update(row).eq('id', id);
+  if (error) {
+    console.error('cambiarEstadoChequeRecibido:', error);
+    return false;
+  }
+  return true;
+}
+
+export async function cambiarEstadoChequeEmitido(
+  id: string,
+  nuevoEstado: ChequeEmitidoRow['estado']
+): Promise<boolean> {
+  const { error } = await supabase
+    .from('cheques_emitidos')
+    .update({ estado: nuevoEstado, updated_by: SESSION_ID, updated_at: nowIso() })
+    .eq('id', id);
+  if (error) {
+    console.error('cambiarEstadoChequeEmitido:', error);
+    return false;
+  }
+  return true;
+}
+
+export async function endosarChequeRecibido(params: {
+  recibido: ChequeRecibidoRow;
+  endosadoA: string;
+  fechaEndoso: string;
+}): Promise<boolean> {
+  const { recibido, endosadoA, fechaEndoso } = params;
+  const okEstado = await cambiarEstadoChequeRecibido(recibido.id, 'endosado', { endosadoA, fechaEndoso });
+  if (!okEstado) return false;
+
+  const emitido = await saveChequeEmitido({
+    id: '',
+    fechaEmision: fechaEndoso,
+    fechaPago: recibido.fechaCobro,
+    beneficiario: endosadoA,
+    banco: recibido.banco,
+    numero: recibido.numero,
+    monto: recibido.monto,
+    tipo: recibido.tipo,
+    estado: 'pendiente',
+    origenTipo: 'endoso',
+    chequeRecibidoId: recibido.id,
+    anulado: false,
+  });
+  if (!emitido) {
+    // revertir el estado del recibido si no se pudo crear el emitido
+    await cambiarEstadoChequeRecibido(recibido.id, recibido.estado, {
+      endosadoA: recibido.endosadoA || '',
+      fechaEndoso: recibido.fechaEndoso || '',
+    });
+    return false;
+  }
+  return true;
+}
+
+export async function anularChequeRecibido(id: string): Promise<boolean> {
+  const { error } = await supabase
+    .from('cheques_recibidos')
+    .update({ anulado: true, updated_by: SESSION_ID, updated_at: nowIso() })
+    .eq('id', id);
+  if (error) {
+    console.error('anularChequeRecibido:', error);
+    return false;
+  }
+  return true;
+}
+
+export async function anularChequeEmitido(id: string): Promise<boolean> {
+  const { error } = await supabase
+    .from('cheques_emitidos')
+    .update({ anulado: true, updated_by: SESSION_ID, updated_at: nowIso() })
+    .eq('id', id);
+  if (error) {
+    console.error('anularChequeEmitido:', error);
+    return false;
+  }
+  return true;
+}

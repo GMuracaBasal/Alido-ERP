@@ -20,7 +20,16 @@ import {
   anularMovimiento,
   crearTransferencia,
   anularTransferencia,
+  loadCheques,
+  saveChequeRecibido,
+  saveChequeEmitido,
+  cambiarEstadoChequeRecibido,
+  cambiarEstadoChequeEmitido,
+  endosarChequeRecibido,
+  anularChequeRecibido,
+  anularChequeEmitido,
 } from './supabaseClient';
+import type { ChequeRecibidoRow, ChequeEmitidoRow } from './supabaseClient';
 import { 
   LayoutDashboard, 
   Package, 
@@ -1398,7 +1407,7 @@ const DEFAULT_PERMISSIONS: Permisos = {
   produccion: { lotes_produccion: true, lotes_despiece: true, recetas_estandar: true, plantillas_despiece: true, etiquetas: true, dashboard: true, trazabilidad: true },
   ventas: { ventas_pedidos: true, dashboard_ventas: true, clientes: true, listas_precios: true, puntos_venta: true },
   egresos: { egresos_compras: true, proveedores: true, tipos_egreso: true, plan_cuentas: true },
-  finanzas: { tesoreria: true },
+  finanzas: { tesoreria: true, cheques: true },
   usuarios: { gestion_usuarios: true }
 };
 
@@ -1945,6 +1954,43 @@ interface TransferenciaTesoreria {
   anulado: boolean;
 }
 
+type ChequeRecibido = ChequeRecibidoRow;
+type ChequeEmitido = ChequeEmitidoRow;
+
+const ESTADO_CHEQUE_REC_LABEL: Record<ChequeRecibido['estado'], string> = {
+  no_entregado: 'No entregado',
+  en_cartera: 'En cartera',
+  depositado: 'Depositado',
+  acreditado: 'Acreditado',
+  endosado: 'Endosado',
+  rechazado: 'Rechazado',
+};
+
+const ESTADO_CHEQUE_REC_VARIANT: Record<ChequeRecibido['estado'], 'default' | 'success' | 'warning' | 'danger' | 'info'> = {
+  no_entregado: 'warning',
+  en_cartera: 'info',
+  depositado: 'warning',
+  acreditado: 'success',
+  endosado: 'default',
+  rechazado: 'danger',
+};
+
+const ESTADO_CHEQUE_EMI_LABEL: Record<ChequeEmitido['estado'], string> = {
+  no_entregado: 'No entregado',
+  pendiente: 'Pendiente',
+  debitado: 'Debitado',
+  rechazado: 'Rechazado',
+  anulado: 'Anulado',
+};
+
+const ESTADO_CHEQUE_EMI_VARIANT: Record<ChequeEmitido['estado'], 'default' | 'success' | 'warning' | 'danger' | 'info'> = {
+  no_entregado: 'warning',
+  pendiente: 'info',
+  debitado: 'success',
+  rechazado: 'danger',
+  anulado: 'default',
+};
+
 const roundSaldoTes = (x: number) => Math.round(x * 100) / 100;
 
 const formatSaldoTes = (x: number) => formatNumber(roundSaldoTes(x), 2);
@@ -2002,7 +2048,7 @@ const INITIAL_USERS: User[] = [
     produccion: { lotes_produccion: true, lotes_despiece: true, recetas_estandar: true, plantillas_despiece: true, etiquetas: true, dashboard: true, trazabilidad: true },
     ventas: { ventas_pedidos: true, dashboard_ventas: true, clientes: true, listas_precios: true, puntos_venta: true },
     egresos: { egresos_compras: true, proveedores: true, tipos_egreso: true, plan_cuentas: true },
-    finanzas: { tesoreria: true },
+    finanzas: { tesoreria: true, cheques: true },
     usuarios: { gestion_usuarios: true }
   }},
   { id: '2', username: 'Operario1', password: '123', role: 'Operario', name: 'Juan Pérez', estado: 'activo', inicioConfig: { ...DEFAULT_INICIO_CONFIG }, permisos: {
@@ -2010,7 +2056,7 @@ const INITIAL_USERS: User[] = [
     produccion: { lotes_produccion: true, lotes_despiece: true, recetas_estandar: false, plantillas_despiece: false, etiquetas: true, dashboard: false, trazabilidad: false },
     ventas: { ventas_pedidos: true, dashboard_ventas: false, clientes: false, listas_precios: false, puntos_venta: false },
     egresos: { egresos_compras: false, proveedores: false, tipos_egreso: false, plan_cuentas: false },
-    finanzas: { tesoreria: false },
+    finanzas: { tesoreria: false, cheques: false },
     usuarios: { gestion_usuarios: false }
   }}
 ];
@@ -9805,7 +9851,7 @@ const UserForm = ({ editingItem, loggedUser, onSave, onClose }: any) => {
     { key: 'produccion', label: '🏭 PRODUCCIÓN', color: 'bg-emerald-50 outline-emerald-200', sections: [ {key: 'lotes_produccion', label: 'Lotes de Producción'}, {key: 'lotes_despiece', label: 'Lotes de Despiece'}, {key: 'recetas_estandar', label: 'Recetas Estándar'}, {key: 'plantillas_despiece', label: 'Plantillas de Despiece'}, {key: 'etiquetas', label: 'Etiquetas'}, {key: 'dashboard', label: 'Dashboard'}, {key: 'trazabilidad', label: 'Trazabilidad'} ] },
     { key: 'ventas', label: '💰 VENTAS', color: 'bg-amber-50 outline-amber-200', sections: [ {key: 'ventas_pedidos', label: 'Ventas y Pedidos'}, {key: 'dashboard_ventas', label: 'Dashboard de Ventas'}, {key: 'clientes', label: 'Clientes'}, {key: 'listas_precios', label: 'Listas de Precios'}, {key: 'puntos_venta', label: 'Puntos de Venta'} ] },
     { key: 'egresos', label: '📤 EGRESOS', color: 'bg-rose-50 outline-rose-200', sections: [ {key: 'egresos_compras', label: 'Egresos y Compras'}, {key: 'proveedores', label: 'Proveedores'}, {key: 'tipos_egreso', label: 'Tipos de Egreso'}, {key: 'plan_cuentas', label: 'Plan de Cuentas'} ] },
-    { key: 'finanzas', label: '💳 FINANZAS', color: 'bg-violet-50 outline-violet-200', sections: [ {key: 'tesoreria', label: 'Tesorería'} ] },
+    { key: 'finanzas', label: '💳 FINANZAS', color: 'bg-violet-50 outline-violet-200', sections: [ {key: 'tesoreria', label: 'Tesorería'}, {key: 'cheques', label: 'Cheques'} ] },
     { key: 'usuarios', label: '👤 USUARIOS', color: 'bg-slate-100 outline-slate-300', sections: [ {key: 'gestion_usuarios', label: 'Gestión de Usuarios'} ] }
   ];
 
@@ -22560,6 +22606,693 @@ const TesoreriaView = ({
   );
 };
 
+const ChequesView = ({
+  recibidos,
+  emitidos,
+  loading,
+  onReload,
+  showNotification,
+}: {
+  recibidos: ChequeRecibido[];
+  emitidos: ChequeEmitido[];
+  loading: boolean;
+  onReload: () => Promise<void>;
+  showNotification: (msg: string, type: 'success' | 'error') => void;
+}) => {
+  const hoy = safeFormat(new Date(), 'yyyy-MM-dd');
+  const [tab, setTab] = useState<'recibidos' | 'emitidos'>('recibidos');
+  const [modal, setModal] = useState<'recibido' | 'emitido' | 'endoso' | ''>('');
+  const [saving, setSaving] = useState(false);
+
+  const [editingRec, setEditingRec] = useState<ChequeRecibido | null>(null);
+  const [editingEmi, setEditingEmi] = useState<ChequeEmitido | null>(null);
+  const [endosandoRec, setEndosandoRec] = useState<ChequeRecibido | null>(null);
+
+  const [filtroEstadoRec, setFiltroEstadoRec] = useState<string>('todos');
+  const [filtroDesdeRec, setFiltroDesdeRec] = useState<string>('');
+  const [filtroHastaRec, setFiltroHastaRec] = useState<string>('');
+
+  const [filtroEstadoEmi, setFiltroEstadoEmi] = useState<string>('todos');
+  const [filtroDesdeEmi, setFiltroDesdeEmi] = useState<string>('');
+  const [filtroHastaEmi, setFiltroHastaEmi] = useState<string>('');
+
+  const [formRec, setFormRec] = useState({
+    fechaRecepcion: hoy,
+    fechaCobro: hoy,
+    originario: '',
+    recibidoDe: '',
+    banco: '',
+    numero: '',
+    monto: '',
+    tipo: 'fisico' as ChequeRecibido['tipo'],
+    estado: 'en_cartera' as ChequeRecibido['estado'],
+    comentario: '',
+  });
+  const [formEmi, setFormEmi] = useState({
+    fechaEmision: hoy,
+    fechaPago: hoy,
+    beneficiario: '',
+    cuit: '',
+    banco: '',
+    numero: '',
+    monto: '',
+    tipo: 'fisico' as ChequeEmitido['tipo'],
+    estado: 'pendiente' as ChequeEmitido['estado'],
+    comentario: '',
+  });
+  const [formEndoso, setFormEndoso] = useState({ endosadoA: '', fechaEndoso: hoy });
+
+  const totalesRec = useMemo(() => {
+    let porCobrar = 0;
+    let enCartera = 0;
+    recibidos.forEach((c) => {
+      if (c.anulado) return;
+      if (c.estado === 'en_cartera' || c.estado === 'depositado' || c.estado === 'no_entregado') {
+        porCobrar += c.monto;
+      }
+      if (c.estado === 'en_cartera') enCartera += 1;
+    });
+    return { porCobrar, enCartera };
+  }, [recibidos]);
+
+  const totalesEmi = useMemo(() => {
+    let porPagar = 0;
+    let pendientes = 0;
+    emitidos.forEach((c) => {
+      if (c.anulado) return;
+      if (c.estado === 'pendiente' || c.estado === 'no_entregado') porPagar += c.monto;
+      if (c.estado === 'pendiente') pendientes += 1;
+    });
+    return { porPagar, pendientes };
+  }, [emitidos]);
+
+  const recibidosFiltrados = useMemo(() => {
+    return recibidos.filter((c) => {
+      if (c.anulado) return false;
+      if (filtroEstadoRec !== 'todos' && c.estado !== filtroEstadoRec) return false;
+      if (filtroDesdeRec && c.fechaCobro < filtroDesdeRec) return false;
+      if (filtroHastaRec && c.fechaCobro > filtroHastaRec) return false;
+      return true;
+    });
+  }, [recibidos, filtroEstadoRec, filtroDesdeRec, filtroHastaRec]);
+
+  const emitidosFiltrados = useMemo(() => {
+    return emitidos.filter((c) => {
+      if (c.anulado) return false;
+      if (filtroEstadoEmi !== 'todos' && c.estado !== filtroEstadoEmi) return false;
+      if (filtroDesdeEmi && c.fechaPago < filtroDesdeEmi) return false;
+      if (filtroHastaEmi && c.fechaPago > filtroHastaEmi) return false;
+      return true;
+    });
+  }, [emitidos, filtroEstadoEmi, filtroDesdeEmi, filtroHastaEmi]);
+
+  const openNuevoRecibido = () => {
+    setEditingRec(null);
+    setFormRec({
+      fechaRecepcion: hoy,
+      fechaCobro: hoy,
+      originario: '',
+      recibidoDe: '',
+      banco: '',
+      numero: '',
+      monto: '',
+      tipo: 'fisico',
+      estado: 'en_cartera',
+      comentario: '',
+    });
+    setModal('recibido');
+  };
+
+  const openEditarRecibido = (c: ChequeRecibido) => {
+    setEditingRec(c);
+    setFormRec({
+      fechaRecepcion: c.fechaRecepcion || hoy,
+      fechaCobro: c.fechaCobro || hoy,
+      originario: c.originario || '',
+      recibidoDe: c.recibidoDe || '',
+      banco: c.banco || '',
+      numero: c.numero || '',
+      monto: String(c.monto ?? ''),
+      tipo: c.tipo,
+      estado: c.estado,
+      comentario: c.comentario || '',
+    });
+    setModal('recibido');
+  };
+
+  const openNuevoEmitido = () => {
+    setEditingEmi(null);
+    setFormEmi({
+      fechaEmision: hoy,
+      fechaPago: hoy,
+      beneficiario: '',
+      cuit: '',
+      banco: '',
+      numero: '',
+      monto: '',
+      tipo: 'fisico',
+      estado: 'pendiente',
+      comentario: '',
+    });
+    setModal('emitido');
+  };
+
+  const openEditarEmitido = (c: ChequeEmitido) => {
+    setEditingEmi(c);
+    setFormEmi({
+      fechaEmision: c.fechaEmision || hoy,
+      fechaPago: c.fechaPago || hoy,
+      beneficiario: c.beneficiario || '',
+      cuit: c.cuit || '',
+      banco: c.banco || '',
+      numero: c.numero || '',
+      monto: String(c.monto ?? ''),
+      tipo: c.tipo,
+      estado: c.estado,
+      comentario: c.comentario || '',
+    });
+    setModal('emitido');
+  };
+
+  const openEndoso = (c: ChequeRecibido) => {
+    setEndosandoRec(c);
+    setFormEndoso({ endosadoA: '', fechaEndoso: hoy });
+    setModal('endoso');
+  };
+
+  const handleSaveRecibido = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const monto = parseFloat(formRec.monto);
+    if (!formRec.fechaCobro) { showNotification('La fecha de cobro es obligatoria', 'error'); return; }
+    if (!formRec.banco.trim()) { showNotification('El banco es obligatorio', 'error'); return; }
+    if (!monto || monto <= 0) { showNotification('Ingresá un monto mayor a cero', 'error'); return; }
+    setSaving(true);
+    const saved = await saveChequeRecibido({
+      id: editingRec?.id || '',
+      fechaRecepcion: formRec.fechaRecepcion || hoy,
+      fechaCobro: formRec.fechaCobro,
+      originario: formRec.originario.trim() || undefined,
+      recibidoDe: formRec.recibidoDe.trim() || undefined,
+      banco: formRec.banco.trim(),
+      numero: formRec.numero.trim() || undefined,
+      monto,
+      tipo: formRec.tipo,
+      estado: formRec.estado,
+      endosadoA: editingRec?.endosadoA,
+      fechaEndoso: editingRec?.fechaEndoso,
+      cuentaDestinoId: editingRec?.cuentaDestinoId,
+      movimientoId: editingRec?.movimientoId,
+      origenTipo: editingRec?.origenTipo,
+      origenId: editingRec?.origenId,
+      comentario: formRec.comentario.trim() || undefined,
+      anulado: false,
+    });
+    setSaving(false);
+    if (!saved) { showNotification('No se pudo guardar el cheque', 'error'); return; }
+    showNotification(editingRec ? 'Cheque actualizado' : 'Cheque recibido creado', 'success');
+    setModal('');
+    await onReload();
+  };
+
+  const handleSaveEmitido = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const monto = parseFloat(formEmi.monto);
+    if (!formEmi.fechaPago) { showNotification('La fecha de pago es obligatoria', 'error'); return; }
+    if (!formEmi.banco.trim()) { showNotification('El banco es obligatorio', 'error'); return; }
+    if (!monto || monto <= 0) { showNotification('Ingresá un monto mayor a cero', 'error'); return; }
+    setSaving(true);
+    const saved = await saveChequeEmitido({
+      id: editingEmi?.id || '',
+      fechaEmision: formEmi.fechaEmision || hoy,
+      fechaPago: formEmi.fechaPago,
+      beneficiario: formEmi.beneficiario.trim() || undefined,
+      cuit: formEmi.cuit.trim() || undefined,
+      banco: formEmi.banco.trim(),
+      numero: formEmi.numero.trim() || undefined,
+      monto,
+      tipo: formEmi.tipo,
+      estado: formEmi.estado,
+      cuentaOrigenId: editingEmi?.cuentaOrigenId,
+      movimientoId: editingEmi?.movimientoId,
+      origenTipo: editingEmi?.origenTipo,
+      origenId: editingEmi?.origenId,
+      chequeRecibidoId: editingEmi?.chequeRecibidoId,
+      comentario: formEmi.comentario.trim() || undefined,
+      anulado: false,
+    });
+    setSaving(false);
+    if (!saved) { showNotification('No se pudo guardar el cheque', 'error'); return; }
+    showNotification(editingEmi ? 'Cheque actualizado' : 'Cheque emitido creado', 'success');
+    setModal('');
+    await onReload();
+  };
+
+  const handleConfirmEndoso = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!endosandoRec) return;
+    if (!formEndoso.endosadoA.trim()) { showNotification('Indicá a quién se endosa', 'error'); return; }
+    setSaving(true);
+    const ok = await endosarChequeRecibido({
+      recibido: endosandoRec,
+      endosadoA: formEndoso.endosadoA.trim(),
+      fechaEndoso: formEndoso.fechaEndoso || hoy,
+    });
+    setSaving(false);
+    if (!ok) { showNotification('No se pudo endosar el cheque', 'error'); return; }
+    showNotification('Cheque endosado y emitido generado', 'success');
+    setModal('');
+    setEndosandoRec(null);
+    await onReload();
+  };
+
+  const cambiarEstadoRec = async (c: ChequeRecibido, nuevo: ChequeRecibido['estado']) => {
+    const ok = await cambiarEstadoChequeRecibido(c.id, nuevo);
+    if (!ok) { showNotification('No se pudo actualizar el estado', 'error'); return; }
+    showNotification(`Cheque → ${ESTADO_CHEQUE_REC_LABEL[nuevo]}`, 'success');
+    await onReload();
+  };
+
+  const cambiarEstadoEmi = async (c: ChequeEmitido, nuevo: ChequeEmitido['estado']) => {
+    const ok = await cambiarEstadoChequeEmitido(c.id, nuevo);
+    if (!ok) { showNotification('No se pudo actualizar el estado', 'error'); return; }
+    showNotification(`Cheque → ${ESTADO_CHEQUE_EMI_LABEL[nuevo]}`, 'success');
+    await onReload();
+  };
+
+  const anularRec = (c: ChequeRecibido) => {
+    confirmDialog('¿Anular este cheque recibido? No se borra, queda marcado como anulado.', async () => {
+      const ok = await anularChequeRecibido(c.id);
+      if (!ok) { showNotification('No se pudo anular el cheque', 'error'); return; }
+      showNotification('Cheque anulado', 'success');
+      await onReload();
+    });
+  };
+
+  const anularEmi = (c: ChequeEmitido) => {
+    confirmDialog('¿Anular este cheque emitido? No se borra, queda marcado como anulado.', async () => {
+      const ok = await anularChequeEmitido(c.id);
+      if (!ok) { showNotification('No se pudo anular el cheque', 'error'); return; }
+      showNotification('Cheque anulado', 'success');
+      await onReload();
+    });
+  };
+
+  const accionBtn = 'px-2 py-1 rounded text-[10px] font-black uppercase tracking-widest border border-slate-200 hover:bg-slate-50 transition-colors';
+
+  return (
+    <div className="space-y-8 animate-in fade-in duration-500">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-black text-sleek-dark uppercase tracking-tighter">Cheques</h2>
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mt-1">Cartera de cheques recibidos y emitidos</p>
+        </div>
+      </div>
+
+      <div className="flex gap-1 border-b border-slate-200">
+        <button
+          type="button"
+          onClick={() => setTab('recibidos')}
+          className={cn('px-5 py-3 text-[10px] font-black uppercase tracking-widest border-b-2 -mb-px transition-colors', tab === 'recibidos' ? 'border-sleek-accent text-sleek-accent' : 'border-transparent text-slate-400 hover:text-slate-600')}
+        >
+          Recibidos
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab('emitidos')}
+          className={cn('px-5 py-3 text-[10px] font-black uppercase tracking-widest border-b-2 -mb-px transition-colors', tab === 'emitidos' ? 'border-sleek-accent text-sleek-accent' : 'border-transparent text-slate-400 hover:text-slate-600')}
+        >
+          Emitidos
+        </button>
+      </div>
+
+      {tab === 'recibidos' && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Card className="p-6 border-l-4 border-l-emerald-500">
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Por cobrar</p>
+              <p className="text-2xl font-black text-sleek-dark font-mono">{formatNumber(totalesRec.porCobrar, 2)}</p>
+              <p className="text-[10px] text-slate-400 mt-1">En cartera + depositados + no entregados</p>
+            </Card>
+            <Card className="p-6 border-l-4 border-l-sky-500">
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">En cartera (cantidad)</p>
+              <p className="text-2xl font-black text-sleek-dark font-mono">{totalesRec.enCartera}</p>
+              <p className="text-[10px] text-slate-400 mt-1">Cheques disponibles para operar</p>
+            </Card>
+          </div>
+
+          <div className="flex flex-wrap items-end gap-3 justify-between">
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Estado</label>
+                <select value={filtroEstadoRec} onChange={(e) => setFiltroEstadoRec(e.target.value)} className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                  <option value="todos">Todos</option>
+                  {(Object.keys(ESTADO_CHEQUE_REC_LABEL) as ChequeRecibido['estado'][]).map((est) => (
+                    <option key={est} value={est}>{ESTADO_CHEQUE_REC_LABEL[est]}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Cobro desde</label>
+                <input type="date" value={filtroDesdeRec} onChange={(e) => setFiltroDesdeRec(e.target.value)} className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Cobro hasta</label>
+                <input type="date" value={filtroHastaRec} onChange={(e) => setFiltroHastaRec(e.target.value)} className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+              </div>
+              {(filtroEstadoRec !== 'todos' || filtroDesdeRec || filtroHastaRec) && (
+                <button type="button" onClick={() => { setFiltroEstadoRec('todos'); setFiltroDesdeRec(''); setFiltroHastaRec(''); }} className="px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">Limpiar</button>
+              )}
+            </div>
+            <button type="button" onClick={openNuevoRecibido} className="bg-sleek-dark text-white px-5 py-3 rounded text-[10px] font-black uppercase tracking-widest flex items-center gap-2">
+              <Plus className="w-4 h-4" /> Nuevo cheque recibido
+            </button>
+          </div>
+
+          <Card className="p-0 overflow-hidden">
+            {loading ? (
+              <p className="p-12 text-center text-slate-400 text-xs font-bold uppercase">Cargando cheques...</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="bg-slate-50 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                      <th className="px-4 py-3">Estado</th>
+                      <th className="px-4 py-3">Fecha cobro</th>
+                      <th className="px-4 py-3">Originario</th>
+                      <th className="px-4 py-3">Recibido de</th>
+                      <th className="px-4 py-3">Banco</th>
+                      <th className="px-4 py-3">Número</th>
+                      <th className="px-4 py-3">Tipo</th>
+                      <th className="px-4 py-3 text-right">Monto</th>
+                      <th className="px-4 py-3">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {recibidosFiltrados.length === 0 ? (
+                      <tr><td colSpan={9} className="px-4 py-12 text-center text-slate-400 text-xs font-bold uppercase">Sin cheques recibidos</td></tr>
+                    ) : recibidosFiltrados.map((c) => (
+                      <tr key={c.id} className="hover:bg-slate-50 transition-colors">
+                        <td className="px-4 py-3"><Badge variant={ESTADO_CHEQUE_REC_VARIANT[c.estado]}>{ESTADO_CHEQUE_REC_LABEL[c.estado]}</Badge></td>
+                        <td className="px-4 py-3 text-xs font-mono">{safeFormat(c.fechaCobro, 'dd/MM/yyyy')}</td>
+                        <td className="px-4 py-3 text-xs">{c.originario || '—'}</td>
+                        <td className="px-4 py-3 text-xs">{c.recibidoDe || '—'}</td>
+                        <td className="px-4 py-3 text-xs">{c.banco}</td>
+                        <td className="px-4 py-3 text-xs font-mono">{c.numero || '—'}</td>
+                        <td className="px-4 py-3 text-xs uppercase">{c.tipo === 'echeq' ? 'e-cheq' : 'físico'}</td>
+                        <td className="px-4 py-3 text-right font-mono font-bold">{formatNumber(c.monto, 2)}</td>
+                        <td className="px-4 py-3">
+                          <div className="flex flex-wrap gap-1">
+                            {c.estado === 'no_entregado' && (
+                              <button type="button" onClick={() => cambiarEstadoRec(c, 'en_cartera')} className={accionBtn}>Entregar</button>
+                            )}
+                            {c.estado === 'en_cartera' && (
+                              <>
+                                <button type="button" onClick={() => cambiarEstadoRec(c, 'depositado')} className={accionBtn}>Depositar</button>
+                                <button type="button" onClick={() => openEndoso(c)} className={accionBtn}>Endosar</button>
+                                <button type="button" onClick={() => cambiarEstadoRec(c, 'acreditado')} className={accionBtn}>Acreditar</button>
+                                <button type="button" onClick={() => cambiarEstadoRec(c, 'rechazado')} className={cn(accionBtn, 'text-rose-600')}>Rechazar</button>
+                              </>
+                            )}
+                            {c.estado === 'depositado' && (
+                              <>
+                                <button type="button" onClick={() => cambiarEstadoRec(c, 'acreditado')} className={accionBtn}>Acreditar</button>
+                                <button type="button" onClick={() => cambiarEstadoRec(c, 'rechazado')} className={cn(accionBtn, 'text-rose-600')}>Rechazar</button>
+                              </>
+                            )}
+                            <button type="button" onClick={() => openEditarRecibido(c)} className={accionBtn} title="Editar"><Edit2 className="w-3 h-3" /></button>
+                            <button type="button" onClick={() => anularRec(c)} className={cn(accionBtn, 'text-rose-600')} title="Anular"><Ban className="w-3 h-3" /></button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+        </div>
+      )}
+
+      {tab === 'emitidos' && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Card className="p-6 border-l-4 border-l-rose-500">
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Por pagar</p>
+              <p className="text-2xl font-black text-sleek-dark font-mono">{formatNumber(totalesEmi.porPagar, 2)}</p>
+              <p className="text-[10px] text-slate-400 mt-1">Pendientes + no entregados</p>
+            </Card>
+            <Card className="p-6 border-l-4 border-l-amber-500">
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Pendientes (cantidad)</p>
+              <p className="text-2xl font-black text-sleek-dark font-mono">{totalesEmi.pendientes}</p>
+              <p className="text-[10px] text-slate-400 mt-1">Cheques propios por debitar</p>
+            </Card>
+          </div>
+
+          <div className="flex flex-wrap items-end gap-3 justify-between">
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Estado</label>
+                <select value={filtroEstadoEmi} onChange={(e) => setFiltroEstadoEmi(e.target.value)} className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                  <option value="todos">Todos</option>
+                  {(Object.keys(ESTADO_CHEQUE_EMI_LABEL) as ChequeEmitido['estado'][]).map((est) => (
+                    <option key={est} value={est}>{ESTADO_CHEQUE_EMI_LABEL[est]}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Pago desde</label>
+                <input type="date" value={filtroDesdeEmi} onChange={(e) => setFiltroDesdeEmi(e.target.value)} className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Pago hasta</label>
+                <input type="date" value={filtroHastaEmi} onChange={(e) => setFiltroHastaEmi(e.target.value)} className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+              </div>
+              {(filtroEstadoEmi !== 'todos' || filtroDesdeEmi || filtroHastaEmi) && (
+                <button type="button" onClick={() => { setFiltroEstadoEmi('todos'); setFiltroDesdeEmi(''); setFiltroHastaEmi(''); }} className="px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">Limpiar</button>
+              )}
+            </div>
+            <button type="button" onClick={openNuevoEmitido} className="bg-sleek-dark text-white px-5 py-3 rounded text-[10px] font-black uppercase tracking-widest flex items-center gap-2">
+              <Plus className="w-4 h-4" /> Nuevo cheque emitido
+            </button>
+          </div>
+
+          <Card className="p-0 overflow-hidden">
+            {loading ? (
+              <p className="p-12 text-center text-slate-400 text-xs font-bold uppercase">Cargando cheques...</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="bg-slate-50 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                      <th className="px-4 py-3">Estado</th>
+                      <th className="px-4 py-3">Fecha pago</th>
+                      <th className="px-4 py-3">Beneficiario</th>
+                      <th className="px-4 py-3">Banco</th>
+                      <th className="px-4 py-3">Número</th>
+                      <th className="px-4 py-3">Tipo</th>
+                      <th className="px-4 py-3 text-right">Monto</th>
+                      <th className="px-4 py-3">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {emitidosFiltrados.length === 0 ? (
+                      <tr><td colSpan={8} className="px-4 py-12 text-center text-slate-400 text-xs font-bold uppercase">Sin cheques emitidos</td></tr>
+                    ) : emitidosFiltrados.map((c) => (
+                      <tr key={c.id} className="hover:bg-slate-50 transition-colors">
+                        <td className="px-4 py-3">
+                          <div className="flex flex-wrap items-center gap-1">
+                            <Badge variant={ESTADO_CHEQUE_EMI_VARIANT[c.estado]}>{ESTADO_CHEQUE_EMI_LABEL[c.estado]}</Badge>
+                            {c.chequeRecibidoId && <Badge variant="info">Endosado</Badge>}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-xs font-mono">{safeFormat(c.fechaPago, 'dd/MM/yyyy')}</td>
+                        <td className="px-4 py-3 text-xs">{c.beneficiario || '—'}</td>
+                        <td className="px-4 py-3 text-xs">{c.banco}</td>
+                        <td className="px-4 py-3 text-xs font-mono">{c.numero || '—'}</td>
+                        <td className="px-4 py-3 text-xs uppercase">{c.tipo === 'echeq' ? 'e-cheq' : 'físico'}</td>
+                        <td className="px-4 py-3 text-right font-mono font-bold">{formatNumber(c.monto, 2)}</td>
+                        <td className="px-4 py-3">
+                          <div className="flex flex-wrap gap-1">
+                            {c.estado === 'no_entregado' && (
+                              <button type="button" onClick={() => cambiarEstadoEmi(c, 'pendiente')} className={accionBtn}>Entregar</button>
+                            )}
+                            {c.estado === 'pendiente' && (
+                              <>
+                                <button type="button" onClick={() => cambiarEstadoEmi(c, 'debitado')} className={accionBtn}>Debitado</button>
+                                <button type="button" onClick={() => cambiarEstadoEmi(c, 'rechazado')} className={cn(accionBtn, 'text-rose-600')}>Rechazar</button>
+                                <button type="button" onClick={() => cambiarEstadoEmi(c, 'anulado')} className={cn(accionBtn, 'text-rose-600')}>Anular cheque</button>
+                              </>
+                            )}
+                            <button type="button" onClick={() => openEditarEmitido(c)} className={accionBtn} title="Editar"><Edit2 className="w-3 h-3" /></button>
+                            <button type="button" onClick={() => anularEmi(c)} className={cn(accionBtn, 'text-rose-600')} title="Anular registro"><Ban className="w-3 h-3" /></button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+        </div>
+      )}
+
+      <Modal isOpen={modal === 'recibido'} onClose={() => setModal('')} title={editingRec ? 'Editar cheque recibido' : 'Nuevo cheque recibido'}>
+        <form onSubmit={handleSaveRecibido} className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Fecha recepción</label>
+              <input type="date" value={formRec.fechaRecepcion} onChange={(e) => setFormRec({ ...formRec, fechaRecepcion: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Fecha cobro *</label>
+              <input type="date" required value={formRec.fechaCobro} onChange={(e) => setFormRec({ ...formRec, fechaCobro: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Originario (librador)</label>
+              <input value={formRec.originario} onChange={(e) => setFormRec({ ...formRec, originario: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Recibido de</label>
+              <input value={formRec.recibidoDe} onChange={(e) => setFormRec({ ...formRec, recibidoDe: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Banco *</label>
+              <input required value={formRec.banco} onChange={(e) => setFormRec({ ...formRec, banco: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Número</label>
+              <input value={formRec.numero} onChange={(e) => setFormRec({ ...formRec, numero: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Monto *</label>
+              <input type="number" step="0.01" required min="0.01" value={formRec.monto} onChange={(e) => setFormRec({ ...formRec, monto: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Tipo</label>
+              <select value={formRec.tipo} onChange={(e) => setFormRec({ ...formRec, tipo: e.target.value as ChequeRecibido['tipo'] })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                <option value="fisico">Físico</option>
+                <option value="echeq">e-Cheq</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Estado</label>
+              <select value={formRec.estado} onChange={(e) => setFormRec({ ...formRec, estado: e.target.value as ChequeRecibido['estado'] })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                {(Object.keys(ESTADO_CHEQUE_REC_LABEL) as ChequeRecibido['estado'][]).map((est) => (
+                  <option key={est} value={est}>{ESTADO_CHEQUE_REC_LABEL[est]}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Comentario</label>
+            <textarea value={formRec.comentario} onChange={(e) => setFormRec({ ...formRec, comentario: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" rows={2} />
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={() => setModal('')} className="px-4 py-2 text-slate-500 font-bold text-sm">Cancelar</button>
+            <button type="submit" disabled={saving} className="px-6 py-2 bg-sleek-accent text-white font-bold rounded-lg text-sm">{saving ? 'Guardando...' : 'Guardar'}</button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal isOpen={modal === 'emitido'} onClose={() => setModal('')} title={editingEmi ? 'Editar cheque emitido' : 'Nuevo cheque emitido'}>
+        <form onSubmit={handleSaveEmitido} className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Fecha emisión</label>
+              <input type="date" value={formEmi.fechaEmision} onChange={(e) => setFormEmi({ ...formEmi, fechaEmision: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Fecha pago *</label>
+              <input type="date" required value={formEmi.fechaPago} onChange={(e) => setFormEmi({ ...formEmi, fechaPago: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Beneficiario</label>
+              <input value={formEmi.beneficiario} onChange={(e) => setFormEmi({ ...formEmi, beneficiario: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">CUIT</label>
+              <input value={formEmi.cuit} onChange={(e) => setFormEmi({ ...formEmi, cuit: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Banco *</label>
+              <input required value={formEmi.banco} onChange={(e) => setFormEmi({ ...formEmi, banco: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Número</label>
+              <input value={formEmi.numero} onChange={(e) => setFormEmi({ ...formEmi, numero: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Monto *</label>
+              <input type="number" step="0.01" required min="0.01" value={formEmi.monto} onChange={(e) => setFormEmi({ ...formEmi, monto: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Tipo</label>
+              <select value={formEmi.tipo} onChange={(e) => setFormEmi({ ...formEmi, tipo: e.target.value as ChequeEmitido['tipo'] })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                <option value="fisico">Físico</option>
+                <option value="echeq">e-Cheq</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Estado</label>
+              <select value={formEmi.estado} onChange={(e) => setFormEmi({ ...formEmi, estado: e.target.value as ChequeEmitido['estado'] })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                {(Object.keys(ESTADO_CHEQUE_EMI_LABEL) as ChequeEmitido['estado'][]).map((est) => (
+                  <option key={est} value={est}>{ESTADO_CHEQUE_EMI_LABEL[est]}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Comentario</label>
+            <textarea value={formEmi.comentario} onChange={(e) => setFormEmi({ ...formEmi, comentario: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" rows={2} />
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={() => setModal('')} className="px-4 py-2 text-slate-500 font-bold text-sm">Cancelar</button>
+            <button type="submit" disabled={saving} className="px-6 py-2 bg-sleek-accent text-white font-bold rounded-lg text-sm">{saving ? 'Guardando...' : 'Guardar'}</button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal isOpen={modal === 'endoso'} onClose={() => { setModal(''); setEndosandoRec(null); }} title="Endosar cheque recibido">
+        <form onSubmit={handleConfirmEndoso} className="space-y-4">
+          <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 font-medium">
+            Se generará un cheque emitido por endoso a nombre del beneficiario indicado.
+          </p>
+          {endosandoRec && (
+            <p className="text-xs text-slate-500">
+              Cheque {endosandoRec.banco}{endosandoRec.numero ? ` Nº ${endosandoRec.numero}` : ''} · {formatNumber(endosandoRec.monto, 2)}
+            </p>
+          )}
+          <div>
+            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Endosado a *</label>
+            <input required value={formEndoso.endosadoA} onChange={(e) => setFormEndoso({ ...formEndoso, endosadoA: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Fecha endoso</label>
+            <input type="date" value={formEndoso.fechaEndoso} onChange={(e) => setFormEndoso({ ...formEndoso, fechaEndoso: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={() => { setModal(''); setEndosandoRec(null); }} className="px-4 py-2 text-slate-500 font-bold text-sm">Cancelar</button>
+            <button type="submit" disabled={saving} className="px-6 py-2 bg-sleek-accent text-white font-bold rounded-lg text-sm">{saving ? 'Procesando...' : 'Endosar'}</button>
+          </div>
+        </form>
+      </Modal>
+    </div>
+  );
+};
+
 // --- Main Application ---
 
 export default function App() {
@@ -22594,7 +23327,7 @@ export default function App() {
         'PRODUCCIÓN': ['Lotes de Producción', 'Lotes de Despiece', 'Recetas Estándar', 'Plantillas de Despiece', 'Etiquetas', 'Dashboard', 'Trazabilidad'],
         'VENTAS': ['Ventas y Pedidos', 'Dashboard Ventas', 'Clientes', 'Listas de Precios', 'Puntos de Venta'],
         'EGRESOS': ['Egresos y Compras', 'Dashboard Egresos', 'Proveedores', 'Tipos de Egreso', 'Plan de Cuentas'],
-        'FINANZAS': ['Tesorería'],
+        'FINANZAS': ['Tesorería', 'Cheques'],
         'USUARIOS': ['Gestión de Usuarios']
       };
 
@@ -22672,11 +23405,33 @@ export default function App() {
     }
   }, []);
 
+  // Cheques (tablas relacionales — no app_data)
+  const [chequesRecibidos, setChequesRecibidos] = useState<ChequeRecibido[]>([]);
+  const [chequesEmitidos, setChequesEmitidos] = useState<ChequeEmitido[]>([]);
+  const [chequesLoading, setChequesLoading] = useState(false);
+
+  const reloadCheques = useCallback(async () => {
+    setChequesLoading(true);
+    try {
+      const data = await loadCheques();
+      setChequesRecibidos(data.recibidos);
+      setChequesEmitidos(data.emitidos);
+    } finally {
+      setChequesLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (activeModule === 'FINANZAS' && currentUser && hasPermission(currentUser, 'FINANZAS', 'Tesorería')) {
       reloadTesoreria();
     }
   }, [activeModule, currentUser, reloadTesoreria]);
+
+  useEffect(() => {
+    if (activeModule === 'FINANZAS' && currentUser && hasPermission(currentUser, 'FINANZAS', 'Cheques')) {
+      reloadCheques();
+    }
+  }, [activeModule, currentUser, reloadCheques]);
 
   useEffect(() => {
     if (!currentUser || isLoading) return;
@@ -23427,7 +24182,7 @@ export default function App() {
             setExpandedModule={setExpandedModule}
             setActiveModule={setActiveModule}
             setActiveSubSection={setActiveSubSection}
-            subItems={['Tesorería']} 
+            subItems={['Tesorería', 'Cheques']} 
             sidebarExpanded={sidebarExpanded}
             currentUser={currentUser}
           />
@@ -23861,9 +24616,18 @@ export default function App() {
                 showNotification={showNotification}
               />
             )}
+            {activeModule === 'FINANZAS' && activeSubSection === 'Cheques' && (
+              <ChequesView
+                recibidos={chequesRecibidos}
+                emitidos={chequesEmitidos}
+                loading={chequesLoading}
+                onReload={reloadCheques}
+                showNotification={showNotification}
+              />
+            )}
             
             {/* Placeholder for other views */}
-            {activeModule !== 'INICIO' && !['Dashboard', 'Almacenes', 'Productos', 'Movimientos', 'Etiquetas', 'Lotes de Producción', 'Lotes de Despiece', 'Recetas Estándar', 'Plantillas de Despiece', 'Gestión de Usuarios', 'Ventas y Pedidos', 'Clientes', 'Listas de Precios', 'Puntos de Venta', 'Egresos y Compras', 'Dashboard Egresos', 'Proveedores', 'Tipos de Egreso', 'Plan de Cuentas', 'Tesorería', 'Inicio'].includes(activeSubSection) && (
+            {activeModule !== 'INICIO' && !['Dashboard', 'Almacenes', 'Productos', 'Movimientos', 'Etiquetas', 'Lotes de Producción', 'Lotes de Despiece', 'Recetas Estándar', 'Plantillas de Despiece', 'Gestión de Usuarios', 'Ventas y Pedidos', 'Clientes', 'Listas de Precios', 'Puntos de Venta', 'Egresos y Compras', 'Dashboard Egresos', 'Proveedores', 'Tipos de Egreso', 'Plan de Cuentas', 'Tesorería', 'Cheques', 'Inicio'].includes(activeSubSection) && (
               <div className="flex flex-col items-center justify-center h-[60vh] text-slate-300">
                 <Settings className="w-16 h-16 mb-4 opacity-10" />
                 <p className="text-lg font-bold uppercase tracking-widest">Módulo en Desarrollo</p>
