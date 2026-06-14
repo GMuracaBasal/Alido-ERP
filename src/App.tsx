@@ -28,6 +28,7 @@ import {
   endosarChequeRecibido,
   anularChequeRecibido,
   anularChequeEmitido,
+  anularChequesPorOrigen,
 } from './supabaseClient';
 import type { ChequeRecibidoRow, ChequeEmitidoRow } from './supabaseClient';
 import { 
@@ -1844,6 +1845,12 @@ interface PagoProveedor {
   observaciones?: string;
   tipoMovimiento?: 'Pago' | 'Ajuste';
   cuentaTesoreriaId?: string;
+  chequeBanco?: string;
+  chequeNumero?: string;
+  chequeFecha?: string;
+  chequeTipo?: 'fisico' | 'echeq';
+  chequeModo?: 'cartera' | 'propio';
+  chequeReciboId?: string;
 }
 
 interface EgresoItem {
@@ -15758,7 +15765,7 @@ const RemitoView = ({ venta, cliente, productos, onBack }: any) => {
    );
 };
 
-const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas, setVentas, cobrosClientes, setCobrosClientes, currentUser, showNotification, tesoreriaCuentas = [] }: any) => {
+const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas, setVentas, cobrosClientes, setCobrosClientes, currentUser, showNotification, tesoreriaCuentas = [], reloadCheques }: any) => {
   const [view, setView] = useState<'list' | 'detail' | 'form'>('list');
   const [selectedCliente, setSelectedCliente] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -15787,6 +15794,12 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
     comprobante: `REC-${Date.now()}`,
     tipoMovimiento: 'Cobro' as 'Cobro' | 'Ajuste',
     cuentaTesoreriaId: '',
+    chequeBanco: '',
+    chequeNumero: '',
+    chequeFecha: '',
+    chequeTipo: 'fisico' as 'fisico' | 'echeq',
+    chequeOriginario: '',
+    chequeReciboId: '',
   });
 
   // Form State
@@ -15973,7 +15986,63 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
               </div>
             </div>
 
-            {cobroFormData.tipoMovimiento === 'Cobro' && (
+            {cobroFormData.tipoMovimiento === 'Cobro' && cobroFormData.metodo === 'Cheque' && (
+              <div className="space-y-4 p-4 bg-violet-50/60 border border-violet-100 rounded-xl">
+                <p className="text-[10px] font-black text-violet-500 uppercase tracking-widest">Cheque de tercero recibido</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Banco *</label>
+                    <input
+                      type="text"
+                      value={cobroFormData.chequeBanco}
+                      onChange={(e) => setCobroFormData({ ...cobroFormData, chequeBanco: e.target.value })}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Número</label>
+                    <input
+                      type="text"
+                      value={cobroFormData.chequeNumero}
+                      onChange={(e) => setCobroFormData({ ...cobroFormData, chequeNumero: e.target.value })}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Fecha de cobro *</label>
+                    <input
+                      type="date"
+                      value={cobroFormData.chequeFecha}
+                      onChange={(e) => setCobroFormData({ ...cobroFormData, chequeFecha: e.target.value })}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Tipo</label>
+                    <select
+                      value={cobroFormData.chequeTipo}
+                      onChange={(e) => setCobroFormData({ ...cobroFormData, chequeTipo: e.target.value as 'fisico' | 'echeq' })}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
+                    >
+                      <option value="fisico">Físico</option>
+                      <option value="echeq">e-Cheq</option>
+                    </select>
+                  </div>
+                  <div className="space-y-2 md:col-span-2">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Originario (librador)</label>
+                    <input
+                      type="text"
+                      value={cobroFormData.chequeOriginario}
+                      onChange={(e) => setCobroFormData({ ...cobroFormData, chequeOriginario: e.target.value })}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
+                    />
+                  </div>
+                </div>
+                <p className="text-[10px] text-slate-400">El cheque ingresa a la cartera en estado “en cartera”. No mueve tesorería hasta acreditarse.</p>
+              </div>
+            )}
+
+            {cobroFormData.tipoMovimiento === 'Cobro' && cobroFormData.metodo !== 'Cheque' && (
               <div className="space-y-2">
                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Cuenta de Tesorería (Destino)</label>
                 <select
@@ -16224,6 +16293,12 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
       comprobante: `REC-${format(new Date(), 'yyyyMMdd')}-${(recCount + 1).toString().padStart(3, '0')}`,
       tipoMovimiento: 'Cobro',
       cuentaTesoreriaId: '',
+      chequeBanco: '',
+      chequeNumero: '',
+      chequeFecha: '',
+      chequeTipo: 'fisico',
+      chequeOriginario: '',
+      chequeReciboId: '',
     });
     setCobroMontoInput(String(monto));
     setIsCobroModalOpen(true);
@@ -16242,6 +16317,12 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
       comprobante: cobro.comprobante,
       tipoMovimiento: tipoMov,
       cuentaTesoreriaId: cobro.cuentaTesoreriaId || '',
+      chequeBanco: cobro.chequeBanco || '',
+      chequeNumero: cobro.chequeNumero || '',
+      chequeFecha: cobro.chequeFecha || '',
+      chequeTipo: cobro.chequeTipo || 'fisico',
+      chequeOriginario: cobro.chequeOriginario || '',
+      chequeReciboId: cobro.chequeReciboId || '',
     });
     setCobroMontoInput(String(monto));
     setIsCobroModalOpen(true);
@@ -16253,6 +16334,10 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
       // Anular el movimiento de tesorería asociado (si lo tiene)
       if (cobro.cuentaTesoreriaId) {
         anularMovimientosCobroDeVenta(cobro.id);
+      }
+      // Anular el cheque generado por este cobro (si lo tiene)
+      if (cobro.metodo === 'Cheque') {
+        (async () => { await anularChequesPorOrigen(cobro.id); reloadCheques?.(); })();
       }
       showNotification('Cobro eliminado', 'success');
     });
@@ -16268,11 +16353,25 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
       2
     );
 
-    // Validar cuenta de tesorería para cobros (no para ajustes)
-    if (!esAjuste && !cobroFormData.cuentaTesoreriaId) {
+    const esCheque = !esAjuste && cobroFormData.metodo === 'Cheque';
+
+    // Validaciones según método
+    if (esCheque) {
+      if (!cobroFormData.chequeBanco.trim()) {
+        showNotification('Indicá el banco del cheque', 'error');
+        return;
+      }
+      if (!cobroFormData.chequeFecha) {
+        showNotification('Indicá la fecha de cobro del cheque', 'error');
+        return;
+      }
+    } else if (!esAjuste && !cobroFormData.cuentaTesoreriaId) {
+      // Validar cuenta de tesorería para cobros líquidos (no para ajustes ni cheques)
       showNotification('Seleccioná la cuenta de Tesorería de destino del cobro', 'error');
       return;
     }
+
+    const hoyIso = new Date().toISOString().split('T')[0];
 
     if (editingCobroId) {
       const cobroAnterior = (cobrosClientes || []).find((c: any) => c.id === editingCobroId);
@@ -16286,23 +16385,48 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
               referencia: cobroFormData.referencia,
               observaciones: cobroFormData.observaciones,
               tipoMovimiento: cobroFormData.tipoMovimiento,
-              cuentaTesoreriaId: esAjuste ? undefined : cobroFormData.cuentaTesoreriaId,
+              cuentaTesoreriaId: esAjuste || esCheque ? undefined : cobroFormData.cuentaTesoreriaId,
+              chequeBanco: esCheque ? cobroFormData.chequeBanco : undefined,
+              chequeNumero: esCheque ? cobroFormData.chequeNumero : undefined,
+              chequeFecha: esCheque ? cobroFormData.chequeFecha : undefined,
+              chequeTipo: esCheque ? cobroFormData.chequeTipo : undefined,
+              chequeOriginario: esCheque ? cobroFormData.chequeOriginario : undefined,
             }
           : c
       ));
-      // Re-sincronizar tesorería: anular movimiento anterior y crear el nuevo
+      // Re-sincronizar: anular movimiento de tesorería y cheques previos, y recrear según método
       if (!esAjuste) {
         (async () => {
           await anularMovimientosCobroDeVenta(editingCobroId);
-          await crearMovimientoCobro({
-            cuentaId: cobroFormData.cuentaTesoreriaId,
-            fecha: cobroFormData.fecha,
-            debe: monto,
-            detalle: `Cobro cuenta corriente ${cobroAnterior?.comprobante || ''} (${cobroFormData.metodo})`,
-            contraparte: selectedCliente.razonSocial,
-            origenId: editingCobroId,
-            origenReferencia: cobroAnterior?.comprobante || editingCobroId,
-          });
+          await anularChequesPorOrigen(editingCobroId);
+          if (esCheque) {
+            await saveChequeRecibido({
+              id: '',
+              fechaRecepcion: hoyIso,
+              fechaCobro: cobroFormData.chequeFecha,
+              originario: cobroFormData.chequeOriginario.trim() || undefined,
+              recibidoDe: selectedCliente.razonSocial,
+              banco: cobroFormData.chequeBanco.trim(),
+              numero: cobroFormData.chequeNumero.trim() || undefined,
+              monto,
+              tipo: cobroFormData.chequeTipo,
+              estado: 'en_cartera',
+              origenTipo: 'cobro',
+              origenId: editingCobroId,
+              anulado: false,
+            });
+          } else {
+            await crearMovimientoCobro({
+              cuentaId: cobroFormData.cuentaTesoreriaId,
+              fecha: cobroFormData.fecha,
+              debe: monto,
+              detalle: `Cobro cuenta corriente ${cobroAnterior?.comprobante || ''} (${cobroFormData.metodo})`,
+              contraparte: selectedCliente.razonSocial,
+              origenId: editingCobroId,
+              origenReferencia: cobroAnterior?.comprobante || editingCobroId,
+            });
+          }
+          reloadCheques?.();
         })();
       }
       showNotification('Cobro actualizado', 'success');
@@ -16313,7 +16437,7 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
         ...cobroFormData,
         monto,
         tipoMovimiento: cobroFormData.tipoMovimiento,
-        cuentaTesoreriaId: esAjuste ? undefined : cobroFormData.cuentaTesoreriaId,
+        cuentaTesoreriaId: esAjuste || esCheque ? undefined : cobroFormData.cuentaTesoreriaId,
         comprobante: `${prefix}-${format(new Date(), 'yyyyMMdd')}-${(count + 1).toString().padStart(3, '0')}`,
         id: `cbr-${Date.now()}`,
         clienteId: selectedCliente.id,
@@ -16322,17 +16446,38 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
         fechaCreacion: new Date().toISOString(),
       };
       setCobrosClientes([...(cobrosClientes || []), nuevoCobro]);
-      // Crear movimiento en Tesorería (solo cobros, no ajustes)
       if (!esAjuste) {
-        crearMovimientoCobro({
-          cuentaId: nuevoCobro.cuentaTesoreriaId!,
-          fecha: nuevoCobro.fecha,
-          debe: monto,
-          detalle: `Cobro cuenta corriente ${nuevoCobro.comprobante} (${nuevoCobro.metodo})`,
-          contraparte: selectedCliente.razonSocial,
-          origenId: nuevoCobro.id,
-          origenReferencia: nuevoCobro.comprobante,
-        });
+        if (esCheque) {
+          // Cheque de tercero → entra a la cartera, NO toca tesorería
+          (async () => {
+            await saveChequeRecibido({
+              id: '',
+              fechaRecepcion: hoyIso,
+              fechaCobro: cobroFormData.chequeFecha,
+              originario: cobroFormData.chequeOriginario.trim() || undefined,
+              recibidoDe: selectedCliente.razonSocial,
+              banco: cobroFormData.chequeBanco.trim(),
+              numero: cobroFormData.chequeNumero.trim() || undefined,
+              monto,
+              tipo: cobroFormData.chequeTipo,
+              estado: 'en_cartera',
+              origenTipo: 'cobro',
+              origenId: nuevoCobro.id,
+              anulado: false,
+            });
+            reloadCheques?.();
+          })();
+        } else {
+          crearMovimientoCobro({
+            cuentaId: nuevoCobro.cuentaTesoreriaId!,
+            fecha: nuevoCobro.fecha,
+            debe: monto,
+            detalle: `Cobro cuenta corriente ${nuevoCobro.comprobante} (${nuevoCobro.metodo})`,
+            contraparte: selectedCliente.razonSocial,
+            origenId: nuevoCobro.id,
+            origenReferencia: nuevoCobro.comprobante,
+          });
+        }
       }
       showNotification(esAjuste ? 'Ajuste registrado con éxito' : 'Cobro registrado con éxito', 'success');
     }
@@ -18188,7 +18333,7 @@ const TiposEgresoView = ({ tiposEgreso, setTiposEgreso, planCuentas, showNotific
   );
 };
 
-const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPagosProveedores, egresos, tiposEgreso, planCuentas, showNotification, tesoreriaCuentas = [] }: any) => {
+const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPagosProveedores, egresos, tiposEgreso, planCuentas, showNotification, tesoreriaCuentas = [], chequesRecibidos = [], reloadCheques }: any) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isPagoModalOpen, setIsPagoModalOpen] = useState(false);
@@ -18201,6 +18346,12 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
     observaciones: '',
     tipoMovimiento: 'Pago' as 'Pago' | 'Ajuste',
     cuentaTesoreriaId: '',
+    chequeModo: 'propio' as 'cartera' | 'propio',
+    chequeBanco: '',
+    chequeNumero: '',
+    chequeFecha: '',
+    chequeTipo: 'fisico' as 'fisico' | 'echeq',
+    chequeReciboId: '',
   });
   const [editingPagoId, setEditingPagoId] = useState<string | null>(null);
   const [pagoMontoInput, setPagoMontoInput] = useState('0');
@@ -18283,6 +18434,12 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
       observaciones: '',
       tipoMovimiento: 'Pago',
       cuentaTesoreriaId: '',
+      chequeModo: 'propio',
+      chequeBanco: '',
+      chequeNumero: '',
+      chequeFecha: '',
+      chequeTipo: 'fisico',
+      chequeReciboId: '',
     });
     setPagoMontoInput(String(monto));
     setIsPagoModalOpen(true);
@@ -18299,6 +18456,12 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
       observaciones: pago.observaciones || '',
       tipoMovimiento: tipoMov,
       cuentaTesoreriaId: pago.cuentaTesoreriaId || '',
+      chequeModo: pago.chequeModo || 'propio',
+      chequeBanco: pago.chequeBanco || '',
+      chequeNumero: pago.chequeNumero || '',
+      chequeFecha: pago.chequeFecha || '',
+      chequeTipo: pago.chequeTipo || 'fisico',
+      chequeReciboId: pago.chequeReciboId || '',
     });
     setPagoMontoInput(String(monto));
     setIsPagoModalOpen(true);
@@ -18310,6 +18473,10 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
       // Anular el movimiento de tesorería asociado (si lo tiene)
       if (pago.cuentaTesoreriaId) {
         anularMovimientosPago(pago.id);
+      }
+      // Anular el cheque generado por este pago (si lo tiene)
+      if (pago.metodo === 'Cheque') {
+        (async () => { await anularChequesPorOrigen(pago.id); reloadCheques?.(); })();
       }
       showNotification('Movimiento eliminado', 'success');
     });
@@ -18324,11 +18491,62 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
       2
     );
 
-    // Validar cuenta de tesorería para pagos (no para ajustes)
-    if (!esAjuste && !pagoData.cuentaTesoreriaId) {
+    const esCheque = !esAjuste && pagoData.metodo === 'Cheque';
+    const esChequeCartera = esCheque && pagoData.chequeModo === 'cartera';
+    const esChequePropio = esCheque && pagoData.chequeModo !== 'cartera';
+
+    // Validaciones según método
+    if (esChequeCartera) {
+      if (!pagoData.chequeReciboId) {
+        showNotification('Elegí un cheque de la cartera para endosar', 'error');
+        return;
+      }
+    } else if (esChequePropio) {
+      if (!pagoData.chequeBanco.trim()) {
+        showNotification('Indicá el banco del cheque propio', 'error');
+        return;
+      }
+      if (!pagoData.chequeFecha) {
+        showNotification('Indicá la fecha de pago del cheque', 'error');
+        return;
+      }
+    } else if (!esAjuste && !pagoData.cuentaTesoreriaId) {
+      // Validar cuenta de tesorería para pagos líquidos (no para ajustes ni cheques)
       showNotification('Seleccioná la cuenta de Tesorería de origen del pago', 'error');
       return;
     }
+
+    const hoyIso = new Date().toISOString().split('T')[0];
+
+    const generarChequePago = async (origenId: string) => {
+      if (esChequeCartera) {
+        const rec = (chequesRecibidos || []).find((r: any) => r.id === pagoData.chequeReciboId);
+        if (rec) {
+          await endosarChequeRecibido({
+            recibido: rec,
+            endosadoA: selectedProveedor.razonSocial,
+            fechaEndoso: hoyIso,
+            origenId,
+          });
+        }
+      } else {
+        await saveChequeEmitido({
+          id: '',
+          fechaEmision: hoyIso,
+          fechaPago: pagoData.chequeFecha,
+          beneficiario: selectedProveedor.razonSocial,
+          banco: pagoData.chequeBanco.trim(),
+          numero: pagoData.chequeNumero.trim() || undefined,
+          monto,
+          tipo: pagoData.chequeTipo,
+          estado: 'pendiente',
+          origenTipo: 'pago',
+          origenId,
+          anulado: false,
+        });
+      }
+      reloadCheques?.();
+    };
 
     if (editingPagoId) {
       const pagoAnterior = (pagosProveedores || []).find((p: any) => p.id === editingPagoId);
@@ -18341,23 +18559,34 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
               referencia: pagoData.referencia,
               observaciones: pagoData.observaciones,
               tipoMovimiento: pagoData.tipoMovimiento,
-              cuentaTesoreriaId: esAjuste ? undefined : pagoData.cuentaTesoreriaId,
+              cuentaTesoreriaId: esAjuste || esCheque ? undefined : pagoData.cuentaTesoreriaId,
+              chequeModo: esCheque ? pagoData.chequeModo : undefined,
+              chequeBanco: esChequePropio ? pagoData.chequeBanco : undefined,
+              chequeNumero: esChequePropio ? pagoData.chequeNumero : undefined,
+              chequeFecha: esChequePropio ? pagoData.chequeFecha : undefined,
+              chequeTipo: esChequePropio ? pagoData.chequeTipo : undefined,
+              chequeReciboId: esChequeCartera ? pagoData.chequeReciboId : undefined,
             }
           : p
       ));
-      // Re-sincronizar tesorería: anular movimiento anterior y crear el nuevo
+      // Re-sincronizar: anular movimiento de tesorería y cheques previos, y recrear según método
       if (!esAjuste) {
         (async () => {
           await anularMovimientosPago(editingPagoId);
-          await crearMovimientoPago({
-            cuentaId: pagoData.cuentaTesoreriaId,
-            fecha: pagoAnterior?.fecha || new Date().toISOString().split('T')[0],
-            haber: monto,
-            detalle: `Pago cuenta corriente ${pagoAnterior?.comprobante || ''} (${pagoData.metodo})`,
-            contraparte: selectedProveedor.razonSocial,
-            origenId: editingPagoId,
-            origenReferencia: pagoAnterior?.comprobante || editingPagoId,
-          });
+          await anularChequesPorOrigen(editingPagoId);
+          if (esCheque) {
+            await generarChequePago(editingPagoId);
+          } else {
+            await crearMovimientoPago({
+              cuentaId: pagoData.cuentaTesoreriaId,
+              fecha: pagoAnterior?.fecha || hoyIso,
+              haber: monto,
+              detalle: `Pago cuenta corriente ${pagoAnterior?.comprobante || ''} (${pagoData.metodo})`,
+              contraparte: selectedProveedor.razonSocial,
+              origenId: editingPagoId,
+              origenReferencia: pagoAnterior?.comprobante || editingPagoId,
+            });
+          }
         })();
       }
       showNotification('Movimiento actualizado', 'success');
@@ -18367,27 +18596,37 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
       const newPago: PagoProveedor = {
         id: `pago-pr-${Date.now()}`,
         proveedorId: selectedProveedor.id,
-        fecha: new Date().toISOString().split('T')[0],
+        fecha: hoyIso,
         monto,
         metodo: pagoData.metodo,
         referencia: pagoData.referencia,
         comprobante: `${prefix}-${format(new Date(), 'yyyyMMdd')}-${(count + 1).toString().padStart(3, '0')}`,
         observaciones: pagoData.observaciones,
         tipoMovimiento: pagoData.tipoMovimiento,
-        cuentaTesoreriaId: esAjuste ? undefined : pagoData.cuentaTesoreriaId,
+        cuentaTesoreriaId: esAjuste || esCheque ? undefined : pagoData.cuentaTesoreriaId,
+        chequeModo: esCheque ? pagoData.chequeModo : undefined,
+        chequeBanco: esChequePropio ? pagoData.chequeBanco : undefined,
+        chequeNumero: esChequePropio ? pagoData.chequeNumero : undefined,
+        chequeFecha: esChequePropio ? pagoData.chequeFecha : undefined,
+        chequeTipo: esChequePropio ? pagoData.chequeTipo : undefined,
+        chequeReciboId: esChequeCartera ? pagoData.chequeReciboId : undefined,
       };
       setPagosProveedores([...pagosProveedores, newPago]);
-      // Crear movimiento en Tesorería (solo pagos, no ajustes)
       if (!esAjuste) {
-        crearMovimientoPago({
-          cuentaId: newPago.cuentaTesoreriaId!,
-          fecha: newPago.fecha,
-          haber: monto,
-          detalle: `Pago cuenta corriente ${newPago.comprobante} (${newPago.metodo})`,
-          contraparte: selectedProveedor.razonSocial,
-          origenId: newPago.id,
-          origenReferencia: newPago.comprobante,
-        });
+        if (esCheque) {
+          // Cheque (propio nuevo o endoso de cartera) → NO toca tesorería
+          (async () => { await generarChequePago(newPago.id); })();
+        } else {
+          crearMovimientoPago({
+            cuentaId: newPago.cuentaTesoreriaId!,
+            fecha: newPago.fecha,
+            haber: monto,
+            detalle: `Pago cuenta corriente ${newPago.comprobante} (${newPago.metodo})`,
+            contraparte: selectedProveedor.razonSocial,
+            origenId: newPago.id,
+            origenReferencia: newPago.comprobante,
+          });
+        }
       }
       showNotification(esAjuste ? 'Ajuste registrado con éxito' : 'Movimiento registrado con éxito', 'success');
     }
@@ -18925,7 +19164,92 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
               </div>
            </div>
 
-           {pagoData.tipoMovimiento === 'Pago' && (
+           {pagoData.tipoMovimiento === 'Pago' && pagoData.metodo === 'Cheque' && (
+             <div className="space-y-4 p-4 bg-violet-50/60 border border-violet-100 rounded-xl">
+               <div className="flex flex-wrap gap-4">
+                 <label className="flex items-center gap-2 text-[11px] font-bold text-slate-600 cursor-pointer">
+                   <input
+                     type="radio"
+                     name="chequeModo"
+                     checked={pagoData.chequeModo === 'cartera'}
+                     onChange={() => setPagoData({ ...pagoData, chequeModo: 'cartera' })}
+                   />
+                   Elegir de cartera
+                 </label>
+                 <label className="flex items-center gap-2 text-[11px] font-bold text-slate-600 cursor-pointer">
+                   <input
+                     type="radio"
+                     name="chequeModo"
+                     checked={pagoData.chequeModo !== 'cartera'}
+                     onChange={() => setPagoData({ ...pagoData, chequeModo: 'propio' })}
+                   />
+                   Cheque propio nuevo
+                 </label>
+               </div>
+
+               {pagoData.chequeModo === 'cartera' ? (
+                 <div className="space-y-2">
+                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Cheque en cartera (se endosa al proveedor)</label>
+                   <select
+                     value={pagoData.chequeReciboId}
+                     onChange={(e) => setPagoData({ ...pagoData, chequeReciboId: e.target.value })}
+                     className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
+                   >
+                     <option value="">Seleccionar cheque...</option>
+                     {(chequesRecibidos || []).filter((r: any) => !r.anulado && r.estado === 'en_cartera').map((r: any) => (
+                       <option key={r.id} value={r.id}>
+                         {r.banco}{r.numero ? `-${r.numero}` : ''} · {r.originario || 's/librador'} · vto {safeFormat(r.fechaCobro, 'dd/MM/yyyy')} · {formatNumber(r.monto, 2)}
+                       </option>
+                     ))}
+                   </select>
+                   <p className="text-[10px] text-slate-400">El cheque recibido quedará “endosado” y se generará un cheque emitido a nombre del proveedor.</p>
+                 </div>
+               ) : (
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                   <div className="space-y-2">
+                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Banco *</label>
+                     <input
+                       type="text"
+                       value={pagoData.chequeBanco}
+                       onChange={(e) => setPagoData({ ...pagoData, chequeBanco: e.target.value })}
+                       className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
+                     />
+                   </div>
+                   <div className="space-y-2">
+                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Número</label>
+                     <input
+                       type="text"
+                       value={pagoData.chequeNumero}
+                       onChange={(e) => setPagoData({ ...pagoData, chequeNumero: e.target.value })}
+                       className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
+                     />
+                   </div>
+                   <div className="space-y-2">
+                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Fecha de pago *</label>
+                     <input
+                       type="date"
+                       value={pagoData.chequeFecha}
+                       onChange={(e) => setPagoData({ ...pagoData, chequeFecha: e.target.value })}
+                       className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
+                     />
+                   </div>
+                   <div className="space-y-2">
+                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Tipo</label>
+                     <select
+                       value={pagoData.chequeTipo}
+                       onChange={(e) => setPagoData({ ...pagoData, chequeTipo: e.target.value as 'fisico' | 'echeq' })}
+                       className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
+                     >
+                       <option value="fisico">Físico</option>
+                       <option value="echeq">e-Cheq</option>
+                     </select>
+                   </div>
+                 </div>
+               )}
+             </div>
+           )}
+
+           {pagoData.tipoMovimiento === 'Pago' && pagoData.metodo !== 'Cheque' && (
              <div className="space-y-2">
                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Cuenta de Tesorería (Origen)</label>
                <select
@@ -23440,6 +23764,12 @@ export default function App() {
       .catch((err) => console.error('Error cargando cuentas de tesorería:', err));
   }, [currentUser, isLoading]);
 
+  // Cargar cartera de cheques al iniciar sesión: se usa para endosos desde pagos a proveedores
+  useEffect(() => {
+    if (!currentUser || isLoading) return;
+    reloadCheques().catch((err) => console.error('Error cargando cheques:', err));
+  }, [currentUser, isLoading, reloadCheques]);
+
   useEffect(() => {
     ventasRef.current = ventas;
   }, [ventas]);
@@ -24523,6 +24853,7 @@ export default function App() {
                 currentUser={currentUser}
                 showNotification={showNotification}
                 tesoreriaCuentas={tesoreriaCuentas}
+                reloadCheques={reloadCheques}
               />
             )}
             {activeModule === 'VENTAS' && activeSubSection === 'Listas de Precios' && (
@@ -24588,6 +24919,8 @@ export default function App() {
                 currentUser={currentUser}
                 showNotification={showNotification}
                 tesoreriaCuentas={tesoreriaCuentas}
+                chequesRecibidos={chequesRecibidos}
+                reloadCheques={reloadCheques}
               />
             )}
             {activeModule === 'EGRESOS' && activeSubSection === 'Tipos de Egreso' && (

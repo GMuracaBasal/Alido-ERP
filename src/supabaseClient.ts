@@ -660,8 +660,9 @@ export async function endosarChequeRecibido(params: {
   recibido: ChequeRecibidoRow;
   endosadoA: string;
   fechaEndoso: string;
+  origenId?: string;
 }): Promise<boolean> {
-  const { recibido, endosadoA, fechaEndoso } = params;
+  const { recibido, endosadoA, fechaEndoso, origenId } = params;
   const okEstado = await cambiarEstadoChequeRecibido(recibido.id, 'endosado', { endosadoA, fechaEndoso });
   if (!okEstado) return false;
 
@@ -676,6 +677,7 @@ export async function endosarChequeRecibido(params: {
     tipo: recibido.tipo,
     estado: 'pendiente',
     origenTipo: 'endoso',
+    origenId: origenId,
     chequeRecibidoId: recibido.id,
     anulado: false,
   });
@@ -712,4 +714,45 @@ export async function anularChequeEmitido(id: string): Promise<boolean> {
     return false;
   }
   return true;
+}
+
+// Anula (sin borrar) todos los cheques generados por un origen (cobro/pago de cuenta corriente),
+// para evitar duplicados al editar o anular el movimiento. Si un emitido es un endoso, revierte
+// el cheque recibido vinculado de nuevo a 'en_cartera'.
+export async function anularChequesPorOrigen(origenId: string): Promise<boolean> {
+  if (!origenId) return false;
+  try {
+    const { data: emitidos } = await supabase
+      .from('cheques_emitidos')
+      .select('id, cheque_recibido_id')
+      .eq('origen_id', origenId)
+      .eq('anulado', false);
+
+    await supabase
+      .from('cheques_emitidos')
+      .update({ anulado: true, estado: 'anulado', updated_by: SESSION_ID, updated_at: nowIso() })
+      .eq('origen_id', origenId)
+      .eq('anulado', false);
+
+    for (const em of emitidos || []) {
+      if (em.cheque_recibido_id) {
+        await supabase
+          .from('cheques_recibidos')
+          .update({ estado: 'en_cartera', endosado_a: null, fecha_endoso: null, updated_by: SESSION_ID, updated_at: nowIso() })
+          .eq('id', em.cheque_recibido_id)
+          .eq('estado', 'endosado');
+      }
+    }
+
+    await supabase
+      .from('cheques_recibidos')
+      .update({ anulado: true, updated_by: SESSION_ID, updated_at: nowIso() })
+      .eq('origen_id', origenId)
+      .eq('anulado', false);
+
+    return true;
+  } catch (err) {
+    console.error('anularChequesPorOrigen:', err);
+    return false;
+  }
 }
