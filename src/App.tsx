@@ -23255,6 +23255,10 @@ const ChequesView = ({
   };
 
   const anularRec = (c: ChequeRecibido) => {
+    if (c.origenTipo === 'cobro' || c.origenTipo === 'pago' || c.origenTipo === 'endoso') {
+      showNotification('Este cheque proviene de un cobro/pago. Anulalo desde el cobro o pago que lo generó, no desde acá.', 'error');
+      return;
+    }
     confirmDialog('¿Anular este cheque recibido? No se borra, queda marcado como anulado.', async () => {
       const ok = await anularChequeRecibido(c.id);
       if (!ok) { showNotification('No se pudo anular el cheque', 'error'); return; }
@@ -23264,6 +23268,10 @@ const ChequesView = ({
   };
 
   const anularEmi = (c: ChequeEmitido) => {
+    if (c.origenTipo === 'cobro' || c.origenTipo === 'pago' || c.origenTipo === 'endoso') {
+      showNotification('Este cheque proviene de un cobro/pago. Anulalo desde el cobro o pago que lo generó, no desde acá.', 'error');
+      return;
+    }
     confirmDialog('¿Anular este cheque emitido? No se borra, queda marcado como anulado.', async () => {
       const ok = await anularChequeEmitido(c.id);
       if (!ok) { showNotification('No se pudo anular el cheque', 'error'); return; }
@@ -23395,7 +23403,11 @@ const ChequesView = ({
                               </>
                             )}
                             <button type="button" onClick={() => openEditarRecibido(c)} className={accionBtn} title="Editar"><Edit2 className="w-3 h-3" /></button>
-                            <button type="button" onClick={() => anularRec(c)} className={cn(accionBtn, 'text-rose-600')} title="Anular"><Ban className="w-3 h-3" /></button>
+                            {(c.origenTipo === 'cobro' || c.origenTipo === 'pago' || c.origenTipo === 'endoso') ? (
+                              <button type="button" disabled className={cn(accionBtn, 'text-rose-600 opacity-40 cursor-not-allowed')} title="Anular desde el cobro/pago de origen"><Ban className="w-3 h-3" /></button>
+                            ) : (
+                              <button type="button" onClick={() => anularRec(c)} className={cn(accionBtn, 'text-rose-600')} title="Anular"><Ban className="w-3 h-3" /></button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -23499,7 +23511,11 @@ const ChequesView = ({
                               </>
                             )}
                             <button type="button" onClick={() => openEditarEmitido(c)} className={accionBtn} title="Editar"><Edit2 className="w-3 h-3" /></button>
-                            <button type="button" onClick={() => anularEmi(c)} className={cn(accionBtn, 'text-rose-600')} title="Anular registro"><Ban className="w-3 h-3" /></button>
+                            {(c.origenTipo === 'cobro' || c.origenTipo === 'pago' || c.origenTipo === 'endoso') ? (
+                              <button type="button" disabled className={cn(accionBtn, 'text-rose-600 opacity-40 cursor-not-allowed')} title="Anular desde el cobro/pago de origen"><Ban className="w-3 h-3" /></button>
+                            ) : (
+                              <button type="button" onClick={() => anularEmi(c)} className={cn(accionBtn, 'text-rose-600')} title="Anular registro"><Ban className="w-3 h-3" /></button>
+                            )}
                           </div>
                         </td>
                       </tr>
