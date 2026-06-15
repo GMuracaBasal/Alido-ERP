@@ -1767,6 +1767,31 @@ interface Cobro {
   cuentaTesoreriaId: string;
 }
 
+type ValorTipo = 'efectivo' | 'transferencia' | 'mercadopago' | 'cheque_propio' | 'cheque_tercero' | 'ajuste';
+
+interface ValorMovimiento {
+  id: string;
+  tipo: ValorTipo;
+  cuentaTesoreriaId?: string;   // efectivo/transferencia/mercadopago
+  banco?: string;               // cheques
+  numeroCheque?: string;        // cheques
+  vencimiento?: string;         // cheques (fecha cobro/pago)
+  chequeTipo?: 'fisico' | 'echeq'; // cheques
+  originario?: string;          // cheque de tercero en cobro: librador
+  chequeReciboId?: string;      // pago: id de cheque recibido elegido de cartera a endosar
+  referencia?: string;
+  importe: number;
+}
+
+const VALOR_TIPO_LABEL: Record<ValorTipo, string> = {
+  efectivo: 'Efectivo',
+  transferencia: 'Transferencia',
+  mercadopago: 'Mercado Pago',
+  cheque_propio: 'Cheque propio',
+  cheque_tercero: 'Cheque de tercero',
+  ajuste: 'Ajuste',
+};
+
 interface Venta {
   id: string;
   puntoVentaId: string;
@@ -1851,6 +1876,7 @@ interface PagoProveedor {
   chequeTipo?: 'fisico' | 'echeq';
   chequeModo?: 'cartera' | 'propio';
   chequeReciboId?: string;
+  valores?: ValorMovimiento[];
 }
 
 interface EgresoItem {
@@ -15765,6 +15791,278 @@ const RemitoView = ({ venta, cliente, productos, onBack }: any) => {
    );
 };
 
+const sumValores = (valores: ValorMovimiento[]): number =>
+  safeRound((valores || []).reduce((s, v) => s + (Number(v.importe) || 0), 0), 2);
+
+const ValoresGridEditor = ({
+  modo,
+  valores,
+  setValores,
+  tesoreriaCuentas = [],
+  chequesRecibidos = [],
+  showNotification,
+}: {
+  modo: 'cobro' | 'pago';
+  valores: ValorMovimiento[];
+  setValores: (v: ValorMovimiento[]) => void;
+  tesoreriaCuentas?: any[];
+  chequesRecibidos?: any[];
+  showNotification: (msg: string, type: 'success' | 'error') => void;
+}) => {
+  const hoyIso = new Date().toISOString().split('T')[0];
+  const emptyDraft = {
+    tipo: 'efectivo' as ValorTipo,
+    cuentaTesoreriaId: '',
+    banco: '',
+    numeroCheque: '',
+    vencimiento: '',
+    chequeTipo: 'fisico' as 'fisico' | 'echeq',
+    originario: '',
+    chequeReciboId: '',
+    chequeFuente: 'cartera' as 'cartera' | 'nuevo',
+    referencia: '',
+    importe: '',
+  };
+  const [draft, setDraft] = useState({ ...emptyDraft });
+
+  const tiposDisponibles: ValorTipo[] = modo === 'pago'
+    ? ['efectivo', 'transferencia', 'mercadopago', 'cheque_propio', 'cheque_tercero', 'ajuste']
+    : ['efectivo', 'transferencia', 'mercadopago', 'cheque_tercero', 'ajuste'];
+
+  const cuentasHab = (tesoreriaCuentas || []).filter((c: any) => c.habilitada);
+  const carteraDisponible = (chequesRecibidos || []).filter((r: any) => !r.anulado && r.estado === 'en_cartera');
+
+  const cuentaNombre = (id?: string) => (tesoreriaCuentas || []).find((c: any) => c.id === id)?.nombre || '—';
+
+  const total = sumValores(valores);
+
+  const resetDraftFor = (tipo: ValorTipo) => {
+    setDraft({ ...emptyDraft, tipo });
+  };
+
+  const onSelectCartera = (id: string) => {
+    const rec = carteraDisponible.find((r: any) => r.id === id);
+    setDraft((d) => ({
+      ...d,
+      chequeReciboId: id,
+      banco: rec?.banco || '',
+      numeroCheque: rec?.numero || '',
+      vencimiento: rec?.fechaCobro || '',
+      importe: rec ? String(rec.monto) : '',
+    }));
+  };
+
+  const handleAdd = () => {
+    const esCheque = draft.tipo === 'cheque_propio' || draft.tipo === 'cheque_tercero';
+    const esLiquido = draft.tipo === 'efectivo' || draft.tipo === 'transferencia' || draft.tipo === 'mercadopago';
+    const esCarteraEndoso = modo === 'pago' && draft.tipo === 'cheque_tercero' && draft.chequeFuente === 'cartera';
+
+    const importe = safeRound(parseFloat(draft.importe), 2);
+    if (draft.tipo === 'ajuste') {
+      if (!importe) { showNotification('Ingresá un importe distinto de cero para el ajuste', 'error'); return; }
+    } else if (!importe || importe <= 0) {
+      showNotification('Ingresá un importe mayor a cero', 'error');
+      return;
+    }
+
+    if (esLiquido && !draft.cuentaTesoreriaId) {
+      showNotification('Seleccioná la cuenta de tesorería', 'error');
+      return;
+    }
+    if (esCarteraEndoso) {
+      if (!draft.chequeReciboId) { showNotification('Elegí un cheque de la cartera', 'error'); return; }
+    } else if (esCheque) {
+      if (!draft.banco.trim()) { showNotification('Indicá el banco del cheque', 'error'); return; }
+      if (!draft.vencimiento) { showNotification('Indicá el vencimiento del cheque', 'error'); return; }
+    }
+
+    const valor: ValorMovimiento = {
+      id: `val-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      tipo: draft.tipo,
+      importe,
+      referencia: draft.referencia.trim() || undefined,
+    };
+    if (esLiquido) {
+      valor.cuentaTesoreriaId = draft.cuentaTesoreriaId;
+    }
+    if (esCheque) {
+      valor.banco = draft.banco.trim();
+      valor.numeroCheque = draft.numeroCheque.trim() || undefined;
+      valor.vencimiento = draft.vencimiento;
+      valor.chequeTipo = draft.chequeTipo;
+      if (draft.tipo === 'cheque_tercero' && modo === 'cobro') {
+        valor.originario = draft.originario.trim() || undefined;
+      }
+      if (esCarteraEndoso) {
+        valor.chequeReciboId = draft.chequeReciboId;
+      }
+    }
+
+    setValores([...(valores || []), valor]);
+    resetDraftFor(draft.tipo);
+  };
+
+  const handleRemove = (id: string) => {
+    setValores((valores || []).filter((v) => v.id !== id));
+  };
+
+  const inputCls = 'w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none text-sm font-bold text-slate-700';
+  const draftEsCheque = draft.tipo === 'cheque_propio' || draft.tipo === 'cheque_tercero';
+  const draftEsLiquido = draft.tipo === 'efectivo' || draft.tipo === 'transferencia' || draft.tipo === 'mercadopago';
+  const draftCarteraEndoso = modo === 'pago' && draft.tipo === 'cheque_tercero' && draft.chequeFuente === 'cartera';
+
+  return (
+    <div className="space-y-3">
+      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Valores</label>
+      <div className="border border-slate-100 rounded-xl overflow-hidden">
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="bg-slate-50 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+              <th className="px-3 py-2">Tipo</th>
+              <th className="px-3 py-2">Cuenta / Banco</th>
+              <th className="px-3 py-2">N° cheque</th>
+              <th className="px-3 py-2">Vencimiento</th>
+              <th className="px-3 py-2 text-right">Importe</th>
+              <th className="px-3 py-2 w-10" />
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-50">
+            {(!valores || valores.length === 0) ? (
+              <tr><td colSpan={6} className="px-3 py-6 text-center text-slate-400 text-[10px] font-bold uppercase">Sin valores cargados</td></tr>
+            ) : valores.map((v) => {
+              const esChequeRow = v.tipo === 'cheque_propio' || v.tipo === 'cheque_tercero';
+              return (
+                <tr key={v.id}>
+                  <td className="px-3 py-2 text-xs font-bold">{VALOR_TIPO_LABEL[v.tipo]}{v.chequeReciboId ? ' (endoso)' : ''}</td>
+                  <td className="px-3 py-2 text-xs">{esChequeRow ? (v.banco || '—') : (v.tipo === 'ajuste' ? '—' : cuentaNombre(v.cuentaTesoreriaId))}</td>
+                  <td className="px-3 py-2 text-xs font-mono">{esChequeRow ? (v.numeroCheque || '—') : '—'}</td>
+                  <td className="px-3 py-2 text-xs font-mono">{esChequeRow && v.vencimiento ? safeFormat(v.vencimiento, 'dd/MM/yyyy') : '—'}</td>
+                  <td className="px-3 py-2 text-xs text-right font-mono font-bold">{formatNumber(v.importe, 2)}</td>
+                  <td className="px-3 py-2 text-center">
+                    <button type="button" onClick={() => handleRemove(v.id)} className="p-1 text-slate-300 hover:text-rose-600" title="Quitar">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr className="bg-slate-50/70">
+              <td colSpan={4} className="px-3 py-2 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Total valores</td>
+              <td className="px-3 py-2 text-right font-mono font-black text-sleek-dark">{formatNumber(total, 2)}</td>
+              <td />
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <div className="p-3 bg-violet-50/50 border border-violet-100 rounded-xl space-y-3">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <div className="space-y-1">
+            <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Tipo</label>
+            <select value={draft.tipo} onChange={(e) => resetDraftFor(e.target.value as ValorTipo)} className={inputCls}>
+              {tiposDisponibles.map((t) => (
+                <option key={t} value={t}>{VALOR_TIPO_LABEL[t]}</option>
+              ))}
+            </select>
+          </div>
+
+          {draftEsLiquido && (
+            <div className="space-y-1 md:col-span-2">
+              <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Cuenta de tesorería</label>
+              <select value={draft.cuentaTesoreriaId} onChange={(e) => setDraft({ ...draft, cuentaTesoreriaId: e.target.value })} className={inputCls}>
+                <option value="">Seleccionar...</option>
+                {cuentasHab.map((c: any) => (
+                  <option key={c.id} value={c.id}>{c.nombre}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {draft.tipo === 'cheque_tercero' && modo === 'pago' && (
+            <div className="space-y-1 md:col-span-3">
+              <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Origen del cheque</label>
+              <div className="flex gap-4 pt-1">
+                <label className="flex items-center gap-2 text-[11px] font-bold text-slate-600 cursor-pointer">
+                  <input type="radio" checked={draft.chequeFuente === 'cartera'} onChange={() => setDraft({ ...emptyDraft, tipo: 'cheque_tercero', chequeFuente: 'cartera' })} />
+                  De cartera
+                </label>
+                <label className="flex items-center gap-2 text-[11px] font-bold text-slate-600 cursor-pointer">
+                  <input type="radio" checked={draft.chequeFuente === 'nuevo'} onChange={() => setDraft({ ...emptyDraft, tipo: 'cheque_tercero', chequeFuente: 'nuevo' })} />
+                  Cheque nuevo
+                </label>
+              </div>
+            </div>
+          )}
+
+          {draftCarteraEndoso && (
+            <div className="space-y-1 md:col-span-3">
+              <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Cheque en cartera</label>
+              <select value={draft.chequeReciboId} onChange={(e) => onSelectCartera(e.target.value)} className={inputCls}>
+                <option value="">Seleccionar...</option>
+                {carteraDisponible.map((r: any) => (
+                  <option key={r.id} value={r.id}>
+                    {r.banco}{r.numero ? `-${r.numero}` : ''} · {r.originario || 's/librador'} · vto {safeFormat(r.fechaCobro, 'dd/MM/yyyy')} · {formatNumber(r.monto, 2)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {draftEsCheque && !draftCarteraEndoso && (
+            <>
+              <div className="space-y-1">
+                <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Banco</label>
+                <input type="text" value={draft.banco} onChange={(e) => setDraft({ ...draft, banco: e.target.value })} className={inputCls} />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">N° cheque</label>
+                <input type="text" value={draft.numeroCheque} onChange={(e) => setDraft({ ...draft, numeroCheque: e.target.value })} className={inputCls} />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Vencimiento</label>
+                <input type="date" value={draft.vencimiento} onChange={(e) => setDraft({ ...draft, vencimiento: e.target.value })} className={inputCls} />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Tipo cheque</label>
+                <select value={draft.chequeTipo} onChange={(e) => setDraft({ ...draft, chequeTipo: e.target.value as 'fisico' | 'echeq' })} className={inputCls}>
+                  <option value="fisico">Físico</option>
+                  <option value="echeq">e-Cheq</option>
+                </select>
+              </div>
+              {draft.tipo === 'cheque_tercero' && modo === 'cobro' && (
+                <div className="space-y-1 md:col-span-2">
+                  <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Originario (librador)</label>
+                  <input type="text" value={draft.originario} onChange={(e) => setDraft({ ...draft, originario: e.target.value })} className={inputCls} />
+                </div>
+              )}
+            </>
+          )}
+
+          <div className="space-y-1">
+            <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Importe</label>
+            <input
+              type="number"
+              step="0.01"
+              value={draft.importe}
+              disabled={draftCarteraEndoso}
+              onChange={(e) => setDraft({ ...draft, importe: e.target.value })}
+              className={cn(inputCls, draftCarteraEndoso && 'opacity-60')}
+              placeholder="0.00"
+            />
+          </div>
+        </div>
+        <div className="flex justify-end">
+          <button type="button" onClick={handleAdd} className="px-4 py-2 bg-sleek-dark text-white rounded-lg text-[10px] font-black uppercase tracking-widest flex items-center gap-2">
+            <Plus className="w-4 h-4" /> Agregar valor
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas, setVentas, cobrosClientes, setCobrosClientes, currentUser, showNotification, tesoreriaCuentas = [], reloadCheques }: any) => {
   const [view, setView] = useState<'list' | 'detail' | 'form'>('list');
   const [selectedCliente, setSelectedCliente] = useState<any>(null);
@@ -15801,6 +16099,7 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
     chequeOriginario: '',
     chequeReciboId: '',
   });
+  const [cobroValores, setCobroValores] = useState<ValorMovimiento[]>([]);
 
   // Form State
   const [formCliente, setFormCliente] = useState<any>(null);
@@ -15882,180 +16181,57 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
                 <option value="Ajuste">Ajuste</option>
               </select>
             </div>
-            <div className="p-6 bg-sleek-dark text-white rounded-2xl shadow-xl flex flex-col items-center">
-              <p className="text-[10px] font-black text-white/40 uppercase tracking-[0.3em] mb-3">Importe del movimiento</p>
-              <p className="text-5xl font-black tracking-tighter text-white mb-4">
-                {formatCurrency(
-                  cobroFormData.tipoMovimiento === 'Ajuste'
-                    ? (parseMontoInput(cobroMontoInput, true) ?? cobroFormData.monto ?? 0)
-                    : (cobroFormData.monto || 0)
-                )}
-              </p>
-              <div className="flex flex-col items-center gap-2 w-full max-w-xs">
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    const m = safeRound(Math.abs(getSaldoPendiente(selectedCliente.id)), 2);
-                    setCobroFormData({ ...cobroFormData, monto: m });
-                    setCobroMontoInput(String(m));
-                  }}
-                  className="text-[9px] text-emerald-400 hover:underline self-end"
-                >
-                  Cobrar Saldo Total
-                </button>
-                <div className="flex items-center gap-3 w-full">
+            {cobroFormData.tipoMovimiento === 'Ajuste' ? (
+              <div className="p-6 bg-sleek-dark text-white rounded-2xl shadow-xl flex flex-col items-center">
+                <p className="text-[10px] font-black text-white/40 uppercase tracking-[0.3em] mb-3">Importe del ajuste</p>
+                <p className="text-5xl font-black tracking-tighter text-white mb-4">
+                  {formatCurrency(parseMontoInput(cobroMontoInput, true) ?? cobroFormData.monto ?? 0)}
+                </p>
+                <div className="flex items-center gap-3 w-full max-w-xs">
                   <span className="text-lg font-black text-sleek-accent">$</span>
-                  {cobroFormData.tipoMovimiento === 'Ajuste' ? (
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      required
-                      autoFocus
-                      value={cobroMontoInput}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        if (!isValidMontoInput(v)) return;
-                        setCobroMontoInput(v);
-                        const parsed = parseMontoInput(v, true);
-                        if (parsed !== null) {
-                          setCobroFormData({ ...cobroFormData, monto: safeRound(parsed, 2) });
-                        }
-                      }}
-                      onBlur={() => {
-                        const parsed = parseMontoInput(cobroMontoInput, true);
-                        const monto = parsed !== null ? safeRound(parsed, 2) : 0;
-                        setCobroFormData({ ...cobroFormData, monto });
-                        setCobroMontoInput(String(monto));
-                      }}
-                      className="flex-1 bg-white/10 border border-white/20 rounded-lg px-4 py-2 text-sm font-bold text-white outline-none focus:border-sleek-accent"
-                      placeholder="-0,00"
-                    />
-                  ) : (
-                    <input
-                      type="number"
-                      step="0.01"
-                      min={0}
-                      required
-                      autoFocus
-                      value={cobroFormData.monto}
-                      onChange={(e) => {
-                        const raw = parseFloat(e.target.value);
-                        const monto = isNaN(raw) ? 0 : Math.abs(raw);
-                        setCobroFormData({ ...cobroFormData, monto: safeRound(monto, 2) });
-                        setCobroMontoInput(String(safeRound(monto, 2)));
-                      }}
-                      onBlur={(e) => {
-                        const raw = parseFloat(e.target.value);
-                        const monto = isNaN(raw) ? 0 : safeRound(Math.abs(raw), 2);
-                        setCobroFormData({ ...cobroFormData, monto });
-                        setCobroMontoInput(String(monto));
-                      }}
-                      className="flex-1 bg-white/10 border border-white/20 rounded-lg px-4 py-2 text-sm font-bold text-white outline-none focus:border-sleek-accent"
-                      placeholder="0.00"
-                    />
-                  )}
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    required
+                    autoFocus
+                    value={cobroMontoInput}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (!isValidMontoInput(v)) return;
+                      setCobroMontoInput(v);
+                      const parsed = parseMontoInput(v, true);
+                      if (parsed !== null) {
+                        setCobroFormData({ ...cobroFormData, monto: safeRound(parsed, 2) });
+                      }
+                    }}
+                    onBlur={() => {
+                      const parsed = parseMontoInput(cobroMontoInput, true);
+                      const monto = parsed !== null ? safeRound(parsed, 2) : 0;
+                      setCobroFormData({ ...cobroFormData, monto });
+                      setCobroMontoInput(String(monto));
+                    }}
+                    className="flex-1 bg-white/10 border border-white/20 rounded-lg px-4 py-2 text-sm font-bold text-white outline-none focus:border-sleek-accent"
+                    placeholder="-0,00"
+                  />
                 </div>
               </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-2">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Método de Pago</label>
-                <select
-                  value={cobroFormData.metodo}
-                  onChange={(e) => setCobroFormData({ ...cobroFormData, metodo: e.target.value })}
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
-                >
-                  <option value="Transferencia">Transferencia</option>
-                  <option value="Efectivo">Efectivo</option>
-                  <option value="Cheque">Cheque</option>
-                  <option value="Mercado Pago">Mercado Pago</option>
-                  <option value="Otro">Otro</option>
-                </select>
-              </div>
-              <div className="space-y-2">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Nro de Referencia / Operación</label>
-                <input
-                  type="text"
-                  placeholder="Ej: Nro de Transf."
-                  value={cobroFormData.referencia}
-                  onChange={(e) => setCobroFormData({ ...cobroFormData, referencia: e.target.value })}
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
+            ) : (
+              <>
+                <ValoresGridEditor
+                  modo="cobro"
+                  valores={cobroValores}
+                  setValores={setCobroValores}
+                  tesoreriaCuentas={tesoreriaCuentas}
+                  showNotification={showNotification}
                 />
-              </div>
-            </div>
-
-            {cobroFormData.tipoMovimiento === 'Cobro' && cobroFormData.metodo === 'Cheque' && (
-              <div className="space-y-4 p-4 bg-violet-50/60 border border-violet-100 rounded-xl">
-                <p className="text-[10px] font-black text-violet-500 uppercase tracking-widest">Cheque de tercero recibido</p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Banco *</label>
-                    <input
-                      type="text"
-                      value={cobroFormData.chequeBanco}
-                      onChange={(e) => setCobroFormData({ ...cobroFormData, chequeBanco: e.target.value })}
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
-                    />
+                <div className="p-4 bg-sleek-dark text-white rounded-2xl shadow-xl flex items-center justify-between">
+                  <div>
+                    <p className="text-[10px] font-black text-white/40 uppercase tracking-[0.3em]">Total a cobrar</p>
+                    <p className="text-[9px] text-white/40 mt-1">Puede ser parcial (a cuenta)</p>
                   </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Número</label>
-                    <input
-                      type="text"
-                      value={cobroFormData.chequeNumero}
-                      onChange={(e) => setCobroFormData({ ...cobroFormData, chequeNumero: e.target.value })}
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Fecha de cobro *</label>
-                    <input
-                      type="date"
-                      value={cobroFormData.chequeFecha}
-                      onChange={(e) => setCobroFormData({ ...cobroFormData, chequeFecha: e.target.value })}
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Tipo</label>
-                    <select
-                      value={cobroFormData.chequeTipo}
-                      onChange={(e) => setCobroFormData({ ...cobroFormData, chequeTipo: e.target.value as 'fisico' | 'echeq' })}
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
-                    >
-                      <option value="fisico">Físico</option>
-                      <option value="echeq">e-Cheq</option>
-                    </select>
-                  </div>
-                  <div className="space-y-2 md:col-span-2">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Originario (librador)</label>
-                    <input
-                      type="text"
-                      value={cobroFormData.chequeOriginario}
-                      onChange={(e) => setCobroFormData({ ...cobroFormData, chequeOriginario: e.target.value })}
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
-                    />
-                  </div>
+                  <p className="text-3xl font-black tracking-tighter text-white">{formatCurrency(sumValores(cobroValores))}</p>
                 </div>
-                <p className="text-[10px] text-slate-400">El cheque ingresa a la cartera en estado “en cartera”. No mueve tesorería hasta acreditarse.</p>
-              </div>
-            )}
-
-            {cobroFormData.tipoMovimiento === 'Cobro' && cobroFormData.metodo !== 'Cheque' && (
-              <div className="space-y-2">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Cuenta de Tesorería (Destino)</label>
-                <select
-                  value={cobroFormData.cuentaTesoreriaId}
-                  onChange={(e) => setCobroFormData({ ...cobroFormData, cuentaTesoreriaId: e.target.value })}
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
-                >
-                  <option value="">Seleccionar cuenta...</option>
-                  {tesoreriaCuentas.filter((c: any) => c.habilitada).map((c: any) => (
-                    <option key={c.id} value={c.id}>{c.nombre}</option>
-                  ))}
-                </select>
-              </div>
+              </>
             )}
 
             <div className="space-y-2">
@@ -16300,6 +16476,7 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
       chequeOriginario: '',
       chequeReciboId: '',
     });
+    setCobroValores([]);
     setCobroMontoInput(String(monto));
     setIsCobroModalOpen(true);
   };
@@ -16324,6 +16501,7 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
       chequeOriginario: cobro.chequeOriginario || '',
       chequeReciboId: cobro.chequeReciboId || '',
     });
+    setCobroValores(Array.isArray(cobro.valores) ? cobro.valores : []);
     setCobroMontoInput(String(monto));
     setIsCobroModalOpen(true);
   };
@@ -16331,114 +16509,140 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
   const handleDeleteCobro = (cobro: any) => {
     confirmDialog('¿Estás seguro de eliminar este cobro?', () => {
       setCobrosClientes((cobrosClientes || []).filter((c: any) => c.id !== cobro.id));
-      // Anular el movimiento de tesorería asociado (si lo tiene)
-      if (cobro.cuentaTesoreriaId) {
-        anularMovimientosCobroDeVenta(cobro.id);
-      }
-      // Anular el cheque generado por este cobro (si lo tiene)
-      if (cobro.metodo === 'Cheque') {
-        (async () => { await anularChequesPorOrigen(cobro.id); reloadCheques?.(); })();
-      }
+      // Anular impactos por origen: movimientos de tesorería y cheques de cartera (sin borrar)
+      const tieneCheques = cobro.metodo === 'Cheque' || (Array.isArray(cobro.valores) && cobro.valores.some((v: any) => v.tipo === 'cheque_tercero' || v.tipo === 'cheque_propio'));
+      (async () => {
+        await anularMovimientosCobroDeVenta(cobro.id);
+        if (tieneCheques) await anularChequesPorOrigen(cobro.id);
+        reloadCheques?.();
+      })();
       showNotification('Cobro eliminado', 'success');
     });
+  };
+
+  // Genera los impactos (tesorería + cartera de cheques) de cada valor de una cobranza
+  const generarImpactosCobro = async (origenId: string, comprobante: string, valores: ValorMovimiento[], fecha: string) => {
+    const hoyIso = new Date().toISOString().split('T')[0];
+    for (const v of valores) {
+      if (v.tipo === 'ajuste') continue; // solo afecta saldo CC
+      if (v.tipo === 'cheque_tercero') {
+        await saveChequeRecibido({
+          id: '',
+          fechaRecepcion: hoyIso,
+          fechaCobro: v.vencimiento || hoyIso,
+          originario: v.originario?.trim() || undefined,
+          recibidoDe: selectedCliente.razonSocial,
+          banco: (v.banco || '').trim(),
+          numero: v.numeroCheque?.trim() || undefined,
+          monto: safeRound(v.importe, 2),
+          tipo: v.chequeTipo || 'fisico',
+          estado: 'en_cartera',
+          origenTipo: 'cobro',
+          origenId,
+          anulado: false,
+        });
+      } else {
+        // efectivo / transferencia / mercadopago → ingresa a tesorería (Debe)
+        await crearMovimientoCobro({
+          cuentaId: v.cuentaTesoreriaId!,
+          fecha,
+          debe: safeRound(v.importe, 2),
+          detalle: `Cobro cuenta corriente ${comprobante} (${VALOR_TIPO_LABEL[v.tipo]})${v.referencia ? ` ${v.referencia}` : ''}`,
+          contraparte: selectedCliente.razonSocial,
+          origenId,
+          origenReferencia: comprobante,
+        });
+      }
+    }
+    reloadCheques?.();
   };
 
   const saveCobro = (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!selectedCliente) return;
     const esAjuste = cobroFormData.tipoMovimiento === 'Ajuste';
-    const parsedAjuste = esAjuste ? parseMontoInput(cobroMontoInput, true) : null;
-    const monto = safeRound(
-      esAjuste ? (parsedAjuste ?? cobroFormData.monto) : Math.abs(cobroFormData.monto),
-      2
-    );
 
-    const esCheque = !esAjuste && cobroFormData.metodo === 'Cheque';
-
-    // Validaciones según método
-    if (esCheque) {
-      if (!cobroFormData.chequeBanco.trim()) {
-        showNotification('Indicá el banco del cheque', 'error');
-        return;
+    if (esAjuste) {
+      const parsedAjuste = parseMontoInput(cobroMontoInput, true);
+      const monto = safeRound(parsedAjuste ?? cobroFormData.monto, 2);
+      if (editingCobroId) {
+        setCobrosClientes((cobrosClientes || []).map((c: any) =>
+          c.id === editingCobroId
+            ? { ...c, fecha: cobroFormData.fecha, monto, metodo: 'Ajuste', referencia: cobroFormData.referencia, observaciones: cobroFormData.observaciones, tipoMovimiento: 'Ajuste', cuentaTesoreriaId: undefined, valores: undefined }
+            : c
+        ));
+        showNotification('Ajuste actualizado', 'success');
+      } else {
+        const count = (cobrosClientes || []).filter((c: any) => String(c.comprobante || '').startsWith('AJC-')).length;
+        const nuevoCobro = {
+          ...cobroFormData,
+          monto,
+          metodo: 'Ajuste',
+          tipoMovimiento: 'Ajuste',
+          cuentaTesoreriaId: undefined,
+          comprobante: `AJC-${format(new Date(), 'yyyyMMdd')}-${(count + 1).toString().padStart(3, '0')}`,
+          id: `cbr-${Date.now()}`,
+          clienteId: selectedCliente.id,
+          estado: 'Activo',
+          usuarioId: currentUser.id,
+          fechaCreacion: new Date().toISOString(),
+        };
+        setCobrosClientes([...(cobrosClientes || []), nuevoCobro]);
+        showNotification('Ajuste registrado con éxito', 'success');
       }
-      if (!cobroFormData.chequeFecha) {
-        showNotification('Indicá la fecha de cobro del cheque', 'error');
-        return;
-      }
-    } else if (!esAjuste && !cobroFormData.cuentaTesoreriaId) {
-      // Validar cuenta de tesorería para cobros líquidos (no para ajustes ni cheques)
-      showNotification('Seleccioná la cuenta de Tesorería de destino del cobro', 'error');
+      setIsCobroModalOpen(false);
+      setEditingCobroId(null);
+      setCobroMontoInput('0');
       return;
     }
 
-    const hoyIso = new Date().toISOString().split('T')[0];
+    // --- Cobro con grilla de valores ---
+    const valores = cobroValores;
+    if (!valores || valores.length === 0) {
+      showNotification('Agregá al menos un valor a la cobranza', 'error');
+      return;
+    }
+    const monto = sumValores(valores);
+    if (monto <= 0) {
+      showNotification('El total de la cobranza debe ser mayor a cero', 'error');
+      return;
+    }
+    const metodoResumen = valores.length === 1 ? VALOR_TIPO_LABEL[valores[0].tipo] : 'Múltiple';
 
     if (editingCobroId) {
       const cobroAnterior = (cobrosClientes || []).find((c: any) => c.id === editingCobroId);
+      const comprobante = cobroAnterior?.comprobante || editingCobroId;
       setCobrosClientes((cobrosClientes || []).map((c: any) =>
         c.id === editingCobroId
           ? {
               ...c,
               fecha: cobroFormData.fecha,
               monto,
-              metodo: cobroFormData.metodo,
-              referencia: cobroFormData.referencia,
+              metodo: metodoResumen,
               observaciones: cobroFormData.observaciones,
-              tipoMovimiento: cobroFormData.tipoMovimiento,
-              cuentaTesoreriaId: esAjuste || esCheque ? undefined : cobroFormData.cuentaTesoreriaId,
-              chequeBanco: esCheque ? cobroFormData.chequeBanco : undefined,
-              chequeNumero: esCheque ? cobroFormData.chequeNumero : undefined,
-              chequeFecha: esCheque ? cobroFormData.chequeFecha : undefined,
-              chequeTipo: esCheque ? cobroFormData.chequeTipo : undefined,
-              chequeOriginario: esCheque ? cobroFormData.chequeOriginario : undefined,
+              tipoMovimiento: 'Cobro',
+              cuentaTesoreriaId: undefined,
+              valores,
             }
           : c
       ));
-      // Re-sincronizar: anular movimiento de tesorería y cheques previos, y recrear según método
-      if (!esAjuste) {
-        (async () => {
-          await anularMovimientosCobroDeVenta(editingCobroId);
-          await anularChequesPorOrigen(editingCobroId);
-          if (esCheque) {
-            await saveChequeRecibido({
-              id: '',
-              fechaRecepcion: hoyIso,
-              fechaCobro: cobroFormData.chequeFecha,
-              originario: cobroFormData.chequeOriginario.trim() || undefined,
-              recibidoDe: selectedCliente.razonSocial,
-              banco: cobroFormData.chequeBanco.trim(),
-              numero: cobroFormData.chequeNumero.trim() || undefined,
-              monto,
-              tipo: cobroFormData.chequeTipo,
-              estado: 'en_cartera',
-              origenTipo: 'cobro',
-              origenId: editingCobroId,
-              anulado: false,
-            });
-          } else {
-            await crearMovimientoCobro({
-              cuentaId: cobroFormData.cuentaTesoreriaId,
-              fecha: cobroFormData.fecha,
-              debe: monto,
-              detalle: `Cobro cuenta corriente ${cobroAnterior?.comprobante || ''} (${cobroFormData.metodo})`,
-              contraparte: selectedCliente.razonSocial,
-              origenId: editingCobroId,
-              origenReferencia: cobroAnterior?.comprobante || editingCobroId,
-            });
-          }
-          reloadCheques?.();
-        })();
-      }
+      (async () => {
+        await anularMovimientosCobroDeVenta(editingCobroId);
+        await anularChequesPorOrigen(editingCobroId);
+        await generarImpactosCobro(editingCobroId, comprobante, valores, cobroFormData.fecha);
+      })();
       showNotification('Cobro actualizado', 'success');
     } else {
-      const prefix = esAjuste ? 'AJC' : 'REC';
-      const count = (cobrosClientes || []).filter((c: any) => String(c.comprobante || '').startsWith(`${prefix}-`)).length;
+      const count = (cobrosClientes || []).filter((c: any) => String(c.comprobante || '').startsWith('REC-')).length;
+      const comprobante = `REC-${format(new Date(), 'yyyyMMdd')}-${(count + 1).toString().padStart(3, '0')}`;
       const nuevoCobro = {
         ...cobroFormData,
         monto,
-        tipoMovimiento: cobroFormData.tipoMovimiento,
-        cuentaTesoreriaId: esAjuste || esCheque ? undefined : cobroFormData.cuentaTesoreriaId,
-        comprobante: `${prefix}-${format(new Date(), 'yyyyMMdd')}-${(count + 1).toString().padStart(3, '0')}`,
+        metodo: metodoResumen,
+        tipoMovimiento: 'Cobro',
+        cuentaTesoreriaId: undefined,
+        valores,
+        comprobante,
         id: `cbr-${Date.now()}`,
         clienteId: selectedCliente.id,
         estado: 'Activo',
@@ -16446,40 +16650,8 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
         fechaCreacion: new Date().toISOString(),
       };
       setCobrosClientes([...(cobrosClientes || []), nuevoCobro]);
-      if (!esAjuste) {
-        if (esCheque) {
-          // Cheque de tercero → entra a la cartera, NO toca tesorería
-          (async () => {
-            await saveChequeRecibido({
-              id: '',
-              fechaRecepcion: hoyIso,
-              fechaCobro: cobroFormData.chequeFecha,
-              originario: cobroFormData.chequeOriginario.trim() || undefined,
-              recibidoDe: selectedCliente.razonSocial,
-              banco: cobroFormData.chequeBanco.trim(),
-              numero: cobroFormData.chequeNumero.trim() || undefined,
-              monto,
-              tipo: cobroFormData.chequeTipo,
-              estado: 'en_cartera',
-              origenTipo: 'cobro',
-              origenId: nuevoCobro.id,
-              anulado: false,
-            });
-            reloadCheques?.();
-          })();
-        } else {
-          crearMovimientoCobro({
-            cuentaId: nuevoCobro.cuentaTesoreriaId!,
-            fecha: nuevoCobro.fecha,
-            debe: monto,
-            detalle: `Cobro cuenta corriente ${nuevoCobro.comprobante} (${nuevoCobro.metodo})`,
-            contraparte: selectedCliente.razonSocial,
-            origenId: nuevoCobro.id,
-            origenReferencia: nuevoCobro.comprobante,
-          });
-        }
-      }
-      showNotification(esAjuste ? 'Ajuste registrado con éxito' : 'Cobro registrado con éxito', 'success');
+      generarImpactosCobro(nuevoCobro.id, comprobante, valores, nuevoCobro.fecha);
+      showNotification('Cobro registrado con éxito', 'success');
     }
     setIsCobroModalOpen(false);
     setEditingCobroId(null);
@@ -18353,6 +18525,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
     chequeTipo: 'fisico' as 'fisico' | 'echeq',
     chequeReciboId: '',
   });
+  const [pagoValores, setPagoValores] = useState<ValorMovimiento[]>([]);
   const [editingPagoId, setEditingPagoId] = useState<string | null>(null);
   const [pagoMontoInput, setPagoMontoInput] = useState('0');
   const [filterCcDesde, setFilterCcDesde] = useState(() => todayIso());
@@ -18441,6 +18614,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
       chequeTipo: 'fisico',
       chequeReciboId: '',
     });
+    setPagoValores([]);
     setPagoMontoInput(String(monto));
     setIsPagoModalOpen(true);
   };
@@ -18463,6 +18637,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
       chequeTipo: pago.chequeTipo || 'fisico',
       chequeReciboId: pago.chequeReciboId || '',
     });
+    setPagoValores(Array.isArray(pago.valores) ? pago.valores : []);
     setPagoMontoInput(String(monto));
     setIsPagoModalOpen(true);
   };
@@ -18470,168 +18645,177 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
   const handleDeleteMovimiento = (pago: PagoProveedor) => {
     confirmDialog('¿Estás seguro de eliminar este movimiento?', () => {
       setPagosProveedores(pagosProveedores.filter((p: any) => p.id !== pago.id));
-      // Anular el movimiento de tesorería asociado (si lo tiene)
-      if (pago.cuentaTesoreriaId) {
-        anularMovimientosPago(pago.id);
-      }
-      // Anular el cheque generado por este pago (si lo tiene)
-      if (pago.metodo === 'Cheque') {
-        (async () => { await anularChequesPorOrigen(pago.id); reloadCheques?.(); })();
-      }
+      // Anular impactos por origen: tesorería y cheques de cartera (sin borrar)
+      const tieneCheques = pago.metodo === 'Cheque' || (Array.isArray(pago.valores) && pago.valores.some((v: any) => v.tipo === 'cheque_propio' || v.tipo === 'cheque_tercero'));
+      (async () => {
+        await anularMovimientosPago(pago.id);
+        if (tieneCheques) await anularChequesPorOrigen(pago.id);
+        reloadCheques?.();
+      })();
       showNotification('Movimiento eliminado', 'success');
     });
   };
 
-  const handleSavePago = (e: React.FormEvent) => {
-    e.preventDefault();
-    const esAjuste = pagoData.tipoMovimiento === 'Ajuste';
-    const parsedAjuste = esAjuste ? parseMontoInput(pagoMontoInput, true) : null;
-    const monto = safeRound(
-      esAjuste ? (parsedAjuste ?? pagoData.monto) : Math.abs(pagoData.monto),
-      2
-    );
-
-    const esCheque = !esAjuste && pagoData.metodo === 'Cheque';
-    const esChequeCartera = esCheque && pagoData.chequeModo === 'cartera';
-    const esChequePropio = esCheque && pagoData.chequeModo !== 'cartera';
-
-    // Validaciones según método
-    if (esChequeCartera) {
-      if (!pagoData.chequeReciboId) {
-        showNotification('Elegí un cheque de la cartera para endosar', 'error');
-        return;
-      }
-    } else if (esChequePropio) {
-      if (!pagoData.chequeBanco.trim()) {
-        showNotification('Indicá el banco del cheque propio', 'error');
-        return;
-      }
-      if (!pagoData.chequeFecha) {
-        showNotification('Indicá la fecha de pago del cheque', 'error');
-        return;
-      }
-    } else if (!esAjuste && !pagoData.cuentaTesoreriaId) {
-      // Validar cuenta de tesorería para pagos líquidos (no para ajustes ni cheques)
-      showNotification('Seleccioná la cuenta de Tesorería de origen del pago', 'error');
-      return;
-    }
-
+  // Genera los impactos (tesorería + cartera de cheques) de cada valor de una orden de pago
+  const generarImpactosPago = async (origenId: string, comprobante: string, valores: ValorMovimiento[], fecha: string) => {
     const hoyIso = new Date().toISOString().split('T')[0];
-
-    const generarChequePago = async (origenId: string) => {
-      if (esChequeCartera) {
-        const rec = (chequesRecibidos || []).find((r: any) => r.id === pagoData.chequeReciboId);
-        if (rec) {
-          await endosarChequeRecibido({
-            recibido: rec,
-            endosadoA: selectedProveedor.razonSocial,
-            fechaEndoso: hoyIso,
-            origenId,
-          });
-        }
-      } else {
+    for (const v of valores) {
+      if (v.tipo === 'ajuste') continue;
+      if (v.tipo === 'cheque_propio') {
         await saveChequeEmitido({
           id: '',
           fechaEmision: hoyIso,
-          fechaPago: pagoData.chequeFecha,
+          fechaPago: v.vencimiento || hoyIso,
           beneficiario: selectedProveedor.razonSocial,
-          banco: pagoData.chequeBanco.trim(),
-          numero: pagoData.chequeNumero.trim() || undefined,
-          monto,
-          tipo: pagoData.chequeTipo,
+          banco: (v.banco || '').trim(),
+          numero: v.numeroCheque?.trim() || undefined,
+          monto: safeRound(v.importe, 2),
+          tipo: v.chequeTipo || 'fisico',
           estado: 'pendiente',
           origenTipo: 'pago',
           origenId,
           anulado: false,
         });
+      } else if (v.tipo === 'cheque_tercero') {
+        if (v.chequeReciboId) {
+          const rec = (chequesRecibidos || []).find((r: any) => r.id === v.chequeReciboId);
+          if (rec) {
+            await endosarChequeRecibido({
+              recibido: rec,
+              endosadoA: selectedProveedor.razonSocial,
+              fechaEndoso: hoyIso,
+              origenId,
+            });
+          }
+        } else {
+          // Cheque de tercero nuevo entregado al proveedor → se registra como emitido (endoso directo)
+          await saveChequeEmitido({
+            id: '',
+            fechaEmision: hoyIso,
+            fechaPago: v.vencimiento || hoyIso,
+            beneficiario: selectedProveedor.razonSocial,
+            banco: (v.banco || '').trim(),
+            numero: v.numeroCheque?.trim() || undefined,
+            monto: safeRound(v.importe, 2),
+            tipo: v.chequeTipo || 'fisico',
+            estado: 'pendiente',
+            origenTipo: 'endoso',
+            origenId,
+            anulado: false,
+          });
+        }
+      } else {
+        // efectivo / transferencia / mercadopago → sale de tesorería (Haber)
+        await crearMovimientoPago({
+          cuentaId: v.cuentaTesoreriaId!,
+          fecha,
+          haber: safeRound(v.importe, 2),
+          detalle: `Pago cuenta corriente ${comprobante} (${VALOR_TIPO_LABEL[v.tipo]})${v.referencia ? ` ${v.referencia}` : ''}`,
+          contraparte: selectedProveedor.razonSocial,
+          origenId,
+          origenReferencia: comprobante,
+        });
       }
-      reloadCheques?.();
-    };
+    }
+    reloadCheques?.();
+  };
+
+  const handleSavePago = (e: React.FormEvent) => {
+    e.preventDefault();
+    const esAjuste = pagoData.tipoMovimiento === 'Ajuste';
+    const hoyIso = new Date().toISOString().split('T')[0];
+
+    if (esAjuste) {
+      const parsedAjuste = parseMontoInput(pagoMontoInput, true);
+      const monto = safeRound(parsedAjuste ?? pagoData.monto, 2);
+      if (editingPagoId) {
+        setPagosProveedores(pagosProveedores.map((p: any) =>
+          p.id === editingPagoId
+            ? { ...p, monto, metodo: 'Ajuste', referencia: pagoData.referencia, observaciones: pagoData.observaciones, tipoMovimiento: 'Ajuste', cuentaTesoreriaId: undefined, valores: undefined }
+            : p
+        ));
+        showNotification('Ajuste actualizado', 'success');
+      } else {
+        const count = pagosProveedores.filter((p: any) => String(p.comprobante || '').startsWith('AJ-')).length;
+        const newPago: PagoProveedor = {
+          id: `pago-pr-${Date.now()}`,
+          proveedorId: selectedProveedor.id,
+          fecha: hoyIso,
+          monto,
+          metodo: 'Otro',
+          referencia: pagoData.referencia,
+          comprobante: `AJ-${format(new Date(), 'yyyyMMdd')}-${(count + 1).toString().padStart(3, '0')}`,
+          observaciones: pagoData.observaciones,
+          tipoMovimiento: 'Ajuste',
+          cuentaTesoreriaId: undefined,
+        };
+        setPagosProveedores([...pagosProveedores, newPago]);
+        showNotification('Ajuste registrado con éxito', 'success');
+      }
+      setIsPagoModalOpen(false);
+      setEditingPagoId(null);
+      setPagoMontoInput('0');
+      return;
+    }
+
+    // --- Pago con grilla de valores ---
+    const valores = pagoValores;
+    if (!valores || valores.length === 0) {
+      showNotification('Agregá al menos un valor a la orden de pago', 'error');
+      return;
+    }
+    const monto = sumValores(valores);
+    if (monto <= 0) {
+      showNotification('El total de la orden de pago debe ser mayor a cero', 'error');
+      return;
+    }
+    const metodoResumen = valores.length === 1 ? VALOR_TIPO_LABEL[valores[0].tipo] : 'Múltiple';
 
     if (editingPagoId) {
       const pagoAnterior = (pagosProveedores || []).find((p: any) => p.id === editingPagoId);
+      const comprobante = pagoAnterior?.comprobante || editingPagoId;
       setPagosProveedores(pagosProveedores.map((p: any) =>
         p.id === editingPagoId
           ? {
               ...p,
               monto,
-              metodo: pagoData.metodo,
-              referencia: pagoData.referencia,
+              metodo: metodoResumen,
               observaciones: pagoData.observaciones,
-              tipoMovimiento: pagoData.tipoMovimiento,
-              cuentaTesoreriaId: esAjuste || esCheque ? undefined : pagoData.cuentaTesoreriaId,
-              chequeModo: esCheque ? pagoData.chequeModo : undefined,
-              chequeBanco: esChequePropio ? pagoData.chequeBanco : undefined,
-              chequeNumero: esChequePropio ? pagoData.chequeNumero : undefined,
-              chequeFecha: esChequePropio ? pagoData.chequeFecha : undefined,
-              chequeTipo: esChequePropio ? pagoData.chequeTipo : undefined,
-              chequeReciboId: esChequeCartera ? pagoData.chequeReciboId : undefined,
+              tipoMovimiento: 'Pago',
+              cuentaTesoreriaId: undefined,
+              valores,
             }
           : p
       ));
-      // Re-sincronizar: anular movimiento de tesorería y cheques previos, y recrear según método
-      if (!esAjuste) {
-        (async () => {
-          await anularMovimientosPago(editingPagoId);
-          await anularChequesPorOrigen(editingPagoId);
-          if (esCheque) {
-            await generarChequePago(editingPagoId);
-          } else {
-            await crearMovimientoPago({
-              cuentaId: pagoData.cuentaTesoreriaId,
-              fecha: pagoAnterior?.fecha || hoyIso,
-              haber: monto,
-              detalle: `Pago cuenta corriente ${pagoAnterior?.comprobante || ''} (${pagoData.metodo})`,
-              contraparte: selectedProveedor.razonSocial,
-              origenId: editingPagoId,
-              origenReferencia: pagoAnterior?.comprobante || editingPagoId,
-            });
-          }
-        })();
-      }
+      (async () => {
+        await anularMovimientosPago(editingPagoId);
+        await anularChequesPorOrigen(editingPagoId);
+        await generarImpactosPago(editingPagoId, comprobante, valores, pagoAnterior?.fecha || hoyIso);
+      })();
       showNotification('Movimiento actualizado', 'success');
     } else {
-      const prefix = esAjuste ? 'AJ' : 'OP';
-      const count = pagosProveedores.filter((p: any) => String(p.comprobante || '').startsWith(`${prefix}-`)).length;
+      const count = pagosProveedores.filter((p: any) => String(p.comprobante || '').startsWith('OP-')).length;
+      const comprobante = `OP-${format(new Date(), 'yyyyMMdd')}-${(count + 1).toString().padStart(3, '0')}`;
       const newPago: PagoProveedor = {
         id: `pago-pr-${Date.now()}`,
         proveedorId: selectedProveedor.id,
         fecha: hoyIso,
         monto,
-        metodo: pagoData.metodo,
+        metodo: metodoResumen as any,
         referencia: pagoData.referencia,
-        comprobante: `${prefix}-${format(new Date(), 'yyyyMMdd')}-${(count + 1).toString().padStart(3, '0')}`,
+        comprobante,
         observaciones: pagoData.observaciones,
-        tipoMovimiento: pagoData.tipoMovimiento,
-        cuentaTesoreriaId: esAjuste || esCheque ? undefined : pagoData.cuentaTesoreriaId,
-        chequeModo: esCheque ? pagoData.chequeModo : undefined,
-        chequeBanco: esChequePropio ? pagoData.chequeBanco : undefined,
-        chequeNumero: esChequePropio ? pagoData.chequeNumero : undefined,
-        chequeFecha: esChequePropio ? pagoData.chequeFecha : undefined,
-        chequeTipo: esChequePropio ? pagoData.chequeTipo : undefined,
-        chequeReciboId: esChequeCartera ? pagoData.chequeReciboId : undefined,
+        tipoMovimiento: 'Pago',
+        cuentaTesoreriaId: undefined,
+        valores,
       };
       setPagosProveedores([...pagosProveedores, newPago]);
-      if (!esAjuste) {
-        if (esCheque) {
-          // Cheque (propio nuevo o endoso de cartera) → NO toca tesorería
-          (async () => { await generarChequePago(newPago.id); })();
-        } else {
-          crearMovimientoPago({
-            cuentaId: newPago.cuentaTesoreriaId!,
-            fecha: newPago.fecha,
-            haber: monto,
-            detalle: `Pago cuenta corriente ${newPago.comprobante} (${newPago.metodo})`,
-            contraparte: selectedProveedor.razonSocial,
-            origenId: newPago.id,
-            origenReferencia: newPago.comprobante,
-          });
-        }
-      }
-      showNotification(esAjuste ? 'Ajuste registrado con éxito' : 'Movimiento registrado con éxito', 'success');
+      generarImpactosPago(newPago.id, comprobante, valores, newPago.fecha);
+      showNotification('Movimiento registrado con éxito', 'success');
     }
     setIsPagoModalOpen(false);
     setEditingPagoId(null);
+    setPagoMontoInput('0');
   };
 
   const filtered = proveedores
@@ -19074,195 +19258,58 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
                 <option value="Ajuste">Ajuste</option>
               </select>
            </div>
-           <div className="p-6 bg-sleek-dark text-white rounded-2xl shadow-xl flex flex-col items-center">
-              <p className="text-[10px] font-black text-white/40 uppercase tracking-[0.3em] mb-3">Importe del movimiento</p>
-              <p className="text-5xl font-black tracking-tighter text-white mb-4">
-                {formatCurrency(
-                  pagoData.tipoMovimiento === 'Ajuste'
-                    ? (parseMontoInput(pagoMontoInput, true) ?? pagoData.monto ?? 0)
-                    : (pagoData.monto || 0)
-                )}
-              </p>
-              <div className="flex items-center gap-3 w-full max-w-xs">
-                 <span className="text-lg font-black text-sleek-accent">$</span>
-                 {pagoData.tipoMovimiento === 'Ajuste' ? (
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    required
-                    autoFocus
-                    value={pagoMontoInput}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      if (!isValidMontoInput(v)) return;
-                      setPagoMontoInput(v);
-                      const parsed = parseMontoInput(v, true);
-                      if (parsed !== null) {
-                        setPagoData({ ...pagoData, monto: safeRound(parsed, 2) });
-                      }
-                    }}
-                    onBlur={() => {
-                      const parsed = parseMontoInput(pagoMontoInput, true);
-                      const monto = parsed !== null ? safeRound(parsed, 2) : 0;
-                      setPagoData({ ...pagoData, monto });
-                      setPagoMontoInput(String(monto));
-                    }}
-                    className="flex-1 bg-white/10 border border-white/20 rounded-lg px-4 py-2 text-sm font-bold text-white outline-none focus:border-sleek-accent"
-                    placeholder="-0,00"
-                  />
-                 ) : (
-                  <input
-                    type="number"
-                    step="0.01"
-                    min={0}
-                    required
-                    autoFocus
-                    value={pagoData.monto}
-                    onChange={(e) => {
-                      const raw = parseFloat(e.target.value);
-                      const monto = isNaN(raw) ? 0 : Math.abs(raw);
-                      setPagoData({ ...pagoData, monto: safeRound(monto, 2) });
-                      setPagoMontoInput(String(safeRound(monto, 2)));
-                    }}
-                    onBlur={(e) => {
-                      const raw = parseFloat(e.target.value);
-                      const monto = isNaN(raw) ? 0 : safeRound(Math.abs(raw), 2);
-                      setPagoData({ ...pagoData, monto });
-                      setPagoMontoInput(String(monto));
-                    }}
-                    className="flex-1 bg-white/10 border border-white/20 rounded-lg px-4 py-2 text-sm font-bold text-white outline-none focus:border-sleek-accent"
-                    placeholder="0.00"
-                  />
-                 )}
-              </div>
-           </div>
-
-           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-2">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Método de Pago</label>
-                <select 
-                  value={pagoData.metodo}
-                  onChange={(e) => setPagoData({ ...pagoData, metodo: e.target.value })}
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
-                >
-                  <option value="Transferencia">Transferencia</option>
-                  <option value="Efectivo">Efectivo</option>
-                  <option value="Cheque">Cheque</option>
-                  <option value="Merca Pago">Mercado Pago</option>
-                  <option value="Otro">Otro</option>
-                </select>
-              </div>
-              <div className="space-y-2">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Nro de Referencia / Operación</label>
-                <input 
-                  type="text"
-                  placeholder="Ej: Nro de Transf."
-                  value={pagoData.referencia || ''}
-                  onChange={(e) => setPagoData({ ...pagoData, referencia: e.target.value })}
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
-                />
-              </div>
-           </div>
-
-           {pagoData.tipoMovimiento === 'Pago' && pagoData.metodo === 'Cheque' && (
-             <div className="space-y-4 p-4 bg-violet-50/60 border border-violet-100 rounded-xl">
-               <div className="flex flex-wrap gap-4">
-                 <label className="flex items-center gap-2 text-[11px] font-bold text-slate-600 cursor-pointer">
+           {pagoData.tipoMovimiento === 'Ajuste' ? (
+             <div className="p-6 bg-sleek-dark text-white rounded-2xl shadow-xl flex flex-col items-center">
+                <p className="text-[10px] font-black text-white/40 uppercase tracking-[0.3em] mb-3">Importe del ajuste</p>
+                <p className="text-5xl font-black tracking-tighter text-white mb-4">
+                  {formatCurrency(parseMontoInput(pagoMontoInput, true) ?? pagoData.monto ?? 0)}
+                </p>
+                <div className="flex items-center gap-3 w-full max-w-xs">
+                   <span className="text-lg font-black text-sleek-accent">$</span>
                    <input
-                     type="radio"
-                     name="chequeModo"
-                     checked={pagoData.chequeModo === 'cartera'}
-                     onChange={() => setPagoData({ ...pagoData, chequeModo: 'cartera' })}
+                     type="text"
+                     inputMode="decimal"
+                     required
+                     autoFocus
+                     value={pagoMontoInput}
+                     onChange={(e) => {
+                       const v = e.target.value;
+                       if (!isValidMontoInput(v)) return;
+                       setPagoMontoInput(v);
+                       const parsed = parseMontoInput(v, true);
+                       if (parsed !== null) {
+                         setPagoData({ ...pagoData, monto: safeRound(parsed, 2) });
+                       }
+                     }}
+                     onBlur={() => {
+                       const parsed = parseMontoInput(pagoMontoInput, true);
+                       const monto = parsed !== null ? safeRound(parsed, 2) : 0;
+                       setPagoData({ ...pagoData, monto });
+                       setPagoMontoInput(String(monto));
+                     }}
+                     className="flex-1 bg-white/10 border border-white/20 rounded-lg px-4 py-2 text-sm font-bold text-white outline-none focus:border-sleek-accent"
+                     placeholder="-0,00"
                    />
-                   Elegir de cartera
-                 </label>
-                 <label className="flex items-center gap-2 text-[11px] font-bold text-slate-600 cursor-pointer">
-                   <input
-                     type="radio"
-                     name="chequeModo"
-                     checked={pagoData.chequeModo !== 'cartera'}
-                     onChange={() => setPagoData({ ...pagoData, chequeModo: 'propio' })}
-                   />
-                   Cheque propio nuevo
-                 </label>
+                </div>
+             </div>
+           ) : (
+             <>
+               <ValoresGridEditor
+                 modo="pago"
+                 valores={pagoValores}
+                 setValores={setPagoValores}
+                 tesoreriaCuentas={tesoreriaCuentas}
+                 chequesRecibidos={chequesRecibidos}
+                 showNotification={showNotification}
+               />
+               <div className="p-4 bg-sleek-dark text-white rounded-2xl shadow-xl flex items-center justify-between">
+                 <div>
+                   <p className="text-[10px] font-black text-white/40 uppercase tracking-[0.3em]">Total a pagar</p>
+                   <p className="text-[9px] text-white/40 mt-1">Puede ser parcial (a cuenta)</p>
+                 </div>
+                 <p className="text-3xl font-black tracking-tighter text-white">{formatCurrency(sumValores(pagoValores))}</p>
                </div>
-
-               {pagoData.chequeModo === 'cartera' ? (
-                 <div className="space-y-2">
-                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Cheque en cartera (se endosa al proveedor)</label>
-                   <select
-                     value={pagoData.chequeReciboId}
-                     onChange={(e) => setPagoData({ ...pagoData, chequeReciboId: e.target.value })}
-                     className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
-                   >
-                     <option value="">Seleccionar cheque...</option>
-                     {(chequesRecibidos || []).filter((r: any) => !r.anulado && r.estado === 'en_cartera').map((r: any) => (
-                       <option key={r.id} value={r.id}>
-                         {r.banco}{r.numero ? `-${r.numero}` : ''} · {r.originario || 's/librador'} · vto {safeFormat(r.fechaCobro, 'dd/MM/yyyy')} · {formatNumber(r.monto, 2)}
-                       </option>
-                     ))}
-                   </select>
-                   <p className="text-[10px] text-slate-400">El cheque recibido quedará “endosado” y se generará un cheque emitido a nombre del proveedor.</p>
-                 </div>
-               ) : (
-                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                   <div className="space-y-2">
-                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Banco *</label>
-                     <input
-                       type="text"
-                       value={pagoData.chequeBanco}
-                       onChange={(e) => setPagoData({ ...pagoData, chequeBanco: e.target.value })}
-                       className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
-                     />
-                   </div>
-                   <div className="space-y-2">
-                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Número</label>
-                     <input
-                       type="text"
-                       value={pagoData.chequeNumero}
-                       onChange={(e) => setPagoData({ ...pagoData, chequeNumero: e.target.value })}
-                       className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
-                     />
-                   </div>
-                   <div className="space-y-2">
-                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Fecha de pago *</label>
-                     <input
-                       type="date"
-                       value={pagoData.chequeFecha}
-                       onChange={(e) => setPagoData({ ...pagoData, chequeFecha: e.target.value })}
-                       className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
-                     />
-                   </div>
-                   <div className="space-y-2">
-                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Tipo</label>
-                     <select
-                       value={pagoData.chequeTipo}
-                       onChange={(e) => setPagoData({ ...pagoData, chequeTipo: e.target.value as 'fisico' | 'echeq' })}
-                       className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
-                     >
-                       <option value="fisico">Físico</option>
-                       <option value="echeq">e-Cheq</option>
-                     </select>
-                   </div>
-                 </div>
-               )}
-             </div>
-           )}
-
-           {pagoData.tipoMovimiento === 'Pago' && pagoData.metodo !== 'Cheque' && (
-             <div className="space-y-2">
-               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Cuenta de Tesorería (Origen)</label>
-               <select
-                 value={pagoData.cuentaTesoreriaId}
-                 onChange={(e) => setPagoData({ ...pagoData, cuentaTesoreriaId: e.target.value })}
-                 className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
-               >
-                 <option value="">Seleccionar cuenta...</option>
-                 {tesoreriaCuentas.filter((c: any) => c.habilitada).map((c: any) => (
-                   <option key={c.id} value={c.id}>{c.nombre}</option>
-                 ))}
-               </select>
-             </div>
+             </>
            )}
 
            <div className="space-y-2">
@@ -22936,12 +22983,16 @@ const ChequesView = ({
   loading,
   onReload,
   showNotification,
+  clientes = [],
+  proveedores = [],
 }: {
   recibidos: ChequeRecibido[];
   emitidos: ChequeEmitido[];
   loading: boolean;
   onReload: () => Promise<void>;
   showNotification: (msg: string, type: 'success' | 'error') => void;
+  clientes?: any[];
+  proveedores?: any[];
 }) => {
   const hoy = safeFormat(new Date(), 'yyyy-MM-dd');
   const [tab, setTab] = useState<'recibidos' | 'emitidos'>('recibidos');
@@ -23479,8 +23530,13 @@ const ChequesView = ({
               <input value={formRec.originario} onChange={(e) => setFormRec({ ...formRec, originario: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
             </div>
             <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Recibido de</label>
-              <input value={formRec.recibidoDe} onChange={(e) => setFormRec({ ...formRec, recibidoDe: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Recibido de (cliente)</label>
+              <SearchableSelect
+                value={formRec.recibidoDe}
+                onChange={(v) => setFormRec({ ...formRec, recibidoDe: v })}
+                placeholder="Seleccionar cliente..."
+                options={(clientes || []).map((c: any) => ({ value: c.razonSocial, label: c.razonSocial }))}
+              />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
@@ -23539,8 +23595,13 @@ const ChequesView = ({
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Beneficiario</label>
-              <input value={formEmi.beneficiario} onChange={(e) => setFormEmi({ ...formEmi, beneficiario: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Beneficiario (proveedor)</label>
+              <SearchableSelect
+                value={formEmi.beneficiario}
+                onChange={(v) => setFormEmi({ ...formEmi, beneficiario: v })}
+                placeholder="Seleccionar proveedor..."
+                options={(proveedores || []).map((p: any) => ({ value: p.razonSocial, label: p.razonSocial }))}
+              />
             </div>
             <div>
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">CUIT</label>
@@ -24956,6 +25017,8 @@ export default function App() {
                 loading={chequesLoading}
                 onReload={reloadCheques}
                 showNotification={showNotification}
+                clientes={clientes}
+                proveedores={proveedores}
               />
             )}
             
