@@ -16063,7 +16063,7 @@ const ValoresGridEditor = ({
   );
 };
 
-const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas, setVentas, cobrosClientes, setCobrosClientes, currentUser, showNotification, tesoreriaCuentas = [], reloadCheques }: any) => {
+const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas, setVentas, cobrosClientes, setCobrosClientes, currentUser, showNotification, tesoreriaCuentas = [], reloadCheques, clienteAAbrir = null, onClienteAbierto }: any) => {
   const [view, setView] = useState<'list' | 'detail' | 'form'>('list');
   const [selectedCliente, setSelectedCliente] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -16071,9 +16071,19 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
   const [filterPago, setFilterPago] = useState('Todos');
   const [filterEstado, setFilterEstado] = useState('Activo');
 
+  useEffect(() => {
+    if (!clienteAAbrir) return;
+    const cliente = (clientes || []).find((c: any) => c.id === clienteAAbrir);
+    if (cliente) {
+      setSelectedCliente(cliente);
+      setView('detail');
+    }
+    onClienteAbierto?.();
+  }, [clienteAAbrir, clientes]);
+
   // Account Statement Table Filters
-  const [filterCtaDesde, setFilterCtaDesde] = useState(() => todayIso());
-  const [filterCtaHasta, setFilterCtaHasta] = useState(() => todayIso());
+  const [filterCtaDesde, setFilterCtaDesde] = useState('');
+  const [filterCtaHasta, setFilterCtaHasta] = useState('');
   const [filterCtaTipo, setFilterCtaTipo] = useState('Todos');
   const [filterCtaSearch, setFilterCtaSearch] = useState('');
 
@@ -16180,6 +16190,14 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
                 <option value="Cobro">Cobro</option>
                 <option value="Ajuste">Ajuste</option>
               </select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Fecha del Movimiento</label>
+              <DateInput
+                value={cobroFormData.fecha}
+                onChange={(iso) => setCobroFormData({ ...cobroFormData, fecha: iso })}
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
+              />
             </div>
             {cobroFormData.tipoMovimiento === 'Ajuste' ? (
               <div className="p-6 bg-sleek-dark text-white rounded-2xl shadow-xl flex flex-col items-center">
@@ -17270,8 +17288,8 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
                 <div className="flex items-center">
                   <button 
                     onClick={() => {
-                      setFilterCtaDesde(todayIso());
-                      setFilterCtaHasta(todayIso());
+                      setFilterCtaDesde('');
+                      setFilterCtaHasta('');
                       setFilterCtaTipo('Todos');
                       setFilterCtaSearch('');
                     }}
@@ -17282,7 +17300,7 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
                 </div>
               </div>
 
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto max-h-[420px] overflow-y-auto">
                 <table className="w-full">
                   <thead>
                     <tr className="bg-slate-50/50">
@@ -17367,7 +17385,7 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
                 </table>
               </div>
 
-              {(filterCtaDesde !== todayIso() || filterCtaHasta !== todayIso() || filterCtaTipo !== 'Todos' || filterCtaSearch) && (
+              {(filterCtaDesde || filterCtaHasta || filterCtaTipo !== 'Todos' || filterCtaSearch) && (
                 <div className="px-8 py-3 bg-slate-50/50 border-t border-slate-50 flex items-center justify-between">
                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
                     Mostrando <span className="text-sleek-dark font-black">{filteredTransacciones.length}</span> de <span className="text-sleek-dark font-black">{rawTransacciones.length}</span> transacciones
@@ -17568,7 +17586,7 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
                 
                 return (
                   <tr key={cliente.id} className="hover:bg-sleek-accent/5 transition-all group">
-                    <td className="px-8 py-5">
+                    <td className="px-8 py-5 cursor-pointer" onClick={() => { setSelectedCliente(cliente); setView('detail'); }}>
                       <div className="flex items-center gap-4">
                         <div className="w-10 h-10 rounded shadow-inner bg-slate-50 flex items-center justify-center text-slate-400 group-hover:bg-white group-hover:text-sleek-accent transition-all ring-1 ring-slate-100 group-hover:ring-sleek-accent/20">
                           <Users className="w-5 h-5" />
@@ -18505,13 +18523,14 @@ const TiposEgresoView = ({ tiposEgreso, setTiposEgreso, planCuentas, showNotific
   );
 };
 
-const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPagosProveedores, egresos, tiposEgreso, planCuentas, showNotification, tesoreriaCuentas = [], chequesRecibidos = [], reloadCheques }: any) => {
+const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPagosProveedores, egresos, tiposEgreso, planCuentas, showNotification, tesoreriaCuentas = [], chequesRecibidos = [], reloadCheques, proveedorAAbrir = null, onProveedorAbierto }: any) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isPagoModalOpen, setIsPagoModalOpen] = useState(false);
   const [selectedProveedor, setSelectedProveedor] = useState<any>(null);
   const [editingItem, setEditingItem] = useState<any>(null);
   const [pagoData, setPagoData] = useState<any>({
+    fecha: new Date().toISOString().split('T')[0],
     monto: 0,
     metodo: 'Transferencia',
     referencia: '',
@@ -18528,8 +18547,17 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
   const [pagoValores, setPagoValores] = useState<ValorMovimiento[]>([]);
   const [editingPagoId, setEditingPagoId] = useState<string | null>(null);
   const [pagoMontoInput, setPagoMontoInput] = useState('0');
-  const [filterCcDesde, setFilterCcDesde] = useState(() => todayIso());
-  const [filterCcHasta, setFilterCcHasta] = useState(() => todayIso());
+
+  useEffect(() => {
+    if (!proveedorAAbrir) return;
+    const proveedor = (proveedores || []).find((p: any) => p.id === proveedorAAbrir);
+    if (proveedor) {
+      setSelectedProveedor(proveedor);
+    }
+    onProveedorAbierto?.();
+  }, [proveedorAAbrir, proveedores]);
+  const [filterCcDesde, setFilterCcDesde] = useState('');
+  const [filterCcHasta, setFilterCcHasta] = useState('');
   const [filterCcTipo, setFilterCcTipo] = useState('Todos');
   const [filterCcSearch, setFilterCcSearch] = useState('');
 
@@ -18601,6 +18629,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
     setEditingPagoId(null);
     const monto = safeRound(Math.abs(calculateSaldo(selectedProveedor.id)), 2);
     setPagoData({
+      fecha: new Date().toISOString().split('T')[0],
       monto,
       metodo: 'Transferencia',
       referencia: '',
@@ -18624,6 +18653,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
     const tipoMov = pago.tipoMovimiento || (String(pago.comprobante || '').startsWith('AJ-') ? 'Ajuste' : 'Pago');
     const monto = safeRound(pago.monto, 2);
     setPagoData({
+      fecha: pago.fecha || new Date().toISOString().split('T')[0],
       monto,
       metodo: pago.metodo,
       referencia: pago.referencia || '',
@@ -18724,6 +18754,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
     e.preventDefault();
     const esAjuste = pagoData.tipoMovimiento === 'Ajuste';
     const hoyIso = new Date().toISOString().split('T')[0];
+    const fechaMovimiento = pagoData.fecha || hoyIso;
 
     if (esAjuste) {
       const parsedAjuste = parseMontoInput(pagoMontoInput, true);
@@ -18731,7 +18762,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
       if (editingPagoId) {
         setPagosProveedores(pagosProveedores.map((p: any) =>
           p.id === editingPagoId
-            ? { ...p, monto, metodo: 'Ajuste', referencia: pagoData.referencia, observaciones: pagoData.observaciones, tipoMovimiento: 'Ajuste', cuentaTesoreriaId: undefined, valores: undefined }
+            ? { ...p, fecha: fechaMovimiento, monto, metodo: 'Ajuste', referencia: pagoData.referencia, observaciones: pagoData.observaciones, tipoMovimiento: 'Ajuste', cuentaTesoreriaId: undefined, valores: undefined }
             : p
         ));
         showNotification('Ajuste actualizado', 'success');
@@ -18740,7 +18771,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
         const newPago: PagoProveedor = {
           id: `pago-pr-${Date.now()}`,
           proveedorId: selectedProveedor.id,
-          fecha: hoyIso,
+          fecha: fechaMovimiento,
           monto,
           metodo: 'Otro',
           referencia: pagoData.referencia,
@@ -18778,6 +18809,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
         p.id === editingPagoId
           ? {
               ...p,
+              fecha: fechaMovimiento,
               monto,
               metodo: metodoResumen,
               observaciones: pagoData.observaciones,
@@ -18790,7 +18822,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
       (async () => {
         await anularMovimientosPago(editingPagoId);
         await anularChequesPorOrigen(editingPagoId);
-        await generarImpactosPago(editingPagoId, comprobante, valores, pagoAnterior?.fecha || hoyIso);
+        await generarImpactosPago(editingPagoId, comprobante, valores, fechaMovimiento);
       })();
       showNotification('Movimiento actualizado', 'success');
     } else {
@@ -18799,7 +18831,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
       const newPago: PagoProveedor = {
         id: `pago-pr-${Date.now()}`,
         proveedorId: selectedProveedor.id,
-        fecha: hoyIso,
+        fecha: fechaMovimiento,
         monto,
         metodo: metodoResumen as any,
         referencia: pagoData.referencia,
@@ -18937,8 +18969,8 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
                   <button
                     type="button"
                     onClick={() => {
-                      setFilterCcDesde(todayIso());
-                      setFilterCcHasta(todayIso());
+                      setFilterCcDesde('');
+                      setFilterCcHasta('');
                       setFilterCcTipo('Todos');
                       setFilterCcSearch('');
                     }}
@@ -18948,6 +18980,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
                   </button>
                 </div>
               </div>
+               <div className="max-h-[420px] overflow-y-auto">
                <table className="w-full text-left">
                   <thead className="bg-slate-50 border-b border-slate-100">
                     <tr>
@@ -19036,6 +19069,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
                     )}
                   </tbody>
                </table>
+               </div>
             </Card>
           </div>
         </div>
@@ -19081,8 +19115,8 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
                 <tbody className="divide-y divide-slate-100">
                   {filtered.map((p: any) => (
                     <tr key={p.id} className="hover:bg-slate-50/50 transition-colors group">
-                      <td className="px-6 py-4">
-                        <p className="font-black text-sleek-dark uppercase text-xs">{p.razonSocial}</p>
+                      <td className="px-6 py-4 cursor-pointer" onClick={() => setSelectedProveedor(p)}>
+                        <p className="font-black text-sleek-dark uppercase text-xs hover:text-sleek-accent transition-colors">{p.razonSocial}</p>
                         <p className="text-[10px] font-bold text-slate-400 mt-0.5 uppercase tracking-widest">{p.cuit || 'S/C'}</p>
                       </td>
                       <td className="px-6 py-4">
@@ -19257,6 +19291,14 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
                 <option value="Pago">Pago</option>
                 <option value="Ajuste">Ajuste</option>
               </select>
+           </div>
+           <div className="space-y-2">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Fecha del Movimiento</label>
+              <DateInput
+                value={pagoData.fecha}
+                onChange={(iso) => setPagoData({ ...pagoData, fecha: iso })}
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700"
+              />
            </div>
            {pagoData.tipoMovimiento === 'Ajuste' ? (
              <div className="p-6 bg-sleek-dark text-white rounded-2xl shadow-xl flex flex-col items-center">
@@ -22997,6 +23039,8 @@ const PosicionFinancieraView = ({
   pagosProveedores = [],
   proveedores = [],
   clientes = [],
+  onVerCliente,
+  onVerProveedor,
 }: {
   tesoreriaCuentas?: any[];
   tesoreriaSaldos?: Record<string, number>;
@@ -23008,6 +23052,8 @@ const PosicionFinancieraView = ({
   pagosProveedores?: any[];
   proveedores?: any[];
   clientes?: any[];
+  onVerCliente?: (clienteId: string) => void;
+  onVerProveedor?: (proveedorId: string) => void;
 }) => {
   const pos = useMemo(() => {
     const disponible = safeRound(
@@ -23072,6 +23118,41 @@ const PosicionFinancieraView = ({
       liquidezGeneral, cashRatio, fondoManiobra, tesoreriaNeta,
     };
   }, [tesoreriaCuentas, tesoreriaSaldos, chequesRecibidos, chequesEmitidos, ventas, cobrosClientes, egresos, pagosProveedores, proveedores, clientes]);
+
+  const clientesDeudores = useMemo(() => {
+    return (clientes || [])
+      .map((cl: any) => {
+        const totalVentas = (ventas || [])
+          .filter((v: any) => v.clienteId === cl.id && v.estado !== 'Anulado')
+          .reduce((s: number, v: any) => s + (parseFloat(v.total) || 0), 0);
+        const cobrosVentas = (ventas || [])
+          .filter((v: any) => v.clienteId === cl.id && v.estado !== 'Anulado')
+          .reduce((s: number, v: any) => s + (parseFloat(v.totalCobrado) || 0), 0);
+        const cobrosInd = (cobrosClientes || [])
+          .filter((c: any) => c.clienteId === cl.id && c.estado !== 'Anulado')
+          .reduce((s: number, c: any) => s + (parseFloat(c.monto) || 0), 0);
+        const saldo = safeRound(totalVentas - cobrosVentas - cobrosInd, 2);
+        return { id: cl.id, nombre: cl.razonSocial || cl.nombre || 'Sin nombre', saldo };
+      })
+      .filter((c: any) => c.saldo > 0)
+      .sort((a: any, b: any) => b.saldo - a.saldo);
+  }, [clientes, ventas, cobrosClientes]);
+
+  const proveedoresAcreedores = useMemo(() => {
+    return (proveedores || [])
+      .map((pr: any) => {
+        const totalEgresos = (egresos || [])
+          .filter((e: any) => e.proveedorId === pr.id && e.estado === 'Confirmado')
+          .reduce((s: number, e: any) => s + (Number(e.total) || 0), 0);
+        const totalPagos = (pagosProveedores || [])
+          .filter((p: any) => p.proveedorId === pr.id)
+          .reduce((s: number, p: any) => s + (Number(p.monto) || 0), 0);
+        const saldo = safeRound(totalEgresos - totalPagos, 2);
+        return { id: pr.id, nombre: pr.razonSocial || pr.nombre || 'Sin nombre', saldo };
+      })
+      .filter((p: any) => p.saldo > 0)
+      .sort((a: any, b: any) => b.saldo - a.saldo);
+  }, [proveedores, egresos, pagosProveedores]);
 
   const semLiquidez = (v: number | null): PosicionSem => {
     if (v === null) return 'neutro';
@@ -23189,6 +23270,70 @@ const PosicionFinancieraView = ({
             );
           })}
         </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <Card className="p-0 overflow-hidden">
+          <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+            <p className="text-[10px] font-black text-emerald-600 uppercase tracking-[0.2em]">Clientes que nos deben</p>
+            <span className="text-[10px] font-bold text-slate-400">{clientesDeudores.length}</span>
+          </div>
+          <div className="max-h-[320px] overflow-y-auto divide-y divide-slate-50">
+            {clientesDeudores.length === 0 ? (
+              <p className="px-5 py-8 text-center text-xs font-bold text-slate-300 uppercase tracking-widest">No hay deudas registradas</p>
+            ) : (
+              clientesDeudores.map((c: any) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => onVerCliente?.(c.id)}
+                  className="w-full flex items-center justify-between gap-3 px-5 py-3 hover:bg-slate-50 cursor-pointer transition-colors text-left group"
+                >
+                  <span className="flex items-center gap-2 min-w-0">
+                    <ChevronRight className="w-3.5 h-3.5 text-slate-300 group-hover:text-emerald-500 shrink-0 transition-colors" />
+                    <span className="text-sm font-bold text-slate-700 truncate">{c.nombre}</span>
+                  </span>
+                  <span className="font-mono font-bold text-slate-700 shrink-0">$ {formatCurrency(c.saldo)}</span>
+                </button>
+              ))
+            )}
+          </div>
+          <div className="px-5 py-4 border-t border-slate-100 flex items-center justify-between bg-slate-50/50">
+            <span className="text-[10px] font-black text-emerald-700 uppercase tracking-widest">Total deuda de clientes</span>
+            <span className="font-mono font-black text-emerald-600">$ {formatCurrency(pos.deudaClientes)}</span>
+          </div>
+        </Card>
+
+        <Card className="p-0 overflow-hidden">
+          <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+            <p className="text-[10px] font-black text-rose-600 uppercase tracking-[0.2em]">Proveedores a los que debemos</p>
+            <span className="text-[10px] font-bold text-slate-400">{proveedoresAcreedores.length}</span>
+          </div>
+          <div className="max-h-[320px] overflow-y-auto divide-y divide-slate-50">
+            {proveedoresAcreedores.length === 0 ? (
+              <p className="px-5 py-8 text-center text-xs font-bold text-slate-300 uppercase tracking-widest">No hay deudas registradas</p>
+            ) : (
+              proveedoresAcreedores.map((p: any) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => onVerProveedor?.(p.id)}
+                  className="w-full flex items-center justify-between gap-3 px-5 py-3 hover:bg-slate-50 cursor-pointer transition-colors text-left group"
+                >
+                  <span className="flex items-center gap-2 min-w-0">
+                    <ChevronRight className="w-3.5 h-3.5 text-slate-300 group-hover:text-rose-500 shrink-0 transition-colors" />
+                    <span className="text-sm font-bold text-slate-700 truncate">{p.nombre}</span>
+                  </span>
+                  <span className="font-mono font-bold text-slate-700 shrink-0">$ {formatCurrency(p.saldo)}</span>
+                </button>
+              ))
+            )}
+          </div>
+          <div className="px-5 py-4 border-t border-slate-100 flex items-center justify-between bg-slate-50/50">
+            <span className="text-[10px] font-black text-rose-700 uppercase tracking-widest">Total deuda con proveedores</span>
+            <span className="font-mono font-black text-rose-600">$ {formatCurrency(pos.deudaProveedores)}</span>
+          </div>
+        </Card>
       </div>
     </div>
   );
@@ -24214,6 +24359,8 @@ export default function App() {
   });
   const [activeModule, setActiveModule] = useState<'INICIO' | 'INVENTARIO' | 'PRODUCCIÓN' | 'VENTAS' | 'EGRESOS' | 'FINANZAS' | 'USUARIOS'>('INICIO');
   const [activeSubSection, setActiveSubSection] = useState<string>('Inicio');
+  const [clienteAAbrir, setClienteAAbrir] = useState<string | null>(null);
+  const [proveedorAAbrir, setProveedorAAbrir] = useState<string | null>(null);
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
   const [expandedModule, setExpandedModule] = useState<string | null>(null);
 
@@ -25430,6 +25577,8 @@ export default function App() {
                 showNotification={showNotification}
                 tesoreriaCuentas={tesoreriaCuentas}
                 reloadCheques={reloadCheques}
+                clienteAAbrir={clienteAAbrir}
+                onClienteAbierto={() => setClienteAAbrir(null)}
               />
             )}
             {activeModule === 'VENTAS' && activeSubSection === 'Listas de Precios' && (
@@ -25497,6 +25646,8 @@ export default function App() {
                 tesoreriaCuentas={tesoreriaCuentas}
                 chequesRecibidos={chequesRecibidos}
                 reloadCheques={reloadCheques}
+                proveedorAAbrir={proveedorAAbrir}
+                onProveedorAbierto={() => setProveedorAAbrir(null)}
               />
             )}
             {activeModule === 'EGRESOS' && activeSubSection === 'Tipos de Egreso' && (
@@ -25559,6 +25710,8 @@ export default function App() {
                 pagosProveedores={pagosProveedores}
                 proveedores={proveedores}
                 clientes={clientes}
+                onVerCliente={(id: string) => { setClienteAAbrir(id); setActiveModule('VENTAS'); setActiveSubSection('Clientes'); }}
+                onVerProveedor={(id: string) => { setProveedorAAbrir(id); setActiveModule('EGRESOS'); setActiveSubSection('Proveedores'); }}
               />
             )}
             
