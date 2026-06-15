@@ -1408,7 +1408,7 @@ const DEFAULT_PERMISSIONS: Permisos = {
   produccion: { lotes_produccion: true, lotes_despiece: true, recetas_estandar: true, plantillas_despiece: true, etiquetas: true, dashboard: true, trazabilidad: true },
   ventas: { ventas_pedidos: true, dashboard_ventas: true, clientes: true, listas_precios: true, puntos_venta: true },
   egresos: { egresos_compras: true, proveedores: true, tipos_egreso: true, plan_cuentas: true },
-  finanzas: { tesoreria: true, cheques: true, proyeccion: true },
+  finanzas: { tesoreria: true, cheques: true, proyeccion: true, posicion: true },
   usuarios: { gestion_usuarios: true }
 };
 
@@ -2081,7 +2081,7 @@ const INITIAL_USERS: User[] = [
     produccion: { lotes_produccion: true, lotes_despiece: true, recetas_estandar: true, plantillas_despiece: true, etiquetas: true, dashboard: true, trazabilidad: true },
     ventas: { ventas_pedidos: true, dashboard_ventas: true, clientes: true, listas_precios: true, puntos_venta: true },
     egresos: { egresos_compras: true, proveedores: true, tipos_egreso: true, plan_cuentas: true },
-    finanzas: { tesoreria: true, cheques: true, proyeccion: true },
+    finanzas: { tesoreria: true, cheques: true, proyeccion: true, posicion: true },
     usuarios: { gestion_usuarios: true }
   }},
   { id: '2', username: 'Operario1', password: '123', role: 'Operario', name: 'Juan Pérez', estado: 'activo', inicioConfig: { ...DEFAULT_INICIO_CONFIG }, permisos: {
@@ -2089,7 +2089,7 @@ const INITIAL_USERS: User[] = [
     produccion: { lotes_produccion: true, lotes_despiece: true, recetas_estandar: false, plantillas_despiece: false, etiquetas: true, dashboard: false, trazabilidad: false },
     ventas: { ventas_pedidos: true, dashboard_ventas: false, clientes: false, listas_precios: false, puntos_venta: false },
     egresos: { egresos_compras: false, proveedores: false, tipos_egreso: false, plan_cuentas: false },
-    finanzas: { tesoreria: false, cheques: false, proyeccion: false },
+    finanzas: { tesoreria: false, cheques: false, proyeccion: false, posicion: false },
     usuarios: { gestion_usuarios: false }
   }}
 ];
@@ -9884,7 +9884,7 @@ const UserForm = ({ editingItem, loggedUser, onSave, onClose }: any) => {
     { key: 'produccion', label: '🏭 PRODUCCIÓN', color: 'bg-emerald-50 outline-emerald-200', sections: [ {key: 'lotes_produccion', label: 'Lotes de Producción'}, {key: 'lotes_despiece', label: 'Lotes de Despiece'}, {key: 'recetas_estandar', label: 'Recetas Estándar'}, {key: 'plantillas_despiece', label: 'Plantillas de Despiece'}, {key: 'etiquetas', label: 'Etiquetas'}, {key: 'dashboard', label: 'Dashboard'}, {key: 'trazabilidad', label: 'Trazabilidad'} ] },
     { key: 'ventas', label: '💰 VENTAS', color: 'bg-amber-50 outline-amber-200', sections: [ {key: 'ventas_pedidos', label: 'Ventas y Pedidos'}, {key: 'dashboard_ventas', label: 'Dashboard de Ventas'}, {key: 'clientes', label: 'Clientes'}, {key: 'listas_precios', label: 'Listas de Precios'}, {key: 'puntos_venta', label: 'Puntos de Venta'} ] },
     { key: 'egresos', label: '📤 EGRESOS', color: 'bg-rose-50 outline-rose-200', sections: [ {key: 'egresos_compras', label: 'Egresos y Compras'}, {key: 'proveedores', label: 'Proveedores'}, {key: 'tipos_egreso', label: 'Tipos de Egreso'}, {key: 'plan_cuentas', label: 'Plan de Cuentas'} ] },
-    { key: 'finanzas', label: '💳 FINANZAS', color: 'bg-violet-50 outline-violet-200', sections: [ {key: 'tesoreria', label: 'Tesorería'}, {key: 'cheques', label: 'Cheques'}, {key: 'proyeccion', label: 'Proyección'} ] },
+    { key: 'finanzas', label: '💳 FINANZAS', color: 'bg-violet-50 outline-violet-200', sections: [ {key: 'tesoreria', label: 'Tesorería'}, {key: 'cheques', label: 'Cheques'}, {key: 'proyeccion', label: 'Proyección'}, {key: 'posicion', label: 'Posición'} ] },
     { key: 'usuarios', label: '👤 USUARIOS', color: 'bg-slate-100 outline-slate-300', sections: [ {key: 'gestion_usuarios', label: 'Gestión de Usuarios'} ] }
   ];
 
@@ -22977,6 +22977,223 @@ const TesoreriaView = ({
   );
 };
 
+const POSICION_SEM = {
+  verde: { dot: 'bg-emerald-500', text: 'text-emerald-600', badge: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  amarillo: { dot: 'bg-amber-500', text: 'text-amber-600', badge: 'bg-amber-50 text-amber-700 border-amber-200' },
+  rojo: { dot: 'bg-rose-500', text: 'text-rose-600', badge: 'bg-rose-50 text-rose-700 border-rose-200' },
+  neutro: { dot: 'bg-slate-300', text: 'text-slate-500', badge: 'bg-slate-50 text-slate-500 border-slate-200' },
+} as const;
+
+type PosicionSem = keyof typeof POSICION_SEM;
+
+const PosicionFinancieraView = ({
+  tesoreriaCuentas = [],
+  tesoreriaSaldos = {},
+  chequesRecibidos = [],
+  chequesEmitidos = [],
+  ventas = [],
+  cobrosClientes = [],
+  egresos = [],
+  pagosProveedores = [],
+  proveedores = [],
+  clientes = [],
+}: {
+  tesoreriaCuentas?: any[];
+  tesoreriaSaldos?: Record<string, number>;
+  chequesRecibidos?: ChequeRecibido[];
+  chequesEmitidos?: ChequeEmitido[];
+  ventas?: any[];
+  cobrosClientes?: any[];
+  egresos?: any[];
+  pagosProveedores?: any[];
+  proveedores?: any[];
+  clientes?: any[];
+}) => {
+  const pos = useMemo(() => {
+    const disponible = safeRound(
+      (tesoreriaCuentas || [])
+        .filter((c: any) => c.habilitada && c.moneda === 'ARS')
+        .reduce((s: number, c: any) => s + (tesoreriaSaldos[c.id] ?? c.saldoInicial ?? 0), 0),
+      2
+    );
+    const chequesACobrar = safeRound(
+      (chequesRecibidos || [])
+        .filter((c) => !c.anulado && (c.estado === 'en_cartera' || c.estado === 'depositado' || c.estado === 'no_entregado'))
+        .reduce((s, c) => s + (Number(c.monto) || 0), 0),
+      2
+    );
+    const deudaClientes = safeRound(
+      (clientes || []).reduce((sum: number, cl: any) => {
+        const totalVentas = (ventas || [])
+          .filter((v: any) => v.clienteId === cl.id && v.estado !== 'Anulado')
+          .reduce((s: number, v: any) => s + (parseFloat(v.total) || 0), 0);
+        const cobrosVentas = (ventas || [])
+          .filter((v: any) => v.clienteId === cl.id && v.estado !== 'Anulado')
+          .reduce((s: number, v: any) => s + (parseFloat(v.totalCobrado) || 0), 0);
+        const cobrosInd = (cobrosClientes || [])
+          .filter((c: any) => c.clienteId === cl.id && c.estado !== 'Anulado')
+          .reduce((s: number, c: any) => s + (parseFloat(c.monto) || 0), 0);
+        const saldo = totalVentas - cobrosVentas - cobrosInd;
+        return sum + (saldo > 0 ? saldo : 0);
+      }, 0),
+      2
+    );
+    const activoCorriente = safeRound(disponible + chequesACobrar + deudaClientes, 2);
+
+    const chequesAPagar = safeRound(
+      (chequesEmitidos || [])
+        .filter((c) => !c.anulado && !c.chequeRecibidoId && (c.estado === 'pendiente' || c.estado === 'no_entregado'))
+        .reduce((s, c) => s + (Number(c.monto) || 0), 0),
+      2
+    );
+    const deudaProveedores = safeRound(
+      (proveedores || []).reduce((sum: number, pr: any) => {
+        const totalEgresos = (egresos || [])
+          .filter((e: any) => e.proveedorId === pr.id && e.estado === 'Confirmado')
+          .reduce((s: number, e: any) => s + (Number(e.total) || 0), 0);
+        const totalPagos = (pagosProveedores || [])
+          .filter((p: any) => p.proveedorId === pr.id)
+          .reduce((s: number, p: any) => s + (Number(p.monto) || 0), 0);
+        const saldo = totalEgresos - totalPagos;
+        return sum + (saldo > 0 ? saldo : 0);
+      }, 0),
+      2
+    );
+    const pasivoCorriente = safeRound(chequesAPagar + deudaProveedores, 2);
+
+    const liquidezGeneral = pasivoCorriente > 0 ? safeRound(activoCorriente / pasivoCorriente, 2) : null;
+    const cashRatio = pasivoCorriente > 0 ? safeRound((disponible + chequesACobrar) / pasivoCorriente, 2) : null;
+    const fondoManiobra = safeRound(activoCorriente - pasivoCorriente, 2);
+    const tesoreriaNeta = safeRound((disponible + chequesACobrar) - chequesAPagar, 2);
+
+    return {
+      disponible, chequesACobrar, deudaClientes, activoCorriente,
+      chequesAPagar, deudaProveedores, pasivoCorriente,
+      liquidezGeneral, cashRatio, fondoManiobra, tesoreriaNeta,
+    };
+  }, [tesoreriaCuentas, tesoreriaSaldos, chequesRecibidos, chequesEmitidos, ventas, cobrosClientes, egresos, pagosProveedores, proveedores, clientes]);
+
+  const semLiquidez = (v: number | null): PosicionSem => {
+    if (v === null) return 'neutro';
+    if (v < 1.0) return 'rojo';
+    if (v >= 1.5 && v <= 2.0) return 'verde';
+    return 'amarillo';
+  };
+  const semCash = (v: number | null): PosicionSem => {
+    if (v === null) return 'neutro';
+    if (v < 0.1 || v > 0.5) return 'rojo';
+    if (v >= 0.2 && v <= 0.3) return 'verde';
+    return 'amarillo';
+  };
+  const semPositivo = (v: number): PosicionSem => (v > 0 ? 'verde' : v < 0 ? 'rojo' : 'amarillo');
+
+  const indicadores: { nombre: string; valor: string; rango: string; sem: PosicionSem; interpretacion: string }[] = [
+    {
+      nombre: 'Liquidez General',
+      valor: pos.liquidezGeneral === null ? '—' : formatNumber(pos.liquidezGeneral, 2),
+      rango: 'Óptimo: 1,5–2,0',
+      sem: semLiquidez(pos.liquidezGeneral),
+      interpretacion: pos.liquidezGeneral === null
+        ? 'Sin pasivo corriente registrado.'
+        : `Por cada $1 que debés, tenés $${formatNumber(pos.liquidezGeneral, 2)} de respaldo.`,
+    },
+    {
+      nombre: 'Cash Ratio (Disponibilidad)',
+      valor: pos.cashRatio === null ? '—' : formatNumber(pos.cashRatio, 2),
+      rango: 'Óptimo: 0,2–0,3',
+      sem: semCash(pos.cashRatio),
+      interpretacion: pos.cashRatio === null
+        ? 'Sin pasivo corriente registrado.'
+        : `Cubrís el ${formatNumber(safeRound(pos.cashRatio * 100, 0), 0)}% del pasivo con disponible + cheques a cobrar.`,
+    },
+    {
+      nombre: 'Fondo de Maniobra',
+      valor: `$ ${formatCurrency(pos.fondoManiobra)}`,
+      rango: 'Óptimo: > 0',
+      sem: semPositivo(pos.fondoManiobra),
+      interpretacion: pos.fondoManiobra >= 0 ? 'Capital de trabajo positivo.' : 'Capital de trabajo negativo: el pasivo supera al activo corriente.',
+    },
+    {
+      nombre: 'Tesorería Neta (aprox.)',
+      valor: `$ ${formatCurrency(pos.tesoreriaNeta)}`,
+      rango: 'Óptimo: > 0',
+      sem: semPositivo(pos.tesoreriaNeta),
+      interpretacion: pos.tesoreriaNeta >= 0 ? 'Liquidez inmediata suficiente frente a cheques a pagar.' : 'Liquidez inmediata insuficiente frente a cheques a pagar.',
+    },
+  ];
+
+  return (
+    <div className="space-y-8 animate-in fade-in duration-500">
+      <div>
+        <h2 className="text-2xl font-black text-sleek-dark uppercase tracking-tighter">Posición financiera</h2>
+        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mt-1">Foto de hoy · Activo vs Pasivo corriente (ARS)</p>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card className="p-6 border-l-4 border-emerald-400">
+          <p className="text-[10px] font-black text-emerald-600 uppercase tracking-[0.2em]">Activo corriente</p>
+          <div className="mt-4 space-y-2">
+            <div className="flex justify-between items-center text-sm">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-widest">Disponible</span>
+              <span className="font-mono font-bold text-slate-700">$ {formatCurrency(pos.disponible)}</span>
+            </div>
+            <div className="flex justify-between items-center text-sm">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-widest">Cheques a cobrar</span>
+              <span className="font-mono font-bold text-slate-700">$ {formatCurrency(pos.chequesACobrar)}</span>
+            </div>
+            <div className="flex justify-between items-center text-sm">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-widest">Deuda de clientes</span>
+              <span className="font-mono font-bold text-slate-700">$ {formatCurrency(pos.deudaClientes)}</span>
+            </div>
+          </div>
+          <div className="flex justify-between items-center mt-4 pt-4 border-t border-slate-100">
+            <span className="text-xs font-black text-emerald-700 uppercase tracking-widest">Total activo</span>
+            <span className="font-mono font-black text-xl text-emerald-600">$ {formatCurrency(pos.activoCorriente)}</span>
+          </div>
+        </Card>
+
+        <Card className="p-6 border-l-4 border-rose-400">
+          <p className="text-[10px] font-black text-rose-600 uppercase tracking-[0.2em]">Pasivo corriente</p>
+          <div className="mt-4 space-y-2">
+            <div className="flex justify-between items-center text-sm">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-widest">Cheques a pagar</span>
+              <span className="font-mono font-bold text-slate-700">$ {formatCurrency(pos.chequesAPagar)}</span>
+            </div>
+            <div className="flex justify-between items-center text-sm">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-widest">Deuda con proveedores</span>
+              <span className="font-mono font-bold text-slate-700">$ {formatCurrency(pos.deudaProveedores)}</span>
+            </div>
+          </div>
+          <div className="flex justify-between items-center mt-4 pt-4 border-t border-slate-100">
+            <span className="text-xs font-black text-rose-700 uppercase tracking-widest">Total pasivo</span>
+            <span className="font-mono font-black text-xl text-rose-600">$ {formatCurrency(pos.pasivoCorriente)}</span>
+          </div>
+        </Card>
+      </div>
+
+      <div>
+        <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-3">Indicadores de liquidez (marco Basal)</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+          {indicadores.map((ind) => {
+            const sem = POSICION_SEM[ind.sem];
+            return (
+              <Card key={ind.nombre} className="p-5">
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{ind.nombre}</p>
+                  <span className={cn('w-2.5 h-2.5 rounded-full shrink-0 mt-1', sem.dot)} />
+                </div>
+                <p className={cn('text-2xl font-black font-mono tracking-tighter mt-3', sem.text)}>{ind.valor}</p>
+                <span className={cn('inline-block mt-2 px-2 py-0.5 rounded border text-[9px] font-bold uppercase tracking-widest', sem.badge)}>{ind.rango}</span>
+                <p className="text-[11px] font-bold text-slate-400 mt-3 leading-snug">{ind.interpretacion}</p>
+              </Card>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const ProyeccionLiquidezView = ({
   tesoreriaCuentas = [],
   tesoreriaSaldos = {},
@@ -24010,7 +24227,7 @@ export default function App() {
         'PRODUCCIÓN': ['Lotes de Producción', 'Lotes de Despiece', 'Recetas Estándar', 'Plantillas de Despiece', 'Etiquetas', 'Dashboard', 'Trazabilidad'],
         'VENTAS': ['Ventas y Pedidos', 'Dashboard Ventas', 'Clientes', 'Listas de Precios', 'Puntos de Venta'],
         'EGRESOS': ['Egresos y Compras', 'Dashboard Egresos', 'Proveedores', 'Tipos de Egreso', 'Plan de Cuentas'],
-        'FINANZAS': ['Tesorería', 'Cheques', 'Proyección'],
+        'FINANZAS': ['Tesorería', 'Cheques', 'Proyección', 'Posición'],
         'USUARIOS': ['Gestión de Usuarios']
       };
 
@@ -24105,13 +24322,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (activeModule === 'FINANZAS' && currentUser && (hasPermission(currentUser, 'FINANZAS', 'Tesorería') || hasPermission(currentUser, 'FINANZAS', 'Proyección'))) {
+    if (activeModule === 'FINANZAS' && currentUser && (hasPermission(currentUser, 'FINANZAS', 'Tesorería') || hasPermission(currentUser, 'FINANZAS', 'Proyección') || hasPermission(currentUser, 'FINANZAS', 'Posición'))) {
       reloadTesoreria();
     }
   }, [activeModule, currentUser, reloadTesoreria]);
 
   useEffect(() => {
-    if (activeModule === 'FINANZAS' && currentUser && (hasPermission(currentUser, 'FINANZAS', 'Cheques') || hasPermission(currentUser, 'FINANZAS', 'Proyección'))) {
+    if (activeModule === 'FINANZAS' && currentUser && (hasPermission(currentUser, 'FINANZAS', 'Cheques') || hasPermission(currentUser, 'FINANZAS', 'Proyección') || hasPermission(currentUser, 'FINANZAS', 'Posición'))) {
       reloadCheques();
     }
   }, [activeModule, currentUser, reloadCheques]);
@@ -24871,7 +25088,7 @@ export default function App() {
             setExpandedModule={setExpandedModule}
             setActiveModule={setActiveModule}
             setActiveSubSection={setActiveSubSection}
-            subItems={['Tesorería', 'Cheques', 'Proyección']} 
+            subItems={['Tesorería', 'Cheques', 'Proyección', 'Posición']} 
             sidebarExpanded={sidebarExpanded}
             currentUser={currentUser}
           />
@@ -25329,9 +25546,24 @@ export default function App() {
                 chequesEmitidos={chequesEmitidos}
               />
             )}
+
+            {activeModule === 'FINANZAS' && activeSubSection === 'Posición' && (
+              <PosicionFinancieraView
+                tesoreriaCuentas={tesoreriaCuentas}
+                tesoreriaSaldos={tesoreriaSaldos}
+                chequesRecibidos={chequesRecibidos}
+                chequesEmitidos={chequesEmitidos}
+                ventas={ventas}
+                cobrosClientes={cobrosClientes}
+                egresos={egresos}
+                pagosProveedores={pagosProveedores}
+                proveedores={proveedores}
+                clientes={clientes}
+              />
+            )}
             
             {/* Placeholder for other views */}
-            {activeModule !== 'INICIO' && !['Dashboard', 'Almacenes', 'Productos', 'Movimientos', 'Etiquetas', 'Lotes de Producción', 'Lotes de Despiece', 'Recetas Estándar', 'Plantillas de Despiece', 'Gestión de Usuarios', 'Ventas y Pedidos', 'Clientes', 'Listas de Precios', 'Puntos de Venta', 'Egresos y Compras', 'Dashboard Egresos', 'Proveedores', 'Tipos de Egreso', 'Plan de Cuentas', 'Tesorería', 'Cheques', 'Proyección', 'Inicio'].includes(activeSubSection) && (
+            {activeModule !== 'INICIO' && !['Dashboard', 'Almacenes', 'Productos', 'Movimientos', 'Etiquetas', 'Lotes de Producción', 'Lotes de Despiece', 'Recetas Estándar', 'Plantillas de Despiece', 'Gestión de Usuarios', 'Ventas y Pedidos', 'Clientes', 'Listas de Precios', 'Puntos de Venta', 'Egresos y Compras', 'Dashboard Egresos', 'Proveedores', 'Tipos de Egreso', 'Plan de Cuentas', 'Tesorería', 'Cheques', 'Proyección', 'Posición', 'Inicio'].includes(activeSubSection) && (
               <div className="flex flex-col items-center justify-center h-[60vh] text-slate-300">
                 <Settings className="w-16 h-16 mb-4 opacity-10" />
                 <p className="text-lg font-bold uppercase tracking-widest">Módulo en Desarrollo</p>
