@@ -23055,6 +23055,7 @@ const ChequesView = ({
     let pendientes = 0;
     emitidos.forEach((c) => {
       if (c.anulado) return;
+      if (c.chequeRecibidoId) return;   // endosado: no es obligación propia, no cuenta
       if (c.estado === 'pendiente' || c.estado === 'no_entregado') porPagar += c.monto;
       if (c.estado === 'pendiente') pendientes += 1;
     });
@@ -23073,6 +23074,7 @@ const ChequesView = ({
 
   const emitidosFiltrados = useMemo(() => {
     return emitidos.filter((c) => {
+      if (c.chequeRecibidoId) return false;   // endosado: no se muestra en Emitidos
       if (c.anulado) return false;
       if (filtroEstadoEmi !== 'todos' && c.estado !== filtroEstadoEmi) return false;
       if (filtroDesdeEmi && c.fechaPago < filtroDesdeEmi) return false;
