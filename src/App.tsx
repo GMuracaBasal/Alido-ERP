@@ -23346,9 +23346,6 @@ const ChequesView = ({
                 <button type="button" onClick={() => { setFiltroEstadoRec('todos'); setFiltroDesdeRec(''); setFiltroHastaRec(''); }} className="px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">Limpiar</button>
               )}
             </div>
-            <button type="button" onClick={openNuevoRecibido} className="bg-sleek-dark text-white px-5 py-3 rounded text-[10px] font-black uppercase tracking-widest flex items-center gap-2">
-              <Plus className="w-4 h-4" /> Nuevo cheque recibido
-            </button>
           </div>
 
           <Card className="p-0 overflow-hidden">
@@ -23458,9 +23455,6 @@ const ChequesView = ({
                 <button type="button" onClick={() => { setFiltroEstadoEmi('todos'); setFiltroDesdeEmi(''); setFiltroHastaEmi(''); }} className="px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">Limpiar</button>
               )}
             </div>
-            <button type="button" onClick={openNuevoEmitido} className="bg-sleek-dark text-white px-5 py-3 rounded text-[10px] font-black uppercase tracking-widest flex items-center gap-2">
-              <Plus className="w-4 h-4" /> Nuevo cheque emitido
-            </button>
           </div>
 
           <Card className="p-0 overflow-hidden">
@@ -23528,7 +23522,7 @@ const ChequesView = ({
         </div>
       )}
 
-      <Modal isOpen={modal === 'recibido'} onClose={() => setModal('')} title={editingRec ? 'Editar cheque recibido' : 'Nuevo cheque recibido'}>
+      <Modal isOpen={modal === 'recibido'} onClose={() => setModal('')} title="Editar cheque recibido">
         <form onSubmit={handleSaveRecibido} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -23597,7 +23591,7 @@ const ChequesView = ({
         </form>
       </Modal>
 
-      <Modal isOpen={modal === 'emitido'} onClose={() => setModal('')} title={editingEmi ? 'Editar cheque emitido' : 'Nuevo cheque emitido'}>
+      <Modal isOpen={modal === 'emitido'} onClose={() => setModal('')} title="Editar cheque emitido">
         <form onSubmit={handleSaveEmitido} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
