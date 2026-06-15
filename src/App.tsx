@@ -1408,7 +1408,7 @@ const DEFAULT_PERMISSIONS: Permisos = {
   produccion: { lotes_produccion: true, lotes_despiece: true, recetas_estandar: true, plantillas_despiece: true, etiquetas: true, dashboard: true, trazabilidad: true },
   ventas: { ventas_pedidos: true, dashboard_ventas: true, clientes: true, listas_precios: true, puntos_venta: true },
   egresos: { egresos_compras: true, proveedores: true, tipos_egreso: true, plan_cuentas: true },
-  finanzas: { tesoreria: true, cheques: true },
+  finanzas: { tesoreria: true, cheques: true, proyeccion: true },
   usuarios: { gestion_usuarios: true }
 };
 
@@ -2081,7 +2081,7 @@ const INITIAL_USERS: User[] = [
     produccion: { lotes_produccion: true, lotes_despiece: true, recetas_estandar: true, plantillas_despiece: true, etiquetas: true, dashboard: true, trazabilidad: true },
     ventas: { ventas_pedidos: true, dashboard_ventas: true, clientes: true, listas_precios: true, puntos_venta: true },
     egresos: { egresos_compras: true, proveedores: true, tipos_egreso: true, plan_cuentas: true },
-    finanzas: { tesoreria: true, cheques: true },
+    finanzas: { tesoreria: true, cheques: true, proyeccion: true },
     usuarios: { gestion_usuarios: true }
   }},
   { id: '2', username: 'Operario1', password: '123', role: 'Operario', name: 'Juan Pérez', estado: 'activo', inicioConfig: { ...DEFAULT_INICIO_CONFIG }, permisos: {
@@ -2089,7 +2089,7 @@ const INITIAL_USERS: User[] = [
     produccion: { lotes_produccion: true, lotes_despiece: true, recetas_estandar: false, plantillas_despiece: false, etiquetas: true, dashboard: false, trazabilidad: false },
     ventas: { ventas_pedidos: true, dashboard_ventas: false, clientes: false, listas_precios: false, puntos_venta: false },
     egresos: { egresos_compras: false, proveedores: false, tipos_egreso: false, plan_cuentas: false },
-    finanzas: { tesoreria: false, cheques: false },
+    finanzas: { tesoreria: false, cheques: false, proyeccion: false },
     usuarios: { gestion_usuarios: false }
   }}
 ];
@@ -9884,7 +9884,7 @@ const UserForm = ({ editingItem, loggedUser, onSave, onClose }: any) => {
     { key: 'produccion', label: '🏭 PRODUCCIÓN', color: 'bg-emerald-50 outline-emerald-200', sections: [ {key: 'lotes_produccion', label: 'Lotes de Producción'}, {key: 'lotes_despiece', label: 'Lotes de Despiece'}, {key: 'recetas_estandar', label: 'Recetas Estándar'}, {key: 'plantillas_despiece', label: 'Plantillas de Despiece'}, {key: 'etiquetas', label: 'Etiquetas'}, {key: 'dashboard', label: 'Dashboard'}, {key: 'trazabilidad', label: 'Trazabilidad'} ] },
     { key: 'ventas', label: '💰 VENTAS', color: 'bg-amber-50 outline-amber-200', sections: [ {key: 'ventas_pedidos', label: 'Ventas y Pedidos'}, {key: 'dashboard_ventas', label: 'Dashboard de Ventas'}, {key: 'clientes', label: 'Clientes'}, {key: 'listas_precios', label: 'Listas de Precios'}, {key: 'puntos_venta', label: 'Puntos de Venta'} ] },
     { key: 'egresos', label: '📤 EGRESOS', color: 'bg-rose-50 outline-rose-200', sections: [ {key: 'egresos_compras', label: 'Egresos y Compras'}, {key: 'proveedores', label: 'Proveedores'}, {key: 'tipos_egreso', label: 'Tipos de Egreso'}, {key: 'plan_cuentas', label: 'Plan de Cuentas'} ] },
-    { key: 'finanzas', label: '💳 FINANZAS', color: 'bg-violet-50 outline-violet-200', sections: [ {key: 'tesoreria', label: 'Tesorería'}, {key: 'cheques', label: 'Cheques'} ] },
+    { key: 'finanzas', label: '💳 FINANZAS', color: 'bg-violet-50 outline-violet-200', sections: [ {key: 'tesoreria', label: 'Tesorería'}, {key: 'cheques', label: 'Cheques'}, {key: 'proyeccion', label: 'Proyección'} ] },
     { key: 'usuarios', label: '👤 USUARIOS', color: 'bg-slate-100 outline-slate-300', sections: [ {key: 'gestion_usuarios', label: 'Gestión de Usuarios'} ] }
   ];
 
@@ -22977,6 +22977,170 @@ const TesoreriaView = ({
   );
 };
 
+const ProyeccionLiquidezView = ({
+  tesoreriaCuentas = [],
+  tesoreriaSaldos = {},
+  chequesRecibidos = [],
+  chequesEmitidos = [],
+}: {
+  tesoreriaCuentas?: any[];
+  tesoreriaSaldos?: Record<string, number>;
+  chequesRecibidos?: ChequeRecibido[];
+  chequesEmitidos?: ChequeEmitido[];
+}) => {
+  const [fechaInicio, setFechaInicio] = useState<string>(new Date().toISOString().split('T')[0]);
+
+  const proyeccion = useMemo(() => {
+    const disponibleInicial = safeRound(
+      (tesoreriaCuentas || [])
+        .filter((c: any) => c.habilitada && c.moneda === 'ARS')
+        .reduce((sum: number, c: any) => sum + (tesoreriaSaldos[c.id] ?? c.saldoInicial ?? 0), 0),
+      2
+    );
+
+    const start = parseISO(fechaInicio);
+    const startIso0 = fechaInicio;
+
+    const semanas = Array.from({ length: 8 }, (_, i) => {
+      const ini = addDays(start, i * 7);
+      const fin = addDays(ini, 6);
+      return {
+        inicioIso: format(ini, 'yyyy-MM-dd'),
+        finIso: format(fin, 'yyyy-MM-dd'),
+        entra: 0,
+        sale: 0,
+      };
+    });
+
+    const ultimaFinIso = semanas[semanas.length - 1].finIso;
+
+    const recibidosElegibles = (chequesRecibidos || []).filter(
+      (c) => !c.anulado && (c.estado === 'en_cartera' || c.estado === 'depositado' || c.estado === 'no_entregado')
+    );
+    const emitidosElegibles = (chequesEmitidos || []).filter(
+      (c) => !c.anulado && !c.chequeRecibidoId && (c.estado === 'pendiente' || c.estado === 'no_entregado')
+    );
+
+    const asignarSemana = (fechaStr: string): number => {
+      let d = String(fechaStr || '').split('T')[0];
+      if (!d) return -1;
+      if (d < startIso0) d = startIso0; // vencido/inminente → primera semana
+      if (d > ultimaFinIso) return -1; // fuera del horizonte de 8 semanas
+      for (let i = 0; i < semanas.length; i++) {
+        if (d >= semanas[i].inicioIso && d <= semanas[i].finIso) return i;
+      }
+      return -1;
+    };
+
+    recibidosElegibles.forEach((c) => {
+      const i = asignarSemana(c.fechaCobro);
+      if (i >= 0) semanas[i].entra += Number(c.monto) || 0;
+    });
+    emitidosElegibles.forEach((c) => {
+      const i = asignarSemana(c.fechaPago);
+      if (i >= 0) semanas[i].sale += Number(c.monto) || 0;
+    });
+
+    let saldo = disponibleInicial;
+    const filas = semanas.map((s) => {
+      const entra = safeRound(s.entra, 2);
+      const sale = safeRound(s.sale, 2);
+      const neto = safeRound(entra - sale, 2);
+      const saldoInicial = safeRound(saldo, 2);
+      const saldoFinal = safeRound(saldoInicial + neto, 2);
+      saldo = saldoFinal;
+      return { inicioIso: s.inicioIso, finIso: s.finIso, entra, sale, neto, saldoInicial, saldoFinal };
+    });
+
+    const negativas = filas.filter((f) => f.saldoFinal < 0);
+    const primeraNegativa = negativas[0] || null;
+    const peorSaldo = negativas.length > 0 ? Math.min(...negativas.map((f) => f.saldoFinal)) : 0;
+
+    return { disponibleInicial, filas, primeraNegativa, montoACubrir: safeRound(Math.abs(peorSaldo), 2) };
+  }, [fechaInicio, tesoreriaCuentas, tesoreriaSaldos, chequesRecibidos, chequesEmitidos]);
+
+  return (
+    <div className="space-y-8 animate-in fade-in duration-500">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-black text-sleek-dark uppercase tracking-tighter">Proyección de liquidez</h2>
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mt-1">Flujo proyectado a 8 semanas (solo ARS)</p>
+        </div>
+        <div className="flex items-end gap-4">
+          <div>
+            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Arranca el</label>
+            <input
+              type="date"
+              value={fechaInicio}
+              onChange={(e) => setFechaInicio(e.target.value)}
+              className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-700"
+            />
+          </div>
+          <Card className="px-5 py-3 bg-sleek-dark text-white border-none">
+            <p className="text-[9px] font-black text-white/40 uppercase tracking-[0.2em]">Disponible hoy</p>
+            <p className="text-2xl font-black tracking-tighter">$ {formatNumber(proyeccion.disponibleInicial, 2)}</p>
+          </Card>
+        </div>
+      </div>
+
+      <Card className="p-0 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="bg-slate-50 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                <th className="px-4 py-3">Semana</th>
+                <th className="px-4 py-3 text-right">Entra</th>
+                <th className="px-4 py-3 text-right">Sale</th>
+                <th className="px-4 py-3 text-right">Neto</th>
+                <th className="px-4 py-3 text-right">Saldo proyectado</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {proyeccion.filas.map((f, i) => {
+                const deficit = f.saldoFinal < 0;
+                return (
+                  <tr key={i} className={cn(deficit && 'bg-rose-50')}>
+                    <td className="px-4 py-3 text-xs font-bold text-slate-600">
+                      {safeFormat(f.inicioIso, 'dd/MM')} – {safeFormat(f.finIso, 'dd/MM')}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-right font-mono text-emerald-600">{f.entra ? `$ ${formatNumber(f.entra, 2)}` : '—'}</td>
+                    <td className="px-4 py-3 text-xs text-right font-mono text-rose-600">{f.sale ? `$ ${formatNumber(f.sale, 2)}` : '—'}</td>
+                    <td className={cn('px-4 py-3 text-xs text-right font-mono font-bold', f.neto < 0 ? 'text-rose-600' : 'text-slate-600')}>$ {formatNumber(f.neto, 2)}</td>
+                    <td className={cn('px-4 py-3 text-xs text-right font-mono font-black', deficit ? 'text-rose-600' : 'text-sleek-dark')}>
+                      <span className="inline-flex items-center gap-1 justify-end">
+                        {deficit && <AlertTriangle className="w-3.5 h-3.5" />}
+                        $ {formatNumber(f.saldoFinal, 2)}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      {proyeccion.primeraNegativa ? (
+        <div className="flex items-start gap-3 p-4 bg-rose-50 border border-rose-200 rounded-xl">
+          <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-xs font-black text-rose-700 uppercase tracking-widest">Déficit proyectado</p>
+            <p className="text-xs font-bold text-rose-600 mt-1">
+              La primera semana en déficit es {safeFormat(proyeccion.primeraNegativa.inicioIso, 'dd/MM')} – {safeFormat(proyeccion.primeraNegativa.finIso, 'dd/MM')}.
+              Necesitás cubrir ${formatNumber(proyeccion.montoACubrir, 2)} para mantener la liquidez positiva.
+            </p>
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-center gap-3 p-4 bg-emerald-50 border border-emerald-200 rounded-xl">
+          <TrendingUp className="w-5 h-5 text-emerald-600 shrink-0" />
+          <p className="text-xs font-bold text-emerald-700 uppercase tracking-widest">La liquidez proyectada se mantiene positiva en las 8 semanas</p>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const ChequesView = ({
   recibidos,
   emitidos,
@@ -22985,6 +23149,7 @@ const ChequesView = ({
   showNotification,
   clientes = [],
   proveedores = [],
+  disponibleTesoreria = 0,
 }: {
   recibidos: ChequeRecibido[];
   emitidos: ChequeEmitido[];
@@ -22993,8 +23158,67 @@ const ChequesView = ({
   showNotification: (msg: string, type: 'success' | 'error') => void;
   clientes?: any[];
   proveedores?: any[];
+  disponibleTesoreria?: number;
 }) => {
   const hoy = safeFormat(new Date(), 'yyyy-MM-dd');
+  const [fechaRefProy, setFechaRefProy] = useState<string>(new Date().toISOString().split('T')[0]);
+
+  const proyeccionCheques = useMemo(() => {
+    const ref = parseISO(fechaRefProy);
+    // Lunes de la semana calendario que contiene fechaRef (lunes=1..domingo=7)
+    const lunes = addDays(ref, -(((ref.getDay() + 6) % 7)));
+    const semanas = Array.from({ length: 8 }, (_, i) => {
+      const ini = addDays(lunes, i * 7);
+      const fin = addDays(ini, 6);
+      return { inicioIso: format(ini, 'yyyy-MM-dd'), finIso: format(fin, 'yyyy-MM-dd'), porCobrar: 0, porPagar: 0 };
+    });
+    const primerLunesIso = semanas[0].inicioIso;
+    const ultimaFinIso = semanas[semanas.length - 1].finIso;
+
+    const recibidosElegibles = (recibidos || []).filter(
+      (c) => !c.anulado && (c.estado === 'en_cartera' || c.estado === 'depositado' || c.estado === 'no_entregado')
+    );
+    const emitidosElegibles = (emitidos || []).filter(
+      (c) => !c.anulado && !c.chequeRecibidoId && (c.estado === 'pendiente' || c.estado === 'no_entregado')
+    );
+
+    const asignarSemana = (fechaStr: string): number => {
+      let d = String(fechaStr || '').split('T')[0];
+      if (!d) return -1;
+      if (d < primerLunesIso) d = primerLunesIso;
+      if (d > ultimaFinIso) return -1;
+      for (let i = 0; i < semanas.length; i++) {
+        if (d >= semanas[i].inicioIso && d <= semanas[i].finIso) return i;
+      }
+      return -1;
+    };
+
+    recibidosElegibles.forEach((c) => {
+      const i = asignarSemana(c.fechaCobro);
+      if (i >= 0) semanas[i].porCobrar += Number(c.monto) || 0;
+    });
+    emitidosElegibles.forEach((c) => {
+      const i = asignarSemana(c.fechaPago);
+      if (i >= 0) semanas[i].porPagar += Number(c.monto) || 0;
+    });
+
+    let acum = safeRound(disponibleTesoreria, 2);
+    let porCobrarAcum = 0;
+    let porPagarAcum = 0;
+    const filas = semanas.map((s) => {
+      const porCobrarSemana = safeRound(s.porCobrar, 2);
+      const porPagarSemana = safeRound(s.porPagar, 2);
+      porCobrarAcum = safeRound(porCobrarAcum + porCobrarSemana, 2);
+      porPagarAcum = safeRound(porPagarAcum + porPagarSemana, 2);
+      const diferencia = safeRound(porCobrarAcum - porPagarAcum, 2);
+      const diferenciaSemana = safeRound(porCobrarSemana - porPagarSemana, 2);
+      acum = safeRound(acum + diferenciaSemana, 2);
+      return { inicioIso: s.inicioIso, finIso: s.finIso, porCobrar: porCobrarAcum, porPagar: porPagarAcum, diferencia, acumulado: acum };
+    });
+
+    const primeraNegativa = filas.find((f) => f.acumulado < 0) || null;
+    return { filas, primeraNegativa };
+  }, [fechaRefProy, recibidos, emitidos, disponibleTesoreria]);
   const [tab, setTab] = useState<'recibidos' | 'emitidos'>('recibidos');
   const [modal, setModal] = useState<'recibido' | 'emitido' | 'endoso' | ''>('');
   const [saving, setSaving] = useState(false);
@@ -23292,6 +23516,68 @@ const ChequesView = ({
           <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mt-1">Cartera de cheques recibidos y emitidos</p>
         </div>
       </div>
+
+      <Card className="p-5 space-y-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-black text-sleek-dark uppercase tracking-widest">Proyección de cheques (8 semanas)</h3>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mt-0.5">Semanas calendario (lunes a domingo)</p>
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Ver desde la semana de</label>
+            <input
+              type="date"
+              value={fechaRefProy}
+              onChange={(e) => setFechaRefProy(e.target.value)}
+              className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-700"
+            />
+          </div>
+        </div>
+
+        <div className="overflow-x-auto border border-slate-100 rounded-xl">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="bg-slate-50 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                <th className="px-4 py-3">Semana</th>
+                <th className="px-4 py-3 text-right">Disponible</th>
+                <th className="px-4 py-3 text-right">Por cobrar</th>
+                <th className="px-4 py-3 text-right">Por pagar</th>
+                <th className="px-4 py-3 text-right">Diferencia</th>
+                <th className="px-4 py-3 text-right">Acumulado</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {proyeccionCheques.filas.map((f, i) => {
+                const deficit = f.acumulado < 0;
+                return (
+                  <tr key={i} className={cn(deficit && 'bg-rose-50')}>
+                    <td className="px-4 py-3 text-xs font-bold text-slate-600">{safeFormat(f.inicioIso, 'dd/MM')} – {safeFormat(f.finIso, 'dd/MM')}</td>
+                    <td className="px-4 py-3 text-xs text-right font-mono text-slate-400">$ {formatNumber(disponibleTesoreria, 2)}</td>
+                    <td className="px-4 py-3 text-xs text-right font-mono text-emerald-600">{f.porCobrar ? `$ ${formatNumber(f.porCobrar, 2)}` : '—'}</td>
+                    <td className="px-4 py-3 text-xs text-right font-mono text-rose-600">{f.porPagar ? `$ ${formatNumber(f.porPagar, 2)}` : '—'}</td>
+                    <td className={cn('px-4 py-3 text-xs text-right font-mono font-bold', f.diferencia < 0 ? 'text-rose-600' : f.diferencia > 0 ? 'text-emerald-600' : 'text-slate-600')}>$ {formatNumber(f.diferencia, 2)}</td>
+                    <td className={cn('px-4 py-3 text-xs text-right font-mono font-black', f.acumulado < 0 ? 'text-rose-600' : f.acumulado > 0 ? 'text-emerald-600' : 'text-sleek-dark')}>$ {formatNumber(f.acumulado, 2)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {proyeccionCheques.primeraNegativa ? (
+          <div className="flex items-start gap-3 p-3 bg-rose-50 border border-rose-200 rounded-xl">
+            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+            <p className="text-xs font-bold text-rose-600">
+              Déficit proyectado: la primera semana en negativo es {safeFormat(proyeccionCheques.primeraNegativa.inicioIso, 'dd/MM')} – {safeFormat(proyeccionCheques.primeraNegativa.finIso, 'dd/MM')} (acumulado ${formatNumber(proyeccionCheques.primeraNegativa.acumulado, 2)}).
+            </p>
+          </div>
+        ) : (
+          <div className="flex items-center gap-3 p-3 bg-emerald-50 border border-emerald-200 rounded-xl">
+            <TrendingUp className="w-4 h-4 text-emerald-600 shrink-0" />
+            <p className="text-xs font-bold text-emerald-700 uppercase tracking-widest">La liquidez proyectada de cheques se mantiene positiva</p>
+          </div>
+        )}
+      </Card>
 
       <div className="flex gap-1 border-b border-slate-200">
         <button
@@ -23724,7 +24010,7 @@ export default function App() {
         'PRODUCCIÓN': ['Lotes de Producción', 'Lotes de Despiece', 'Recetas Estándar', 'Plantillas de Despiece', 'Etiquetas', 'Dashboard', 'Trazabilidad'],
         'VENTAS': ['Ventas y Pedidos', 'Dashboard Ventas', 'Clientes', 'Listas de Precios', 'Puntos de Venta'],
         'EGRESOS': ['Egresos y Compras', 'Dashboard Egresos', 'Proveedores', 'Tipos de Egreso', 'Plan de Cuentas'],
-        'FINANZAS': ['Tesorería', 'Cheques'],
+        'FINANZAS': ['Tesorería', 'Cheques', 'Proyección'],
         'USUARIOS': ['Gestión de Usuarios']
       };
 
@@ -23819,13 +24105,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (activeModule === 'FINANZAS' && currentUser && hasPermission(currentUser, 'FINANZAS', 'Tesorería')) {
+    if (activeModule === 'FINANZAS' && currentUser && (hasPermission(currentUser, 'FINANZAS', 'Tesorería') || hasPermission(currentUser, 'FINANZAS', 'Proyección'))) {
       reloadTesoreria();
     }
   }, [activeModule, currentUser, reloadTesoreria]);
 
   useEffect(() => {
-    if (activeModule === 'FINANZAS' && currentUser && hasPermission(currentUser, 'FINANZAS', 'Cheques')) {
+    if (activeModule === 'FINANZAS' && currentUser && (hasPermission(currentUser, 'FINANZAS', 'Cheques') || hasPermission(currentUser, 'FINANZAS', 'Proyección'))) {
       reloadCheques();
     }
   }, [activeModule, currentUser, reloadCheques]);
@@ -24585,7 +24871,7 @@ export default function App() {
             setExpandedModule={setExpandedModule}
             setActiveModule={setActiveModule}
             setActiveSubSection={setActiveSubSection}
-            subItems={['Tesorería', 'Cheques']} 
+            subItems={['Tesorería', 'Cheques', 'Proyección']} 
             sidebarExpanded={sidebarExpanded}
             currentUser={currentUser}
           />
@@ -25031,11 +25317,21 @@ export default function App() {
                 showNotification={showNotification}
                 clientes={clientes}
                 proveedores={proveedores}
+                disponibleTesoreria={safeRound((tesoreriaCuentas || []).filter((c: any) => c.habilitada && c.moneda === 'ARS').reduce((sum: number, c: any) => sum + (tesoreriaSaldos[c.id] ?? c.saldoInicial ?? 0), 0), 2)}
+              />
+            )}
+
+            {activeModule === 'FINANZAS' && activeSubSection === 'Proyección' && (
+              <ProyeccionLiquidezView
+                tesoreriaCuentas={tesoreriaCuentas}
+                tesoreriaSaldos={tesoreriaSaldos}
+                chequesRecibidos={chequesRecibidos}
+                chequesEmitidos={chequesEmitidos}
               />
             )}
             
             {/* Placeholder for other views */}
-            {activeModule !== 'INICIO' && !['Dashboard', 'Almacenes', 'Productos', 'Movimientos', 'Etiquetas', 'Lotes de Producción', 'Lotes de Despiece', 'Recetas Estándar', 'Plantillas de Despiece', 'Gestión de Usuarios', 'Ventas y Pedidos', 'Clientes', 'Listas de Precios', 'Puntos de Venta', 'Egresos y Compras', 'Dashboard Egresos', 'Proveedores', 'Tipos de Egreso', 'Plan de Cuentas', 'Tesorería', 'Cheques', 'Inicio'].includes(activeSubSection) && (
+            {activeModule !== 'INICIO' && !['Dashboard', 'Almacenes', 'Productos', 'Movimientos', 'Etiquetas', 'Lotes de Producción', 'Lotes de Despiece', 'Recetas Estándar', 'Plantillas de Despiece', 'Gestión de Usuarios', 'Ventas y Pedidos', 'Clientes', 'Listas de Precios', 'Puntos de Venta', 'Egresos y Compras', 'Dashboard Egresos', 'Proveedores', 'Tipos de Egreso', 'Plan de Cuentas', 'Tesorería', 'Cheques', 'Proyección', 'Inicio'].includes(activeSubSection) && (
               <div className="flex flex-col items-center justify-center h-[60vh] text-slate-300">
                 <Settings className="w-16 h-16 mb-4 opacity-10" />
                 <p className="text-lg font-bold uppercase tracking-widest">Módulo en Desarrollo</p>
