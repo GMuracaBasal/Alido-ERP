@@ -23255,6 +23255,10 @@ const ChequesView = ({
   };
 
   const anularRec = (c: ChequeRecibido) => {
+    if (c.origenTipo === 'cobro' || c.origenTipo === 'pago' || c.origenTipo === 'endoso') {
+      showNotification('Este cheque proviene de un cobro/pago. Anulalo desde el cobro o pago que lo generó, no desde acá.', 'error');
+      return;
+    }
     confirmDialog('¿Anular este cheque recibido? No se borra, queda marcado como anulado.', async () => {
       const ok = await anularChequeRecibido(c.id);
       if (!ok) { showNotification('No se pudo anular el cheque', 'error'); return; }
@@ -23264,6 +23268,10 @@ const ChequesView = ({
   };
 
   const anularEmi = (c: ChequeEmitido) => {
+    if (c.origenTipo === 'cobro' || c.origenTipo === 'pago' || c.origenTipo === 'endoso') {
+      showNotification('Este cheque proviene de un cobro/pago. Anulalo desde el cobro o pago que lo generó, no desde acá.', 'error');
+      return;
+    }
     confirmDialog('¿Anular este cheque emitido? No se borra, queda marcado como anulado.', async () => {
       const ok = await anularChequeEmitido(c.id);
       if (!ok) { showNotification('No se pudo anular el cheque', 'error'); return; }
@@ -23338,9 +23346,6 @@ const ChequesView = ({
                 <button type="button" onClick={() => { setFiltroEstadoRec('todos'); setFiltroDesdeRec(''); setFiltroHastaRec(''); }} className="px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">Limpiar</button>
               )}
             </div>
-            <button type="button" onClick={openNuevoRecibido} className="bg-sleek-dark text-white px-5 py-3 rounded text-[10px] font-black uppercase tracking-widest flex items-center gap-2">
-              <Plus className="w-4 h-4" /> Nuevo cheque recibido
-            </button>
           </div>
 
           <Card className="p-0 overflow-hidden">
@@ -23395,7 +23400,11 @@ const ChequesView = ({
                               </>
                             )}
                             <button type="button" onClick={() => openEditarRecibido(c)} className={accionBtn} title="Editar"><Edit2 className="w-3 h-3" /></button>
-                            <button type="button" onClick={() => anularRec(c)} className={cn(accionBtn, 'text-rose-600')} title="Anular"><Ban className="w-3 h-3" /></button>
+                            {(c.origenTipo === 'cobro' || c.origenTipo === 'pago' || c.origenTipo === 'endoso') ? (
+                              <button type="button" disabled className={cn(accionBtn, 'text-rose-600 opacity-40 cursor-not-allowed')} title="Anular desde el cobro/pago de origen"><Ban className="w-3 h-3" /></button>
+                            ) : (
+                              <button type="button" onClick={() => anularRec(c)} className={cn(accionBtn, 'text-rose-600')} title="Anular"><Ban className="w-3 h-3" /></button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -23446,9 +23455,6 @@ const ChequesView = ({
                 <button type="button" onClick={() => { setFiltroEstadoEmi('todos'); setFiltroDesdeEmi(''); setFiltroHastaEmi(''); }} className="px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">Limpiar</button>
               )}
             </div>
-            <button type="button" onClick={openNuevoEmitido} className="bg-sleek-dark text-white px-5 py-3 rounded text-[10px] font-black uppercase tracking-widest flex items-center gap-2">
-              <Plus className="w-4 h-4" /> Nuevo cheque emitido
-            </button>
           </div>
 
           <Card className="p-0 overflow-hidden">
@@ -23499,7 +23505,11 @@ const ChequesView = ({
                               </>
                             )}
                             <button type="button" onClick={() => openEditarEmitido(c)} className={accionBtn} title="Editar"><Edit2 className="w-3 h-3" /></button>
-                            <button type="button" onClick={() => anularEmi(c)} className={cn(accionBtn, 'text-rose-600')} title="Anular registro"><Ban className="w-3 h-3" /></button>
+                            {(c.origenTipo === 'cobro' || c.origenTipo === 'pago' || c.origenTipo === 'endoso') ? (
+                              <button type="button" disabled className={cn(accionBtn, 'text-rose-600 opacity-40 cursor-not-allowed')} title="Anular desde el cobro/pago de origen"><Ban className="w-3 h-3" /></button>
+                            ) : (
+                              <button type="button" onClick={() => anularEmi(c)} className={cn(accionBtn, 'text-rose-600')} title="Anular registro"><Ban className="w-3 h-3" /></button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -23512,7 +23522,7 @@ const ChequesView = ({
         </div>
       )}
 
-      <Modal isOpen={modal === 'recibido'} onClose={() => setModal('')} title={editingRec ? 'Editar cheque recibido' : 'Nuevo cheque recibido'}>
+      <Modal isOpen={modal === 'recibido'} onClose={() => setModal('')} title="Editar cheque recibido">
         <form onSubmit={handleSaveRecibido} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -23581,7 +23591,7 @@ const ChequesView = ({
         </form>
       </Modal>
 
-      <Modal isOpen={modal === 'emitido'} onClose={() => setModal('')} title={editingEmi ? 'Editar cheque emitido' : 'Nuevo cheque emitido'}>
+      <Modal isOpen={modal === 'emitido'} onClose={() => setModal('')} title="Editar cheque emitido">
         <form onSubmit={handleSaveEmitido} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
