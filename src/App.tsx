@@ -16325,6 +16325,7 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
                         <tr className="border-b border-slate-100">
                           <th className="py-2 text-[9px] font-bold text-slate-400 uppercase">Producto</th>
                           <th className="py-2 text-[9px] font-bold text-slate-400 uppercase text-right">Cant.</th>
+                          <th className="py-2 text-[9px] font-bold text-slate-400 uppercase text-right">Precio Unit.</th>
                           <th className="py-2 text-[9px] font-bold text-slate-400 uppercase text-right">Subtotal</th>
                         </tr>
                       </thead>
@@ -16333,9 +16334,10 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
                           const prod = productos.find((item: any) => item.id === p.productoId);
                           return (
                             <tr key={i}>
-                              <td className="py-3 text-[11px] font-bold text-slate-600">{prod?.nombre}</td>
+                              <td className="py-3 text-[11px] font-bold text-slate-600">{prod?.nombre || p.codigoBarras || 'Producto'}</td>
                               <td className="py-3 text-[11px] font-bold text-slate-400 text-right">{p.cantidad} {p.unidad}</td>
-                              <td className="py-3 text-[11px] font-black text-sleek-dark text-right">$ {formatCurrency(p.cantidad * (parseFloat(p.precioUnitario) || 0))}</td>
+                              <td className="py-3 text-[11px] font-bold text-slate-500 text-right">$ {formatCurrency(parseFloat(p.precioUnitario) || 0)}</td>
+                              <td className="py-3 text-[11px] font-black text-sleek-dark text-right">$ {formatCurrency(p.subtotal != null ? (parseFloat(p.subtotal) || 0) : p.cantidad * (parseFloat(p.precioUnitario) || 0))}</td>
                             </tr>
                           );
                         })}
@@ -18523,7 +18525,7 @@ const TiposEgresoView = ({ tiposEgreso, setTiposEgreso, planCuentas, showNotific
   );
 };
 
-const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPagosProveedores, egresos, tiposEgreso, planCuentas, showNotification, tesoreriaCuentas = [], chequesRecibidos = [], reloadCheques, proveedorAAbrir = null, onProveedorAbierto }: any) => {
+const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPagosProveedores, egresos, tiposEgreso, planCuentas, showNotification, tesoreriaCuentas = [], chequesRecibidos = [], reloadCheques, proveedorAAbrir = null, onProveedorAbierto, productos = [] }: any) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isPagoModalOpen, setIsPagoModalOpen] = useState(false);
@@ -18560,6 +18562,8 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
   const [filterCcHasta, setFilterCcHasta] = useState('');
   const [filterCcTipo, setFilterCcTipo] = useState('Todos');
   const [filterCcSearch, setFilterCcSearch] = useState('');
+  const [selectedEgresoComprobante, setSelectedEgresoComprobante] = useState<any>(null);
+  const [selectedPagoComprobante, setSelectedPagoComprobante] = useState<any>(null);
 
   const movimientosProveedor = useMemo(() => {
     if (!selectedProveedor) return [];
@@ -19016,7 +19020,25 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
                            )}
                         </td>
                         <td className="px-6 py-4">
-                           <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{item.comprobante}</p>
+                           {item.type === 'EGRESO' ? (
+                             <button
+                               type="button"
+                               onClick={() => setSelectedEgresoComprobante(item)}
+                               className="text-[10px] font-bold text-slate-500 hover:text-sleek-accent uppercase tracking-widest underline decoration-sleek-accent/20 underline-offset-2 transition-all cursor-pointer"
+                               title="Ver comprobante de compra"
+                             >
+                               {item.comprobante}
+                             </button>
+                           ) : (
+                             <button
+                               type="button"
+                               onClick={() => setSelectedPagoComprobante(item)}
+                               className="text-[10px] font-bold text-slate-500 hover:text-sleek-accent uppercase tracking-widest underline decoration-sleek-accent/20 underline-offset-2 transition-all cursor-pointer"
+                               title={isAjuste ? 'Ver comprobante de ajuste' : 'Ver comprobante de pago'}
+                             >
+                               {item.comprobante}
+                             </button>
+                           )}
                            {item.type === 'PAGO' && !isAjuste && item.cuentaTesoreriaId && (() => {
                              const ct = (tesoreriaCuentas || []).find((tc: any) => tc.id === item.cuentaTesoreriaId);
                              return ct ? <p className="text-[9px] font-bold text-sleek-accent/70 uppercase tracking-widest mt-0.5">→ {ct.nombre}</p> : null;
@@ -19372,6 +19394,211 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
             </button>
           </div>
         </form>
+      </Modal>
+
+      <Modal isOpen={!!selectedEgresoComprobante} onClose={() => setSelectedEgresoComprobante(null)} title="Detalle de Compra">
+        {selectedEgresoComprobante && (() => {
+          const tipo = tiposEgreso.find((t: any) => t.id === selectedEgresoComprobante.tipoEgresoId);
+          const estadoVariant = selectedEgresoComprobante.estado === 'Anulado' ? 'danger' : selectedEgresoComprobante.estado === 'Confirmado' ? 'success' : 'warning';
+          return (
+            <div className="space-y-8 p-4">
+              <div className="flex justify-between items-start border-b pb-3">
+                <div>
+                  <h4 className="text-sm font-black italic tracking-tighter text-sleek-dark">COMPROBANTE DE COMPRA</h4>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Nº {selectedEgresoComprobante.comprobante}</p>
+                  {selectedEgresoComprobante.nroComprobanteProveedor && (
+                    <p className="text-[10px] font-bold text-slate-400 mt-0.5">Comp. proveedor: {selectedEgresoComprobante.nroComprobanteProveedor}</p>
+                  )}
+                </div>
+                <div className="text-right">
+                  <p className="text-[10px] font-bold text-slate-500 italic">Fecha: {safeFormat(selectedEgresoComprobante.fecha, 'dd/MM/yyyy')}</p>
+                  <Badge variant={estadoVariant} className="mt-2 text-[9px]">{selectedEgresoComprobante.estado || 'BORRADOR'}</Badge>
+                </div>
+              </div>
+              <div className="grid gap-8 grid-cols-1 md:grid-cols-2">
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Proveedor</p>
+                  <p className="text-sm font-black text-sleek-dark uppercase">{selectedProveedor?.razonSocial || 'Ocasional / Sin proveedor'}</p>
+                </div>
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Tipo de Egreso</p>
+                  <p className="text-sm font-black text-slate-600 uppercase">{tipo?.nombre || '-'}</p>
+                </div>
+              </div>
+              <div className="space-y-4">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="border-b border-slate-100">
+                        <th className="py-2 text-[9px] font-bold text-slate-400 uppercase">Producto / Concepto</th>
+                        <th className="py-2 text-[9px] font-bold text-slate-400 uppercase text-right">Cant.</th>
+                        <th className="py-2 text-[9px] font-bold text-slate-400 uppercase text-right">Precio Unit.</th>
+                        <th className="py-2 text-[9px] font-bold text-slate-400 uppercase text-right">Subtotal</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {(selectedEgresoComprobante.items || []).map((it: any, i: number) => {
+                        const prod = productos.find((p: any) => p.id === it.productoId);
+                        const nombre = prod?.nombre || it.concepto || 'Concepto';
+                        const sub = it.subtotal != null ? (parseFloat(it.subtotal) || 0) : (parseFloat(it.monto) || 0);
+                        return (
+                          <tr key={i}>
+                            <td className="py-3 text-[11px] font-bold text-slate-600">{nombre}</td>
+                            <td className="py-3 text-[11px] font-bold text-slate-400 text-right">{it.cantidad != null ? it.cantidad : '-'}</td>
+                            <td className="py-3 text-[11px] font-bold text-slate-500 text-right">{it.precioUnitario != null ? `$ ${formatCurrency(parseFloat(it.precioUnitario) || 0)}` : '-'}</td>
+                            <td className="py-3 text-[11px] font-black text-sleek-dark text-right">$ {formatCurrency(sub)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="pt-4 border-t border-slate-100 space-y-1.5">
+                  <div className="flex justify-between items-center text-[11px] font-bold uppercase tracking-widest text-slate-400">
+                    <span>Subtotal Neto</span><span>$ {formatCurrency(parseFloat(selectedEgresoComprobante.neto) || 0)}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-[11px] font-bold uppercase tracking-widest text-slate-400">
+                    <span>IVA</span><span>$ {formatCurrency(parseFloat(selectedEgresoComprobante.iva) || 0)}</span>
+                  </div>
+                  <div className="pt-3 border-t border-sleek-dark flex justify-between items-center text-sleek-dark">
+                    <span className="text-[10px] font-black uppercase tracking-widest">Total Egreso</span>
+                    <span className="text-xl font-black italic">$ {formatCurrency(parseFloat(selectedEgresoComprobante.total) || 0)}</span>
+                  </div>
+                </div>
+              </div>
+              <div className="flex justify-end pt-6 border-t">
+                <button onClick={() => setSelectedEgresoComprobante(null)} className="px-6 py-3 bg-sleek-dark text-white font-black rounded-xl uppercase tracking-widest text-[10px]">Cerrar</button>
+              </div>
+            </div>
+          );
+        })()}
+      </Modal>
+
+      <Modal
+        isOpen={!!selectedPagoComprobante}
+        onClose={() => setSelectedPagoComprobante(null)}
+        title={
+          selectedPagoComprobante?.tipoMovimiento === 'Ajuste' || String(selectedPagoComprobante?.comprobante || '').startsWith('AJ-')
+            ? 'Detalle de Ajuste'
+            : 'Detalle de Pago'
+        }
+      >
+        {selectedPagoComprobante && (() => {
+          const isAjustePago = selectedPagoComprobante.tipoMovimiento === 'Ajuste' || String(selectedPagoComprobante.comprobante || '').startsWith('AJ-');
+          const valoresPago = selectedPagoComprobante.valores || [];
+          const cuentaNombrePago = (id?: string) => (tesoreriaCuentas || []).find((c: any) => c.id === id)?.nombre || '—';
+          return (
+            <div className="space-y-8 p-4">
+              <div className="flex justify-between items-start border-b pb-3">
+                <div>
+                  <h4 className="text-sm font-black italic tracking-tighter text-sleek-dark">
+                    {isAjustePago ? 'COMPROBANTE DE AJUSTE' : 'COMPROBANTE DE PAGO'}
+                  </h4>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Nº {selectedPagoComprobante.comprobante}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[10px] font-bold text-slate-500 italic">Fecha: {safeFormat(selectedPagoComprobante.fecha, 'dd/MM/yyyy')}</p>
+                  <Badge variant={isAjustePago ? 'info' : 'success'} className="mt-2 text-[9px]">
+                    {isAjustePago ? 'AJUSTE' : 'PAGO'}
+                  </Badge>
+                </div>
+              </div>
+
+              <div className="grid gap-8 grid-cols-1 md:grid-cols-2">
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Proveedor</p>
+                  <p className="text-sm font-black text-sleek-dark uppercase">{selectedProveedor?.razonSocial || '—'}</p>
+                </div>
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Concepto</p>
+                  <p className="text-sm font-black text-slate-600 uppercase">
+                    {isAjustePago ? 'Ajuste de Cuenta Corriente' : 'Pago a Cuenta Corriente'}
+                  </p>
+                </div>
+              </div>
+
+              {valoresPago.length > 0 ? (
+                <div className="space-y-4">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left">
+                      <thead>
+                        <tr className="border-b border-slate-100">
+                          <th className="py-2 text-[9px] font-bold text-slate-400 uppercase">Medio de Pago</th>
+                          <th className="py-2 text-[9px] font-bold text-slate-400 uppercase">Detalle</th>
+                          <th className="py-2 text-[9px] font-bold text-slate-400 uppercase text-right">Importe</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-50">
+                        {valoresPago.map((v: ValorMovimiento, i: number) => {
+                          const esCheque = v.tipo === 'cheque_propio' || v.tipo === 'cheque_tercero';
+                          const detalle = esCheque
+                            ? `${v.banco || '—'} · Nº ${v.numeroCheque || '—'}${v.vencimiento ? ` · ${safeFormat(v.vencimiento, 'dd/MM/yyyy')}` : ''}`
+                            : cuentaNombrePago(v.cuentaTesoreriaId);
+                          return (
+                            <tr key={i}>
+                              <td className="py-3 text-[11px] font-bold text-slate-600">{VALOR_TIPO_LABEL[v.tipo] || v.tipo}</td>
+                              <td className="py-3 text-[11px] font-bold text-slate-400">
+                                {detalle}{v.referencia ? ` · Ref: ${v.referencia}` : ''}
+                              </td>
+                              <td className="py-3 text-[11px] font-black text-sleek-dark text-right">$ {formatCurrency(v.importe)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="pt-4 border-t border-sleek-dark flex justify-between items-center text-sleek-dark">
+                    <span className="text-[10px] font-black uppercase tracking-widest">Total Pagado</span>
+                    <span className="text-xl font-black italic">$ {formatCurrency(parseFloat(selectedPagoComprobante.monto) || sumValores(valoresPago))}</span>
+                  </div>
+                </div>
+              ) : (
+                <Card className="p-8 bg-slate-50 border-none flex flex-col items-center">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-[.3em] mb-4">
+                    {isAjustePago ? 'Monto del Ajuste' : 'Monto Pagado'}
+                  </p>
+                  <h3 className="text-4xl font-black text-sleek-dark">$ {formatCurrency(parseFloat(selectedPagoComprobante.monto) || 0)}</h3>
+                  {!isAjustePago && selectedPagoComprobante.metodo && (
+                    <p className="text-xs font-bold text-emerald-600 uppercase tracking-widest mt-4">Método: {selectedPagoComprobante.metodo}</p>
+                  )}
+                  {!isAjustePago && selectedPagoComprobante.cuentaTesoreriaId && (
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-2">
+                      Cuenta: {cuentaNombrePago(selectedPagoComprobante.cuentaTesoreriaId)}
+                    </p>
+                  )}
+                </Card>
+              )}
+
+              <div className="space-y-4">
+                {selectedPagoComprobante.referencia && (
+                  <div>
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Referencia</p>
+                    <p className="text-xs font-bold text-slate-600">{selectedPagoComprobante.referencia}</p>
+                  </div>
+                )}
+                {selectedPagoComprobante.observaciones && (
+                  <div>
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Observaciones</p>
+                    <p className="text-xs font-bold text-slate-400 italic">&quot;{selectedPagoComprobante.observaciones}&quot;</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end pt-6 border-t gap-3">
+                {!isAjustePago && (
+                  <button
+                    type="button"
+                    onClick={() => printOrdenPago(selectedPagoComprobante, selectedProveedor)}
+                    className="px-6 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 font-black rounded-xl uppercase tracking-widest text-[10px] flex items-center gap-2"
+                  >
+                    <Printer className="w-4 h-4" /> Imprimir
+                  </button>
+                )}
+                <button onClick={() => setSelectedPagoComprobante(null)} className="px-6 py-3 bg-sleek-dark text-white font-black rounded-xl uppercase tracking-widest text-[10px]">Cerrar</button>
+              </div>
+            </div>
+          );
+        })()}
       </Modal>
     </div>
   );
@@ -20320,6 +20547,7 @@ const EgresosView = ({
   const [filtroEgresoProveedor, setFiltroEgresoProveedor] = useState('');
   const [filterType, setFilterType] = useState('Todos');
   const [filterStatus, setFilterStatus] = useState('Todos');
+  const [selectedEgreso, setSelectedEgreso] = useState<any>(null);
 
   const egresosEnPeriodo = useMemo(() => {
     return egresos.filter((e: any) => {
@@ -20768,6 +20996,7 @@ const EgresosView = ({
                     </td>
                     <td className="py-5 px-2 text-right">
                        <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                          <button onClick={() => setSelectedEgreso(eg)} className="p-2 hover:bg-slate-100 text-slate-400 hover:text-sleek-dark rounded transition-all" title="Ver comprobante"><Eye className="w-4 h-4" /></button>
                           {eg.estado === 'Confirmado' ? (
                             <button onClick={() => openEgresoEdit(eg)} className="p-2 hover:bg-sleek-accent/10 text-sleek-accent rounded transition-all" title="Editar comprobante"><Pencil className="w-4 h-4" /></button>
                           ) : (
@@ -21148,6 +21377,88 @@ const EgresosView = ({
             </button>
           </div>
         </form>
+      </Modal>
+
+      <Modal isOpen={!!selectedEgreso} onClose={() => setSelectedEgreso(null)} title="Detalle de Compra">
+        {selectedEgreso && (() => {
+          const prov = proveedores.find((p: any) => p.id === selectedEgreso.proveedorId);
+          const tipo = tiposEgreso.find((t: any) => t.id === selectedEgreso.tipoEgresoId);
+          const estadoVariant = selectedEgreso.estado === 'Anulado' ? 'danger' : selectedEgreso.estado === 'Confirmado' ? 'success' : 'warning';
+          return (
+            <div className="space-y-8 p-4">
+              <div className="flex justify-between items-start border-b pb-3">
+                <div>
+                  <h4 className="text-sm font-black italic tracking-tighter text-sleek-dark">COMPROBANTE DE COMPRA</h4>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Nº {selectedEgreso.comprobante}</p>
+                  {selectedEgreso.nroComprobanteProveedor && (
+                    <p className="text-[10px] font-bold text-slate-400 mt-0.5">Comp. proveedor: {selectedEgreso.nroComprobanteProveedor}</p>
+                  )}
+                </div>
+                <div className="text-right">
+                  <p className="text-[10px] font-bold text-slate-500 italic">Fecha: {safeFormat(selectedEgreso.fecha, 'dd/MM/yyyy')}</p>
+                  <Badge variant={estadoVariant} className="mt-2 text-[9px]">{selectedEgreso.estado || 'BORRADOR'}</Badge>
+                </div>
+              </div>
+
+              <div className="grid gap-8 grid-cols-1 md:grid-cols-2">
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Proveedor</p>
+                  <p className="text-sm font-black text-sleek-dark uppercase">{prov?.razonSocial || 'Ocasional / Sin proveedor'}</p>
+                </div>
+                <div>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Tipo de Egreso</p>
+                  <p className="text-sm font-black text-slate-600 uppercase">{tipo?.nombre || '-'}</p>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="border-b border-slate-100">
+                        <th className="py-2 text-[9px] font-bold text-slate-400 uppercase">Producto / Concepto</th>
+                        <th className="py-2 text-[9px] font-bold text-slate-400 uppercase text-right">Cant.</th>
+                        <th className="py-2 text-[9px] font-bold text-slate-400 uppercase text-right">Precio Unit.</th>
+                        <th className="py-2 text-[9px] font-bold text-slate-400 uppercase text-right">Subtotal</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {(selectedEgreso.items || []).map((it: any, i: number) => {
+                        const prod = productos.find((p: any) => p.id === it.productoId);
+                        const nombre = prod?.nombre || it.concepto || 'Concepto';
+                        const sub = it.subtotal != null ? (parseFloat(it.subtotal) || 0) : (parseFloat(it.monto) || 0);
+                        return (
+                          <tr key={i}>
+                            <td className="py-3 text-[11px] font-bold text-slate-600">{nombre}</td>
+                            <td className="py-3 text-[11px] font-bold text-slate-400 text-right">{it.cantidad != null ? it.cantidad : '-'}</td>
+                            <td className="py-3 text-[11px] font-bold text-slate-500 text-right">{it.precioUnitario != null ? `$ ${formatCurrency(parseFloat(it.precioUnitario) || 0)}` : '-'}</td>
+                            <td className="py-3 text-[11px] font-black text-sleek-dark text-right">$ {formatCurrency(sub)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="pt-4 border-t border-slate-100 space-y-1.5">
+                  <div className="flex justify-between items-center text-[11px] font-bold uppercase tracking-widest text-slate-400">
+                    <span>Subtotal Neto</span><span>$ {formatCurrency(parseFloat(selectedEgreso.neto) || 0)}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-[11px] font-bold uppercase tracking-widest text-slate-400">
+                    <span>IVA</span><span>$ {formatCurrency(parseFloat(selectedEgreso.iva) || 0)}</span>
+                  </div>
+                  <div className="pt-3 border-t border-sleek-dark flex justify-between items-center text-sleek-dark">
+                    <span className="text-[10px] font-black uppercase tracking-widest">Total Egreso</span>
+                    <span className="text-xl font-black italic">$ {formatCurrency(parseFloat(selectedEgreso.total) || 0)}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end pt-6 border-t">
+                <button onClick={() => setSelectedEgreso(null)} className="px-6 py-3 bg-sleek-dark text-white font-black rounded-xl uppercase tracking-widest text-[10px]">Cerrar</button>
+              </div>
+            </div>
+          );
+        })()}
       </Modal>
     </div>
   );
@@ -25648,6 +25959,7 @@ export default function App() {
                 reloadCheques={reloadCheques}
                 proveedorAAbrir={proveedorAAbrir}
                 onProveedorAbierto={() => setProveedorAAbrir(null)}
+                productos={productos}
               />
             )}
             {activeModule === 'EGRESOS' && activeSubSection === 'Tipos de Egreso' && (
