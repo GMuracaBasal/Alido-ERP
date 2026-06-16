@@ -17896,7 +17896,7 @@ const ListasPreciosView = ({ listasPrecios, setListasPrecios, productos, familia
                               <Package className="w-5 h-5" />
                             </div>
                             <div>
-                              <p className="text-[11px] font-black text-sleek-dark uppercase line-clamp-1">{p.nombre}</p>
+                              <p className="text-[11px] font-black text-sleek-dark uppercase">{p.nombre}</p>
                               <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">{p.codigo} | {p.unidadMedidaId === 'u1' ? 'KG' : 'UN'}</p>
                             </div>
                           </div>
