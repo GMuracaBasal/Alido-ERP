@@ -1384,6 +1384,7 @@ interface User {
   estado?: 'activo' | 'inactivo';
   permisos?: Permisos;
   inicioConfig?: InicioConfig;
+  cuentasTesoreriaVisibles?: string[];
 }
 
 const DEFAULT_INICIO_CONFIG: InicioConfig = {
@@ -1402,6 +1403,12 @@ const getInicioConfig = (user: User | null): InicioConfig => ({
   ...DEFAULT_INICIO_CONFIG,
   ...user?.inicioConfig,
 });
+
+const puedeVerCuenta = (user: User | null | undefined, cuentaId: string) =>
+  user?.role === 'Administrador' || (user?.cuentasTesoreriaVisibles || []).includes(cuentaId);
+
+const cuentasVisiblesPara = (user: User | null | undefined, cuentas: CuentaTesoreria[]) =>
+  user?.role === 'Administrador' ? cuentas : cuentas.filter((c) => (user?.cuentasTesoreriaVisibles || []).includes(c.id));
 
 const DEFAULT_PERMISSIONS: Permisos = {
   inventario: { dashboard: true, almacenes: true, productos: true, movimientos: true, alertas: true, reportes: true },
@@ -9791,7 +9798,7 @@ const EtiquetasView = ({
 );
 };
 
-const UserForm = ({ editingItem, loggedUser, onSave, onClose }: any) => {
+const UserForm = ({ editingItem, loggedUser, tesoreriaCuentas = [], onSave, onClose }: any) => {
   const isSuperadmin = editingItem?.username === 'GuidoM';
   const isSelf = loggedUser?.id === editingItem?.id;
 
@@ -9804,7 +9811,10 @@ const UserForm = ({ editingItem, loggedUser, onSave, onClose }: any) => {
     estado: editingItem?.estado || 'activo',
     permisos: editingItem?.permisos ? JSON.parse(JSON.stringify(editingItem.permisos)) : JSON.parse(JSON.stringify(DEFAULT_PERMISSIONS)),
     inicioConfig: getInicioConfig(editingItem || null),
+    cuentasTesoreriaVisibles: [...(editingItem?.cuentasTesoreriaVisibles || [])],
   });
+
+  const isAdminRole = formData.role === 'Administrador';
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -9826,6 +9836,7 @@ const UserForm = ({ editingItem, loggedUser, onSave, onClose }: any) => {
       estado: formData.estado,
       permisos: isSuperadmin ? DEFAULT_PERMISSIONS : formData.permisos,
       inicioConfig: isSuperadmin ? { ...DEFAULT_INICIO_CONFIG } : formData.inicioConfig,
+      cuentasTesoreriaVisibles: isAdminRole ? (editingItem?.cuentasTesoreriaVisibles || []) : formData.cuentasTesoreriaVisibles,
     };
 
     if (formData.password) {
@@ -10028,6 +10039,52 @@ const UserForm = ({ editingItem, loggedUser, onSave, onClose }: any) => {
               );
             })}
           </div>
+        </div>
+
+        <div>
+          <h3 className="text-sm font-bold text-sleek-dark uppercase tracking-widest mb-4 border-b border-slate-100 pb-2">Cuentas de tesorería visibles</h3>
+          <p className="text-xs text-slate-500 mb-4">Seleccioná qué cuentas de tesorería puede ver este usuario en el módulo Tesorería.</p>
+          {isAdminRole && (
+            <div className="bg-violet-50 text-violet-800 p-4 rounded-lg mb-4 text-sm font-medium border border-violet-200">
+              El administrador ve todas las cuentas.
+            </div>
+          )}
+          {(tesoreriaCuentas as CuentaTesoreria[]).length === 0 ? (
+            <p className="text-xs text-slate-400 font-bold uppercase">No hay cuentas de tesorería creadas.</p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {[...(tesoreriaCuentas as CuentaTesoreria[])].sort((a, b) => a.nombre.localeCompare(b.nombre)).map((c) => (
+                <label
+                  key={c.id}
+                  className={cn(
+                    'flex items-center gap-3 p-3 rounded-lg border border-slate-100 cursor-pointer hover:bg-slate-50',
+                    (isAdminRole || isSuperadmin) && 'opacity-60 cursor-not-allowed'
+                  )}
+                >
+                  <input
+                    type="checkbox"
+                    disabled={isAdminRole || isSuperadmin}
+                    checked={formData.cuentasTesoreriaVisibles.includes(c.id)}
+                    onChange={(e) => {
+                      setFormData((prev: any) => ({
+                        ...prev,
+                        cuentasTesoreriaVisibles: e.target.checked
+                          ? [...prev.cuentasTesoreriaVisibles, c.id]
+                          : prev.cuentasTesoreriaVisibles.filter((id: string) => id !== c.id),
+                      }));
+                    }}
+                    className="w-4 h-4 rounded border-slate-300 text-sleek-accent focus:ring-sleek-accent"
+                  />
+                  <span className="text-xs font-bold text-slate-700">
+                    {c.nombre}
+                    <span className="text-slate-400 font-medium ml-1">
+                      · {TIPO_CUENTA_TES_LABEL[c.tipo]} · {c.moneda}
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -21230,7 +21287,11 @@ const EgresosView = ({
                                  className="w-full px-2 py-2 bg-white border border-slate-200 rounded text-xs font-bold"
                                />
                             </div>
-                            <div className="col-span-4 md:col-span-2 space-y-1">
+                            <div className="col-span-4 md:col-span-1 space-y-1">
+                               <label className="text-[8px] font-black text-slate-400 uppercase">Subtotal</label>
+                               <div className="w-full px-2 py-2 bg-slate-100 border border-slate-200 rounded text-[11px] font-black text-sleek-dark text-right truncate">$ {formatCurrency(item.subtotal || 0)}</div>
+                            </div>
+                            <div className="col-span-4 md:col-span-1 space-y-1">
                                <label className="text-[8px] font-black text-slate-400 uppercase">
                                  {item.numeroLoteGenerado ? 'Lote generado' : 'Lote Prov.'}
                                </label>
@@ -22613,6 +22674,7 @@ const TesoreriaView = ({
   loading,
   onReload,
   showNotification,
+  currentUser,
 }: {
   cuentas: CuentaTesoreria[];
   medios: MedioPago[];
@@ -22621,7 +22683,13 @@ const TesoreriaView = ({
   loading: boolean;
   onReload: () => Promise<void>;
   showNotification: (msg: string, type: 'success' | 'error') => void;
+  currentUser: User | null;
 }) => {
+  const cuentasVisibles = useMemo(
+    () => cuentasVisiblesPara(currentUser, cuentas),
+    [currentUser, cuentas]
+  );
+
   const [vista, setVista] = useState<'lista' | 'detalle'>('lista');
   const [cuentaSel, setCuentaSel] = useState<CuentaTesoreria | null>(null);
   const [modal, setModal] = useState<'cuenta' | 'movimiento' | 'transferencia' | 'anular' | 'medios' | ''>('');
@@ -22657,18 +22725,25 @@ const TesoreriaView = ({
   const totalesPosicion = useMemo(() => {
     let ars = 0;
     let usd = 0;
-    cuentas.forEach((c) => {
+    cuentasVisibles.forEach((c) => {
       if (!c.habilitada) return;
       const s = roundSaldoTes(saldos[c.id] ?? c.saldoInicial);
       if (c.moneda === 'USD') usd += s;
       else ars += s;
     });
     return { ars: roundSaldoTes(ars), usd: roundSaldoTes(usd) };
-  }, [cuentas, saldos]);
+  }, [cuentasVisibles, saldos]);
 
   const cuentaDetalle = cuentaSel
-    ? cuentas.find((c) => c.id === cuentaSel.id) || cuentaSel
+    ? cuentasVisibles.find((c) => c.id === cuentaSel.id) || null
     : null;
+
+  useEffect(() => {
+    if (vista === 'detalle' && cuentaSel && !puedeVerCuenta(currentUser, cuentaSel.id)) {
+      setVista('lista');
+      setCuentaSel(null);
+    }
+  }, [vista, cuentaSel, currentUser]);
   const saldoActualCuenta = cuentaDetalle
     ? roundSaldoTes(saldos[cuentaDetalle.id] ?? cuentaDetalle.saldoInicial)
     : 0;
@@ -22814,8 +22889,8 @@ const TesoreriaView = ({
       showNotification('El monto debe ser mayor a cero', 'error');
       return;
     }
-    const co = cuentas.find((c) => c.id === formTransf.origenId);
-    const cd = cuentas.find((c) => c.id === formTransf.destinoId);
+    const co = cuentasVisibles.find((c) => c.id === formTransf.origenId);
+    const cd = cuentasVisibles.find((c) => c.id === formTransf.destinoId);
     if (co && cd && co.moneda !== cd.moneda) {
       showNotification('Las cuentas deben ser de la misma moneda', 'error');
       return;
@@ -22886,7 +22961,7 @@ const TesoreriaView = ({
     await onReload();
   };
 
-  const origenMonedaTransf = cuentas.find((c) => c.id === formTransf.origenId)?.moneda;
+  const origenMonedaTransf = cuentasVisibles.find((c) => c.id === formTransf.origenId)?.moneda;
 
   if (vista === 'detalle' && cuentaDetalle) {
     return (
@@ -23141,7 +23216,7 @@ const TesoreriaView = ({
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Cuenta origen</label>
               <select required value={formTransf.origenId} onChange={(e) => setFormTransf({ ...formTransf, origenId: e.target.value, destinoId: '' })} className="w-full px-4 py-3 bg-slate-50 border rounded-lg text-sm">
                 <option value="">Seleccionar...</option>
-                {cuentas.filter((c) => c.habilitada).map((c) => (
+                {cuentasVisibles.filter((c) => c.habilitada).map((c) => (
                   <option key={c.id} value={c.id}>{c.nombre} ({c.moneda})</option>
                 ))}
               </select>
@@ -23150,7 +23225,7 @@ const TesoreriaView = ({
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Cuenta destino</label>
               <select required value={formTransf.destinoId} onChange={(e) => setFormTransf({ ...formTransf, destinoId: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border rounded-lg text-sm">
                 <option value="">Seleccionar...</option>
-                {cuentas.filter((c) => c.habilitada && c.id !== formTransf.origenId).map((c) => {
+                {cuentasVisibles.filter((c) => c.habilitada && c.id !== formTransf.origenId).map((c) => {
                   const otraMoneda = origenMonedaTransf && c.moneda !== origenMonedaTransf;
                   return (
                     <option key={c.id} value={c.id} disabled={otraMoneda}>
@@ -23296,10 +23371,10 @@ const TesoreriaView = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
-                {cuentas.length === 0 ? (
+                {cuentasVisibles.length === 0 ? (
                   <tr><td colSpan={7} className="px-4 py-12 text-center text-slate-400 text-xs font-bold uppercase">No hay cuentas. Creá la primera.</td></tr>
                 ) : (
-                  [...cuentas].sort((a, b) => a.nombre.localeCompare(b.nombre)).map((c) => (
+                  [...cuentasVisibles].sort((a, b) => a.nombre.localeCompare(b.nombre)).map((c) => (
                     <tr
                       key={c.id}
                       onClick={() => { setCuentaSel(c); setVista('detalle'); setShowAnulados(false); }}
@@ -25986,6 +26061,7 @@ export default function App() {
                 loading={tesoreriaLoading}
                 onReload={reloadTesoreria}
                 showNotification={showNotification}
+                currentUser={currentUser}
               />
             )}
             {activeModule === 'FINANZAS' && activeSubSection === 'Cheques' && (
@@ -26068,6 +26144,7 @@ export default function App() {
           <UserForm 
             editingItem={editingItem}
             loggedUser={currentUser}
+            tesoreriaCuentas={tesoreriaCuentas}
             onClose={() => setIsModalOpen(false)}
             onSave={(data: any) => {
               if (editingItem) {
