@@ -1364,7 +1364,7 @@ interface Permisos {
   usuarios: PermisosModulo;
 }
 
-type UserRole = 'Administrador' | 'Operario';
+type UserRole = 'Administrador' | 'Administración' | 'Operario';
 
 interface InicioConfig {
   misLotes: boolean;
@@ -1417,6 +1417,15 @@ const DEFAULT_PERMISSIONS: Permisos = {
   egresos: { egresos_compras: true, proveedores: true, tipos_egreso: true, plan_cuentas: true },
   finanzas: { tesoreria: true, cheques: true, proyeccion: true, posicion: true },
   usuarios: { gestion_usuarios: true }
+};
+
+const EMPTY_PERMISSIONS: Permisos = {
+  inventario: { dashboard: false, almacenes: false, productos: false, movimientos: false, alertas: false, reportes: false },
+  produccion: { lotes_produccion: false, lotes_despiece: false, recetas_estandar: false, plantillas_despiece: false, etiquetas: false, dashboard: false, trazabilidad: false },
+  ventas: { ventas_pedidos: false, dashboard_ventas: false, clientes: false, listas_precios: false, puntos_venta: false },
+  egresos: { egresos_compras: false, proveedores: false, tipos_egreso: false, plan_cuentas: false },
+  finanzas: { tesoreria: false, cheques: false, proyeccion: false, posicion: false },
+  usuarios: { gestion_usuarios: false }
 };
 
 const normalizeSection = (section: string) => section.toLowerCase().replace(/ de /g, ' ').replace(/ y /g, '_').replace(/ /g, '_').replace(/á/g, 'a').replace(/é/g, 'e').replace(/í/g, 'i').replace(/ó/g, 'o').replace(/ú/g, 'u');
@@ -9809,7 +9818,9 @@ const UserForm = ({ editingItem, loggedUser, tesoreriaCuentas = [], onSave, onCl
     confirmPassword: '',
     role: editingItem?.role || 'Operario',
     estado: editingItem?.estado || 'activo',
-    permisos: editingItem?.permisos ? JSON.parse(JSON.stringify(editingItem.permisos)) : JSON.parse(JSON.stringify(DEFAULT_PERMISSIONS)),
+    permisos: editingItem?.permisos
+      ? JSON.parse(JSON.stringify(editingItem.permisos))
+      : JSON.parse(JSON.stringify(EMPTY_PERMISSIONS)),
     inicioConfig: getInicioConfig(editingItem || null),
     cuentasTesoreriaVisibles: [...(editingItem?.cuentasTesoreriaVisibles || [])],
   });
@@ -9933,6 +9944,7 @@ const UserForm = ({ editingItem, loggedUser, tesoreriaCuentas = [], onSave, onCl
                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Rol (Legado)</label>
                <select value={formData.role} disabled={isSuperadmin} onChange={e => setFormData({...formData, role: e.target.value})} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-sleek-accent outline-none disabled:opacity-50">
                   <option value="Operario">Operario</option>
+                  <option value="Administración">Administración</option>
                   <option value="Administrador">Administrador</option>
                </select>
             </div>
