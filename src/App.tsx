@@ -18621,10 +18621,11 @@ const TiposEgresoView = ({ tiposEgreso, setTiposEgreso, planCuentas, showNotific
   );
 };
 
-const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPagosProveedores, egresos, tiposEgreso, planCuentas, showNotification, tesoreriaCuentas = [], chequesRecibidos = [], reloadCheques, proveedorAAbrir = null, onProveedorAbierto, productos = [] }: any) => {
+const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPagosProveedores, egresos, setEgresos, tiposEgreso, planCuentas, showNotification, tesoreriaCuentas = [], chequesRecibidos = [], reloadCheques, proveedorAAbrir = null, onProveedorAbierto, productos = [] }: any) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isPagoModalOpen, setIsPagoModalOpen] = useState(false);
+  const [pagoEgresoId, setPagoEgresoId] = useState<string | null>(null);
   const [selectedProveedor, setSelectedProveedor] = useState<any>(null);
   const [editingItem, setEditingItem] = useState<any>(null);
   const [pagoData, setPagoData] = useState<any>({
@@ -18727,6 +18728,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
 
   const openNuevoMovimiento = () => {
     setEditingPagoId(null);
+    setPagoEgresoId(null);
     const monto = safeRound(Math.abs(calculateSaldo(selectedProveedor.id)), 2);
     setPagoData({
       fecha: new Date().toISOString().split('T')[0],
@@ -18745,6 +18747,34 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
     });
     setPagoValores([]);
     setPagoMontoInput(String(monto));
+    setIsPagoModalOpen(true);
+  };
+
+  const openPagoDesdeComprobante = (egreso: any) => {
+    const pagado = (pagosProveedores || [])
+      .filter((p: any) => p.egresoId === egreso.id && !p.anulado)
+      .reduce((s: number, p: any) => s + (p.monto || 0), 0);
+    const pendiente = safeRound(Math.max(0, (egreso.total || 0) - pagado), 2);
+    setEditingPagoId(null);
+    setPagoEgresoId(egreso.id);
+    setPagoData({
+      fecha: new Date().toISOString().split('T')[0],
+      monto: pendiente,
+      metodo: 'Transferencia',
+      referencia: '',
+      observaciones: `Pago comprobante ${egreso.comprobante}`,
+      tipoMovimiento: 'Pago',
+      cuentaTesoreriaId: '',
+      chequeModo: 'propio',
+      chequeBanco: '',
+      chequeNumero: '',
+      chequeFecha: '',
+      chequeTipo: 'fisico',
+      chequeReciboId: '',
+    });
+    setPagoValores([]);
+    setPagoMontoInput(String(pendiente));
+    setSelectedEgresoComprobante(null);
     setIsPagoModalOpen(true);
   };
 
@@ -18939,10 +18969,20 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
         observaciones: pagoData.observaciones,
         tipoMovimiento: 'Pago',
         cuentaTesoreriaId: undefined,
+        egresoId: pagoEgresoId || undefined,
         valores,
       };
       setPagosProveedores([...pagosProveedores, newPago]);
       generarImpactosPago(newPago.id, comprobante, valores, newPago.fecha);
+      if (pagoEgresoId && typeof setEgresos === 'function') {
+        const eg = (egresos || []).find((x: any) => x.id === pagoEgresoId);
+        if (eg) {
+          const pagadoPrev = (pagosProveedores || []).filter((p: any) => p.egresoId === pagoEgresoId && !p.anulado).reduce((s: number, p: any) => s + (p.monto || 0), 0);
+          const pagadoTotal = pagadoPrev + monto;
+          const nuevoEstado = pagadoTotal >= (eg.total || 0) - 0.01 ? 'Pagado' : pagadoTotal > 0 ? 'Parcial' : 'Pendiente';
+          setEgresos((prev: any[]) => prev.map((x: any) => x.id === pagoEgresoId ? { ...x, estadoPago: nuevoEstado } : x));
+        }
+      }
       showNotification('Movimiento registrado con éxito', 'success');
     }
     setIsPagoModalOpen(false);
@@ -19388,7 +19428,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
 
       <Modal
         isOpen={isPagoModalOpen}
-        onClose={() => { setIsPagoModalOpen(false); setEditingPagoId(null); setPagoMontoInput('0'); }}
+        onClose={() => { setIsPagoModalOpen(false); setEditingPagoId(null); setPagoMontoInput('0'); setPagoEgresoId(null); }}
         title={`${editingPagoId ? 'Editar' : 'Registrar'} Movimiento a ${selectedProveedor?.razonSocial}`}
       >
         <form onSubmit={handleSavePago} className="space-y-6">
@@ -19562,7 +19602,12 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
                   </div>
                 </div>
               </div>
-              <div className="flex justify-end pt-6 border-t">
+              <div className="flex justify-end gap-3 pt-6 border-t">
+                {selectedEgresoComprobante.estado === 'Confirmado' && (
+                  <button onClick={() => openPagoDesdeComprobante(selectedEgresoComprobante)} className="px-6 py-3 bg-sleek-accent hover:bg-emerald-400 transition-all text-white font-black rounded-xl uppercase tracking-widest text-[10px] flex items-center gap-2">
+                    <Plus className="w-3.5 h-3.5" /> Registrar Pago
+                  </button>
+                )}
                 <button onClick={() => setSelectedEgresoComprobante(null)} className="px-6 py-3 bg-sleek-dark text-white font-black rounded-xl uppercase tracking-widest text-[10px]">Cerrar</button>
               </div>
             </div>
@@ -26062,6 +26107,7 @@ export default function App() {
                 proveedores={proveedores}
                 setProveedores={setProveedores}
                 egresos={egresos}
+                setEgresos={setEgresos}
                 pagosProveedores={pagosProveedores}
                 setPagosProveedores={setPagosProveedores}
                 tiposEgreso={tiposEgreso}
