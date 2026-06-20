@@ -17769,6 +17769,7 @@ const ListasPreciosView = ({ listasPrecios, setListasPrecios, productos, familia
   });
 
   const [expandedScales, setExpandedScales] = useState<string | null>(null);
+  const [busquedaProductoLista, setBusquedaProductoLista] = useState('');
 
   const filteredListas = listasPrecios.filter((lp: any) => lp.nombre.toLowerCase().includes(searchTerm.toLowerCase()));
 
@@ -17814,6 +17815,7 @@ const ListasPreciosView = ({ listasPrecios, setListasPrecios, productos, familia
       showNotification('Lista creada con éxito', 'success');
     }
     setIsModalOpen(false);
+    setBusquedaProductoLista('');
   };
 
   const handleApplyAdjustment = () => {
@@ -17915,7 +17917,7 @@ const ListasPreciosView = ({ listasPrecios, setListasPrecios, productos, familia
         ))}
       </div>
 
-      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={modalType === 'form' ? 'Gestionar Lista de Precios' : 'Ajuste Masivo de Precios'}>
+      <Modal isOpen={isModalOpen} onClose={() => { setBusquedaProductoLista(''); setIsModalOpen(false); }} title={modalType === 'form' ? 'Gestionar Lista de Precios' : 'Ajuste Masivo de Precios'}>
         {modalType === 'form' && editingLista && (
           <div className="space-y-8">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pb-8 border-b border-slate-100">
@@ -17954,9 +17956,34 @@ const ListasPreciosView = ({ listasPrecios, setListasPrecios, productos, familia
                   <TrendingUp className="w-3 h-3" /> Ajustar Precios
                 </button>
               </div>
+
+              <div className="relative mb-4">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  type="text"
+                  value={busquedaProductoLista}
+                  onChange={(e) => setBusquedaProductoLista(e.target.value)}
+                  placeholder="Buscar producto por nombre o código..."
+                  className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none text-sm"
+                />
+              </div>
               
               <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
-                {editingLista.productos.map((priceItem: any, idx: number) => {
+                {editingLista.productos
+                  .map((priceItem: any, idx: number) => ({ priceItem, idx }))
+                  .filter(({ priceItem }: any) => {
+                    const p = productos.find((prod: any) => prod.id === priceItem.productoId);
+                    if (!p) return false;
+                    const term = busquedaProductoLista.trim().toLowerCase();
+                    if (!term) return true;
+                    return (p.nombre || '').toLowerCase().includes(term) || (p.codigo || '').toLowerCase().includes(term);
+                  })
+                  .sort((a: any, b: any) => {
+                    const pa = productos.find((prod: any) => prod.id === a.priceItem.productoId);
+                    const pb = productos.find((prod: any) => prod.id === b.priceItem.productoId);
+                    return (pa?.nombre || '').localeCompare(pb?.nombre || '', 'es', { sensitivity: 'base' });
+                  })
+                  .map(({ priceItem, idx }: any) => {
                   const p = productos.find((prod: any) => prod.id === priceItem.productoId);
                   if (!p) return null;
                   return (
@@ -18159,7 +18186,7 @@ const ListasPreciosView = ({ listasPrecios, setListasPrecios, productos, familia
 
             <div className="flex gap-4 pt-4">
               <button 
-                onClick={() => setIsModalOpen(false)}
+                onClick={() => { setBusquedaProductoLista(''); setIsModalOpen(false); }}
                 className="flex-1 py-4 bg-slate-100 hover:bg-slate-200 text-slate-600 font-black rounded-xl uppercase tracking-widest text-[10px]"
               >
                 Cancelar
