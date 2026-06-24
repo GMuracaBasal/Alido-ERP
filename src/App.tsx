@@ -15819,8 +15819,59 @@ const RemitoView = ({ venta, cliente, productos, onBack }: any) => {
                     </tbody>
                  </table>
 
-                 <div className="remito-totals mt-12 pt-8 border-t-4 border-sleek-dark">
-                    <div className="remito-totals-inner w-80 ml-auto space-y-4">
+                 <div className="remito-totals mt-12 pt-8 border-t-4 border-sleek-dark flex justify-between items-start gap-8">
+                    {/* Resumen por producto: cajas y kilos */}
+                    <div className="remito-resumen-productos flex-1">
+                       <p className="text-[9px] font-black text-sleek-accent uppercase tracking-widest mb-3 border-b border-sleek-accent/20 pb-1">Resumen por Producto</p>
+                       {(() => {
+                          const resumen: Record<string, { nombre: string; cajas: number; kilos: number; esKg: boolean }> = {};
+                          (venta.productos || []).forEach((item: any) => {
+                             const p = productos.find((prod: any) => prod.id === item.productoId);
+                             const isKg = p?.unidadMedidaId === 'u1';
+                             const key = item.productoId;
+                             if (!resumen[key]) {
+                                resumen[key] = { nombre: p?.nombre || 'Producto', cajas: 0, kilos: 0, esKg: isKg };
+                             }
+                             resumen[key].cajas += 1;
+                             resumen[key].kilos += isKg
+                                ? (item.cantidad || 0)
+                                : (item.pesoKg || (item.cantidad * (p?.pesoNetoUnidad || 0)) || 0);
+                          });
+                          const filas = Object.values(resumen);
+                          const totalCajas = filas.reduce((s, r) => s + r.cajas, 0);
+                          const totalKilos = filas.reduce((s, r) => s + r.kilos, 0);
+                          return (
+                             <table className="remito-resumen-table w-full">
+                                <thead>
+                                   <tr>
+                                      <th className="text-left text-[8px] font-black text-slate-400 uppercase tracking-widest pb-1">Producto</th>
+                                      <th className="text-right text-[8px] font-black text-slate-400 uppercase tracking-widest pb-1">Cajas</th>
+                                      <th className="text-right text-[8px] font-black text-slate-400 uppercase tracking-widest pb-1">Total Kg</th>
+                                   </tr>
+                                </thead>
+                                <tbody>
+                                   {filas.map((r, i) => (
+                                      <tr key={i}>
+                                         <td className="text-[10px] font-bold text-sleek-dark uppercase py-0.5">{r.nombre}</td>
+                                         <td className="text-[10px] font-black text-sleek-dark text-right py-0.5">{r.cajas}</td>
+                                         <td className="text-[10px] font-black text-sleek-dark text-right py-0.5">{formatNum(r.kilos, 2)} kg</td>
+                                      </tr>
+                                   ))}
+                                </tbody>
+                                <tfoot>
+                                   <tr>
+                                      <td className="text-[10px] font-black text-sleek-accent uppercase pt-2 border-t border-slate-200">Total</td>
+                                      <td className="text-[11px] font-black text-sleek-accent text-right pt-2 border-t border-slate-200">{totalCajas}</td>
+                                      <td className="text-[11px] font-black text-sleek-accent text-right pt-2 border-t border-slate-200">{formatNum(totalKilos, 2)} kg</td>
+                                   </tr>
+                                </tfoot>
+                             </table>
+                          );
+                       })()}
+                    </div>
+
+                    {/* Totales monetarios */}
+                    <div className="remito-totals-inner w-80 space-y-4">
                        <div className="remito-total-row flex justify-between items-center text-xs font-bold uppercase tracking-widest text-slate-400">
                           <span>Subtotal</span>
                           <span>$ {formatCurrency(venta.subtotal)}</span>
