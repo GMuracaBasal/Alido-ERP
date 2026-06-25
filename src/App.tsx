@@ -19195,7 +19195,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
                       return (
                       <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
                         <td className="px-6 py-4">
-                           <p className="text-[11px] font-black text-sleek-dark">{format(parseISO(item.fecha), 'dd/MM/yyyy')}</p>
+                           <p className="text-[11px] font-black text-sleek-dark">{safeFormat(item.fecha, 'dd/MM/yyyy')}</p>
                         </td>
                         <td className="px-6 py-4">
                            {item.type === 'EGRESO' ? (
@@ -19864,7 +19864,7 @@ const printOrdenPago = (pago: PagoProveedor, proveedor: Proveedor) => {
           <div class="doc-header-doc">
             <div class="doc-type-label">Nº Comprobante</div>
             <div class="comp-nro">${pago.comprobante}</div>
-            <div class="comp-fecha">Fecha: ${format(parseISO(pago.fecha), 'dd/MM/yyyy')}</div>
+            <div class="comp-fecha">Fecha: ${safeFormat(pago.fecha, 'dd/MM/yyyy')}</div>
           </div>
         </div>
 
@@ -19947,7 +19947,7 @@ const printComprobanteCobro = (cobro: any, cliente: any) => {
           <div class="doc-header-doc">
             <div class="doc-type-label">Nº Comprobante</div>
             <div class="comp-nro">${cobro.comprobante}</div>
-            <div class="comp-fecha">Fecha: ${format(parseISO(cobro.fecha), 'dd/MM/yyyy')}</div>
+            <div class="comp-fecha">Fecha: ${safeFormat(cobro.fecha, 'dd/MM/yyyy')}</div>
           </div>
         </div>
 
@@ -21167,7 +21167,7 @@ const EgresosView = ({
                 {filtered.map((eg: any) => (
                   <tr key={eg.id} className="group hover:bg-slate-50/50 transition-colors">
                     <td className="py-5 px-2">
-                       <p className="text-[11px] font-bold text-slate-500">{format(parseISO(eg.fecha), 'dd/MM/yyyy')}</p>
+                       <p className="text-[11px] font-bold text-slate-500">{safeFormat(eg.fecha, 'dd/MM/yyyy')}</p>
                     </td>
                     <td className="py-5 px-2">
                        <p className="text-[11px] font-black text-sleek-dark uppercase">{eg.comprobante}</p>
