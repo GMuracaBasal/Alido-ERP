@@ -28,6 +28,8 @@ import {
   endosarChequeRecibido,
   anularChequeRecibido,
   anularChequeEmitido,
+  crearMovimientoCheque,
+  anularMovimientosCheque,
   anularChequesPorOrigen,
 } from './supabaseClient';
 import type { ChequeRecibidoRow, ChequeEmitidoRow } from './supabaseClient';
@@ -477,11 +479,22 @@ const isEtiquetaUsada = (
       (e: any) => normalizeEtiquetaCodigo(e.codigoBarras || e.codigo || '') === codigo
     );
     if (!env) continue;
+    // Helper: ¿la baja del envase es por la venta que estamos editando?
+    const esBajaPorVentaActual =
+      env.referenciaBaja === ventaActualId ||
+      env.ventaId === ventaActualId ||
+      (ventaActualId && env.motivoBaja === `Venta ${ventaActualId}`);
+
     if (env.anulado === true || env.anulado === 'true') {
-      if (!env.motivoBaja?.toLowerCase().includes('venta')) return true;
+      // En baja por venta: si es por OTRA venta, está usada; si es por la actual, no.
+      if (env.motivoBaja?.toLowerCase().includes('venta')) {
+        if (!esBajaPorVentaActual) return true;
+      } else {
+        return true; // baja por otro motivo (no venta) → usada
+      }
     }
     if (isEnvaseEnBaja(env) || env.estado === 'anulado') {
-      if (env.referenciaBaja !== ventaActualId && env.ventaId !== ventaActualId) return true;
+      if (!esBajaPorVentaActual) return true;
     }
     break;
   }
@@ -2031,6 +2044,27 @@ const ESTADO_CHEQUE_EMI_LABEL: Record<ChequeEmitido['estado'], string> = {
   rechazado: 'Rechazado',
   anulado: 'Anulado',
 };
+
+const IMPUESTOS_TASAS_PC_ID = 'pc18';
+
+const getCuentasImpuestosImputables = (planCuentas: PlanCuenta[]): PlanCuenta[] =>
+  (planCuentas || []).filter((pc) => {
+    if (pc.nivel !== 3 || pc.estado !== 'Activa') return false;
+    let cur: PlanCuenta | undefined = pc;
+    while (cur?.parentId) {
+      if (cur.parentId === IMPUESTOS_TASAS_PC_ID) return true;
+      cur = planCuentas.find((p) => p.id === cur!.parentId);
+    }
+    return false;
+  });
+
+type FilaImpuestoCheque = { id: string; planCuentaId: string; monto: string };
+
+const nuevaFilaImpuestoCheque = (): FilaImpuestoCheque => ({
+  id: `imp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+  planCuentaId: '',
+  monto: '',
+});
 
 const ESTADO_CHEQUE_EMI_VARIANT: Record<ChequeEmitido['estado'], 'default' | 'success' | 'warning' | 'danger' | 'info'> = {
   no_entregado: 'warning',
@@ -13836,7 +13870,22 @@ const VentasPedidosView = ({
 
   const handleEdit = (venta: any) => {
     setIsNewVenta(false);
-    if (venta.estado === 'Finalizado') {
+    // Detectar si el pedido tiene etiquetas ya dadas de baja por él mismo
+    // (puede pasar tanto en "Finalizado" como en "En Proceso" tras un intento previo).
+    const tieneEtiquetasProcesadas = (venta.productos || []).some((p: any) => {
+      if (!p.codigoBarras) return false;
+      const found = findEnvasePorCodigo(p.codigoBarras, lotesEtiquetados);
+      const env = found?.env;
+      if (!env) return false;
+      return (
+        isEnvaseEnBaja(env) &&
+        (env.referenciaBaja === venta.id ||
+          env.ventaId === venta.id ||
+          env.motivoBaja === `Venta ${venta.id}`)
+      );
+    });
+
+    if (venta.estado === 'Finalizado' || tieneEtiquetasProcesadas) {
       const prepared = withVentaLineIds(venta);
       editingOriginalProductsRef.current = JSON.parse(JSON.stringify(prepared.productos));
       setIsEditingVenta(true);
@@ -13953,7 +14002,7 @@ const VentasPedidosView = ({
           }
 
           // --- Edición inteligente de venta finalizada (DIFF) ---
-          if (isEditingVenta && originalProducts && shouldFinalize && oldVenta?.estado === 'Finalizado') {
+          if (isEditingVenta && originalProducts && shouldFinalize && (oldVenta?.estado === 'Finalizado' || oldVenta?.estado === 'En Proceso')) {
             const currentProducts: VentaProducto[] = savedVenta.productos || [];
             const productosQueSeQuedan = currentProducts.filter((cp) =>
               originalProducts.some((op) => matchVentaLine(op, cp))
@@ -24029,21 +24078,45 @@ const ChequesView = ({
   emitidos,
   loading,
   onReload,
+  onReloadTesoreria,
   showNotification,
   clientes = [],
   proveedores = [],
   disponibleTesoreria = 0,
+  tesoreriaCuentas = [],
+  planCuentas = [],
 }: {
   recibidos: ChequeRecibido[];
   emitidos: ChequeEmitido[];
   loading: boolean;
   onReload: () => Promise<void>;
+  onReloadTesoreria?: () => Promise<void>;
   showNotification: (msg: string, type: 'success' | 'error') => void;
   clientes?: any[];
   proveedores?: any[];
   disponibleTesoreria?: number;
+  tesoreriaCuentas?: CuentaTesoreria[];
+  planCuentas?: PlanCuenta[];
 }) => {
   const hoy = safeFormat(new Date(), 'yyyy-MM-dd');
+
+  const cuentasTesHab = useMemo(
+    () => (tesoreriaCuentas || []).filter((c) => c.habilitada),
+    [tesoreriaCuentas]
+  );
+
+  const cuentasImpuestos = useMemo(
+    () => getCuentasImpuestosImputables(planCuentas || []),
+    [planCuentas]
+  );
+
+  const cuentaTesNombre = (id?: string) =>
+    (tesoreriaCuentas || []).find((c) => c.id === id)?.nombre || '—';
+
+  const reloadAll = async () => {
+    await onReload();
+    await onReloadTesoreria?.();
+  };
   const [fechaRefProy, setFechaRefProy] = useState<string>(new Date().toISOString().split('T')[0]);
 
   const proyeccionCheques = useMemo(() => {
@@ -24103,20 +24176,36 @@ const ChequesView = ({
     return { filas, primeraNegativa };
   }, [fechaRefProy, recibidos, emitidos, disponibleTesoreria]);
   const [tab, setTab] = useState<'recibidos' | 'emitidos'>('recibidos');
-  const [modal, setModal] = useState<'recibido' | 'emitido' | 'endoso' | ''>('');
+  const [modal, setModal] = useState<'recibido' | 'emitido' | 'endoso' | 'depositar' | 'acreditar' | 'debitar' | ''>('');
   const [saving, setSaving] = useState(false);
 
   const [editingRec, setEditingRec] = useState<ChequeRecibido | null>(null);
   const [editingEmi, setEditingEmi] = useState<ChequeEmitido | null>(null);
   const [endosandoRec, setEndosandoRec] = useState<ChequeRecibido | null>(null);
+  const [operRec, setOperRec] = useState<ChequeRecibido | null>(null);
+  const [operEmi, setOperEmi] = useState<ChequeEmitido | null>(null);
+
+  const [formDeposito, setFormDeposito] = useState({ cuentaDestinoId: '' });
+  const [formAcreditar, setFormAcreditar] = useState<{ cuentaDestinoId: string; impuestos: FilaImpuestoCheque[] }>({
+    cuentaDestinoId: '',
+    impuestos: [],
+  });
+  const [formDebitar, setFormDebitar] = useState<{ cuentaOrigenId: string; impuestos: FilaImpuestoCheque[] }>({
+    cuentaOrigenId: '',
+    impuestos: [],
+  });
 
   const [filtroEstadoRec, setFiltroEstadoRec] = useState<string>('todos');
   const [filtroDesdeRec, setFiltroDesdeRec] = useState<string>('');
   const [filtroHastaRec, setFiltroHastaRec] = useState<string>('');
+  const [busquedaRec, setBusquedaRec] = useState('');
+  const [filtroTipoRec, setFiltroTipoRec] = useState<'todos' | 'fisico' | 'echeq'>('todos');
 
   const [filtroEstadoEmi, setFiltroEstadoEmi] = useState<string>('todos');
   const [filtroDesdeEmi, setFiltroDesdeEmi] = useState<string>('');
   const [filtroHastaEmi, setFiltroHastaEmi] = useState<string>('');
+  const [busquedaEmi, setBusquedaEmi] = useState('');
+  const [filtroTipoEmi, setFiltroTipoEmi] = useState<'todos' | 'fisico' | 'echeq'>('todos');
 
   const [formRec, setFormRec] = useState({
     fechaRecepcion: hoy,
@@ -24147,14 +24236,16 @@ const ChequesView = ({
   const totalesRec = useMemo(() => {
     let porCobrar = 0;
     let enCartera = 0;
+    let enTransito = 0;
     recibidos.forEach((c) => {
       if (c.anulado) return;
       if (c.estado === 'en_cartera' || c.estado === 'depositado' || c.estado === 'no_entregado') {
         porCobrar += c.monto;
       }
       if (c.estado === 'en_cartera') enCartera += 1;
+      if (c.estado === 'depositado' && c.cuentaDestinoId) enTransito += c.monto;
     });
-    return { porCobrar, enCartera };
+    return { porCobrar, enCartera, enTransito };
   }, [recibidos]);
 
   const totalesEmi = useMemo(() => {
@@ -24175,9 +24266,16 @@ const ChequesView = ({
       if (filtroEstadoRec !== 'todos' && c.estado !== filtroEstadoRec) return false;
       if (filtroDesdeRec && c.fechaCobro < filtroDesdeRec) return false;
       if (filtroHastaRec && c.fechaCobro > filtroHastaRec) return false;
+      if (filtroTipoRec !== 'todos' && c.tipo !== filtroTipoRec) return false;
+      const q = busquedaRec.trim().toLowerCase();
+      if (q) {
+        const campos = [c.originario, c.recibidoDe, c.banco, c.numero, String(c.monto ?? '')]
+          .map((x) => String(x ?? '').toLowerCase());
+        if (!campos.some((x) => x.includes(q))) return false;
+      }
       return true;
     });
-  }, [recibidos, filtroEstadoRec, filtroDesdeRec, filtroHastaRec]);
+  }, [recibidos, filtroEstadoRec, filtroDesdeRec, filtroHastaRec, busquedaRec, filtroTipoRec]);
 
   const emitidosFiltrados = useMemo(() => {
     return emitidos.filter((c) => {
@@ -24186,9 +24284,16 @@ const ChequesView = ({
       if (filtroEstadoEmi !== 'todos' && c.estado !== filtroEstadoEmi) return false;
       if (filtroDesdeEmi && c.fechaPago < filtroDesdeEmi) return false;
       if (filtroHastaEmi && c.fechaPago > filtroHastaEmi) return false;
+      if (filtroTipoEmi !== 'todos' && c.tipo !== filtroTipoEmi) return false;
+      const q = busquedaEmi.trim().toLowerCase();
+      if (q) {
+        const campos = [c.beneficiario, c.banco, c.numero, String(c.monto ?? '')]
+          .map((x) => String(x ?? '').toLowerCase());
+        if (!campos.some((x) => x.includes(q))) return false;
+      }
       return true;
     });
-  }, [emitidos, filtroEstadoEmi, filtroDesdeEmi, filtroHastaEmi]);
+  }, [emitidos, filtroEstadoEmi, filtroDesdeEmi, filtroHastaEmi, busquedaEmi, filtroTipoEmi]);
 
   const openNuevoRecibido = () => {
     setEditingRec(null);
@@ -24349,7 +24454,227 @@ const ChequesView = ({
     await onReload();
   };
 
+  const parseImpuestosValidos = (filas: FilaImpuestoCheque[]) => {
+    const parsed: { planCuentaId: string; monto: number; cuenta: PlanCuenta }[] = [];
+    for (const f of filas) {
+      const m = parseFloat(f.monto);
+      if (!f.planCuentaId && (!f.monto || m === 0)) continue;
+      if (!f.planCuentaId || !m || m <= 0) return null;
+      const cuenta = cuentasImpuestos.find((pc) => pc.id === f.planCuentaId);
+      if (!cuenta) return null;
+      parsed.push({ planCuentaId: f.planCuentaId, monto: safeRound(m, 2), cuenta });
+    }
+    return parsed;
+  };
+
+  const openDepositar = (c: ChequeRecibido) => {
+    setOperRec(c);
+    setFormDeposito({ cuentaDestinoId: c.cuentaDestinoId || '' });
+    setModal('depositar');
+  };
+
+  const handleDepositar = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!operRec) return;
+    if (!formDeposito.cuentaDestinoId) {
+      showNotification('Seleccioná la cuenta destino', 'error');
+      return;
+    }
+    setSaving(true);
+    const saved = await saveChequeRecibido({
+      ...operRec,
+      estado: 'depositado',
+      cuentaDestinoId: formDeposito.cuentaDestinoId,
+    });
+    setSaving(false);
+    if (!saved) {
+      showNotification('No se pudo depositar el cheque', 'error');
+      return;
+    }
+    showNotification('Cheque depositado (en tránsito)', 'success');
+    setModal('');
+    setOperRec(null);
+    await reloadAll();
+  };
+
+  const openAcreditar = (c: ChequeRecibido) => {
+    setOperRec(c);
+    setFormAcreditar({
+      cuentaDestinoId: c.cuentaDestinoId || '',
+      impuestos: [],
+    });
+    setModal('acreditar');
+  };
+
+  const handleAcreditar = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!operRec) return;
+    const cuentaId = formAcreditar.cuentaDestinoId;
+    if (!cuentaId) {
+      showNotification('Seleccioná la cuenta destino', 'error');
+      return;
+    }
+    const impuestos = parseImpuestosValidos(formAcreditar.impuestos);
+    if (impuestos === null) {
+      showNotification('Completá cuenta y monto de cada impuesto/gasto', 'error');
+      return;
+    }
+    const totalImp = impuestos.reduce((s, i) => s + i.monto, 0);
+    if (totalImp >= operRec.monto) {
+      showNotification('La suma de impuestos no puede superar el monto del cheque', 'error');
+      return;
+    }
+    setSaving(true);
+    const fecha = hoy;
+    const detalleCheque = `Acreditación cheque ${operRec.banco}${operRec.numero ? ` ${operRec.numero}` : ''}`;
+    const movCheque = await crearMovimientoCheque({
+      cuentaId,
+      fecha,
+      debe: safeRound(operRec.monto, 2),
+      haber: 0,
+      origenTipo: 'cheque_acred',
+      origenId: operRec.id,
+      detalle: detalleCheque,
+      contraparte: operRec.originario || operRec.recibidoDe,
+    });
+    if (!movCheque) {
+      setSaving(false);
+      showNotification('No se pudo registrar el ingreso en tesorería', 'error');
+      return;
+    }
+    for (const imp of impuestos) {
+      const movImp = await crearMovimientoCheque({
+        cuentaId,
+        fecha,
+        debe: 0,
+        haber: imp.monto,
+        origenTipo: 'cheque_imp',
+        origenId: operRec.id,
+        planCuentaId: imp.planCuentaId,
+        detalle: `${imp.cuenta.nombre} (cheque ${operRec.numero || 's/n'})`,
+      });
+      if (!movImp) {
+        await anularMovimientosCheque(operRec.id, 'Error al registrar impuesto — reverso automático');
+        setSaving(false);
+        showNotification('Error al registrar un impuesto. Operación revertida.', 'error');
+        await reloadAll();
+        return;
+      }
+    }
+    const saved = await saveChequeRecibido({
+      ...operRec,
+      estado: 'acreditado',
+      cuentaDestinoId: cuentaId,
+      movimientoId: movCheque.id,
+    });
+    setSaving(false);
+    if (!saved) {
+      showNotification('Movimientos creados pero no se pudo actualizar el cheque', 'error');
+      await reloadAll();
+      return;
+    }
+    showNotification('Cheque acreditado en tesorería', 'success');
+    setModal('');
+    setOperRec(null);
+    await reloadAll();
+  };
+
+  const openDebitar = (c: ChequeEmitido) => {
+    if (c.chequeRecibidoId) return;
+    setOperEmi(c);
+    setFormDebitar({
+      cuentaOrigenId: c.cuentaOrigenId || '',
+      impuestos: [],
+    });
+    setModal('debitar');
+  };
+
+  const handleDebitar = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!operEmi || operEmi.chequeRecibidoId) return;
+    const cuentaId = formDebitar.cuentaOrigenId;
+    if (!cuentaId) {
+      showNotification('Seleccioná la cuenta origen', 'error');
+      return;
+    }
+    const impuestos = parseImpuestosValidos(formDebitar.impuestos);
+    if (impuestos === null) {
+      showNotification('Completá cuenta y monto de cada impuesto/gasto', 'error');
+      return;
+    }
+    setSaving(true);
+    const fecha = hoy;
+    const detalleCheque = `Débito cheque ${operEmi.banco}${operEmi.numero ? ` ${operEmi.numero}` : ''}`;
+    const movCheque = await crearMovimientoCheque({
+      cuentaId,
+      fecha,
+      debe: 0,
+      haber: safeRound(operEmi.monto, 2),
+      origenTipo: 'cheque_deb',
+      origenId: operEmi.id,
+      detalle: detalleCheque,
+      contraparte: operEmi.beneficiario,
+    });
+    if (!movCheque) {
+      setSaving(false);
+      showNotification('No se pudo registrar el egreso en tesorería', 'error');
+      return;
+    }
+    for (const imp of impuestos) {
+      const movImp = await crearMovimientoCheque({
+        cuentaId,
+        fecha,
+        debe: 0,
+        haber: imp.monto,
+        origenTipo: 'cheque_imp',
+        origenId: operEmi.id,
+        planCuentaId: imp.planCuentaId,
+        detalle: `${imp.cuenta.nombre} (cheque ${operEmi.numero || 's/n'})`,
+      });
+      if (!movImp) {
+        await anularMovimientosCheque(operEmi.id, 'Error al registrar impuesto — reverso automático');
+        setSaving(false);
+        showNotification('Error al registrar un impuesto. Operación revertida.', 'error');
+        await reloadAll();
+        return;
+      }
+    }
+    const saved = await saveChequeEmitido({
+      ...operEmi,
+      estado: 'debitado',
+      cuentaOrigenId: cuentaId,
+      movimientoId: movCheque.id,
+    });
+    setSaving(false);
+    if (!saved) {
+      showNotification('Movimientos creados pero no se pudo actualizar el cheque', 'error');
+      await reloadAll();
+      return;
+    }
+    showNotification('Cheque debitado en tesorería', 'success');
+    setModal('');
+    setOperEmi(null);
+    await reloadAll();
+  };
+
+  const revertirMovimientosCheque = async (chequeId: string, motivo: string) => {
+    await anularMovimientosCheque(chequeId, motivo);
+    await onReloadTesoreria?.();
+  };
+
   const cambiarEstadoRec = async (c: ChequeRecibido, nuevo: ChequeRecibido['estado']) => {
+    if (nuevo === 'rechazado' && c.estado === 'acreditado') {
+      confirmDialog('¿Rechazar este cheque acreditado? Se anularán los movimientos de tesorería vinculados.', async () => {
+        setSaving(true);
+        await revertirMovimientosCheque(c.id, `Rechazo cheque acreditado ${c.numero || c.id}`);
+        const ok = await cambiarEstadoChequeRecibido(c.id, 'rechazado');
+        setSaving(false);
+        if (!ok) { showNotification('No se pudo actualizar el estado', 'error'); return; }
+        showNotification('Cheque rechazado — movimientos anulados', 'success');
+        await onReload();
+      });
+      return;
+    }
     const ok = await cambiarEstadoChequeRecibido(c.id, nuevo);
     if (!ok) { showNotification('No se pudo actualizar el estado', 'error'); return; }
     showNotification(`Cheque → ${ESTADO_CHEQUE_REC_LABEL[nuevo]}`, 'success');
@@ -24357,6 +24682,21 @@ const ChequesView = ({
   };
 
   const cambiarEstadoEmi = async (c: ChequeEmitido, nuevo: ChequeEmitido['estado']) => {
+    if ((nuevo === 'rechazado' || nuevo === 'anulado') && c.estado === 'debitado') {
+      const msg = nuevo === 'rechazado'
+        ? '¿Rechazar este cheque debitado? Se anularán los movimientos de tesorería vinculados.'
+        : '¿Anular este cheque debitado? Se anularán los movimientos de tesorería vinculados.';
+      confirmDialog(msg, async () => {
+        setSaving(true);
+        await revertirMovimientosCheque(c.id, `${nuevo === 'rechazado' ? 'Rechazo' : 'Anulación'} cheque debitado ${c.numero || c.id}`);
+        const ok = await cambiarEstadoChequeEmitido(c.id, nuevo);
+        setSaving(false);
+        if (!ok) { showNotification('No se pudo actualizar el estado', 'error'); return; }
+        showNotification(`Cheque ${ESTADO_CHEQUE_EMI_LABEL[nuevo]} — movimientos anulados`, 'success');
+        await onReload();
+      });
+      return;
+    }
     const ok = await cambiarEstadoChequeEmitido(c.id, nuevo);
     if (!ok) { showNotification('No se pudo actualizar el estado', 'error'); return; }
     showNotification(`Cheque → ${ESTADO_CHEQUE_EMI_LABEL[nuevo]}`, 'success');
@@ -24368,11 +24708,19 @@ const ChequesView = ({
       showNotification('Este cheque proviene de un cobro/pago. Anulalo desde el cobro o pago que lo generó, no desde acá.', 'error');
       return;
     }
-    confirmDialog('¿Anular este cheque recibido? No se borra, queda marcado como anulado.', async () => {
+    const msg = c.estado === 'acreditado'
+      ? '¿Anular este cheque acreditado? Se anularán los movimientos de tesorería vinculados.'
+      : '¿Anular este cheque recibido? No se borra, queda marcado como anulado.';
+    confirmDialog(msg, async () => {
+      setSaving(true);
+      if (c.estado === 'acreditado') {
+        await revertirMovimientosCheque(c.id, `Anulación cheque acreditado ${c.numero || c.id}`);
+      }
       const ok = await anularChequeRecibido(c.id);
+      setSaving(false);
       if (!ok) { showNotification('No se pudo anular el cheque', 'error'); return; }
       showNotification('Cheque anulado', 'success');
-      await onReload();
+      await reloadAll();
     });
   };
 
@@ -24381,13 +24729,81 @@ const ChequesView = ({
       showNotification('Este cheque proviene de un cobro/pago. Anulalo desde el cobro o pago que lo generó, no desde acá.', 'error');
       return;
     }
-    confirmDialog('¿Anular este cheque emitido? No se borra, queda marcado como anulado.', async () => {
+    const msg = c.estado === 'debitado'
+      ? '¿Anular este cheque debitado? Se anularán los movimientos de tesorería vinculados.'
+      : '¿Anular este cheque emitido? No se borra, queda marcado como anulado.';
+    confirmDialog(msg, async () => {
+      setSaving(true);
+      if (c.estado === 'debitado') {
+        await revertirMovimientosCheque(c.id, `Anulación cheque debitado ${c.numero || c.id}`);
+      }
       const ok = await anularChequeEmitido(c.id);
+      setSaving(false);
       if (!ok) { showNotification('No se pudo anular el cheque', 'error'); return; }
       showNotification('Cheque anulado', 'success');
-      await onReload();
+      await reloadAll();
     });
   };
+
+  const renderGrillaImpuestos = (
+    filas: FilaImpuestoCheque[],
+    onChange: (filas: FilaImpuestoCheque[]) => void
+  ) => (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Impuestos / gastos (opcional)</label>
+        <button
+          type="button"
+          onClick={() => onChange([...filas, nuevaFilaImpuestoCheque()])}
+          className="text-[10px] font-black uppercase tracking-widest text-sleek-accent hover:underline flex items-center gap-1"
+        >
+          <Plus className="w-3 h-3" /> Agregar
+        </button>
+      </div>
+      {filas.length === 0 ? (
+        <p className="text-xs text-slate-400">Sin impuestos cargados.</p>
+      ) : (
+        <div className="space-y-2">
+          {filas.map((f) => (
+            <div key={f.id} className="grid grid-cols-1 sm:grid-cols-[1fr_120px_auto] gap-2 items-end">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Cuenta plan</label>
+                <select
+                  value={f.planCuentaId}
+                  onChange={(e) => onChange(filas.map((x) => x.id === f.id ? { ...x, planCuentaId: e.target.value } : x))}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm"
+                >
+                  <option value="">Seleccionar...</option>
+                  {cuentasImpuestos.map((pc) => (
+                    <option key={pc.id} value={pc.id}>{pc.codigo} — {pc.nombre}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Monto</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={f.monto}
+                  onChange={(e) => onChange(filas.map((x) => x.id === f.id ? { ...x, monto: e.target.value } : x))}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => onChange(filas.filter((x) => x.id !== f.id))}
+                className="p-2 text-slate-400 hover:text-rose-600"
+                title="Quitar"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 
   const accionBtn = 'px-2 py-1 rounded text-[10px] font-black uppercase tracking-widest border border-slate-200 hover:bg-slate-50 transition-colors';
 
@@ -24481,7 +24897,7 @@ const ChequesView = ({
 
       {tab === 'recibidos' && (
         <div className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <Card className="p-6 border-l-4 border-l-emerald-500">
               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Por cobrar</p>
               <p className="text-2xl font-black text-sleek-dark font-mono">{formatNumber(totalesRec.porCobrar, 2)}</p>
@@ -24491,6 +24907,11 @@ const ChequesView = ({
               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">En cartera (cantidad)</p>
               <p className="text-2xl font-black text-sleek-dark font-mono">{totalesRec.enCartera}</p>
               <p className="text-[10px] text-slate-400 mt-1">Cheques disponibles para operar</p>
+            </Card>
+            <Card className="p-6 border-l-4 border-l-amber-500">
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">En tránsito</p>
+              <p className="text-2xl font-black text-sleek-dark font-mono">{formatNumber(totalesRec.enTransito, 2)}</p>
+              <p className="text-[10px] text-slate-400 mt-1">Depositados pendientes de acreditación</p>
             </Card>
           </div>
 
@@ -24513,8 +24934,29 @@ const ChequesView = ({
                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Cobro hasta</label>
                 <input type="date" value={filtroHastaRec} onChange={(e) => setFiltroHastaRec(e.target.value)} className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
               </div>
-              {(filtroEstadoRec !== 'todos' || filtroDesdeRec || filtroHastaRec) && (
-                <button type="button" onClick={() => { setFiltroEstadoRec('todos'); setFiltroDesdeRec(''); setFiltroHastaRec(''); }} className="px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">Limpiar</button>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Tipo</label>
+                <select value={filtroTipoRec} onChange={(e) => setFiltroTipoRec(e.target.value as 'todos' | 'fisico' | 'echeq')} className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                  <option value="todos">Todos</option>
+                  <option value="fisico">Físico</option>
+                  <option value="echeq">e-Cheq</option>
+                </select>
+              </div>
+              <div className="min-w-[220px] flex-1">
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Buscar</label>
+                <div className="relative">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={busquedaRec}
+                    onChange={(e) => setBusquedaRec(e.target.value)}
+                    placeholder="Buscar por originario, banco, número, monto..."
+                    className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm"
+                  />
+                </div>
+              </div>
+              {(filtroEstadoRec !== 'todos' || filtroDesdeRec || filtroHastaRec || busquedaRec || filtroTipoRec !== 'todos') && (
+                <button type="button" onClick={() => { setFiltroEstadoRec('todos'); setFiltroDesdeRec(''); setFiltroHastaRec(''); setBusquedaRec(''); setFiltroTipoRec('todos'); }} className="px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">Limpiar</button>
               )}
             </div>
           </div>
@@ -24543,7 +24985,14 @@ const ChequesView = ({
                       <tr><td colSpan={9} className="px-4 py-12 text-center text-slate-400 text-xs font-bold uppercase">Sin cheques recibidos</td></tr>
                     ) : recibidosFiltrados.map((c) => (
                       <tr key={c.id} className="hover:bg-slate-50 transition-colors">
-                        <td className="px-4 py-3"><Badge variant={ESTADO_CHEQUE_REC_VARIANT[c.estado]}>{ESTADO_CHEQUE_REC_LABEL[c.estado]}</Badge></td>
+                        <td className="px-4 py-3">
+                          <div className="flex flex-wrap items-center gap-1">
+                            <Badge variant={ESTADO_CHEQUE_REC_VARIANT[c.estado]}>{ESTADO_CHEQUE_REC_LABEL[c.estado]}</Badge>
+                            {c.estado === 'depositado' && c.cuentaDestinoId && (
+                              <Badge variant="warning">En tránsito</Badge>
+                            )}
+                          </div>
+                        </td>
                         <td className="px-4 py-3 text-xs font-mono">{safeFormat(c.fechaCobro, 'dd/MM/yyyy')}</td>
                         <td className="px-4 py-3 text-xs">{c.originario || '—'}</td>
                         <td className="px-4 py-3 text-xs">{c.recibidoDe || '—'}</td>
@@ -24558,15 +25007,15 @@ const ChequesView = ({
                             )}
                             {c.estado === 'en_cartera' && (
                               <>
-                                <button type="button" onClick={() => cambiarEstadoRec(c, 'depositado')} className={accionBtn}>Depositar</button>
+                                <button type="button" onClick={() => openDepositar(c)} className={accionBtn}>Depositar</button>
                                 <button type="button" onClick={() => openEndoso(c)} className={accionBtn}>Endosar</button>
-                                <button type="button" onClick={() => cambiarEstadoRec(c, 'acreditado')} className={accionBtn}>Acreditar</button>
+                                <button type="button" onClick={() => openAcreditar(c)} className={accionBtn}>Acreditar</button>
                                 <button type="button" onClick={() => cambiarEstadoRec(c, 'rechazado')} className={cn(accionBtn, 'text-rose-600')}>Rechazar</button>
                               </>
                             )}
                             {c.estado === 'depositado' && (
                               <>
-                                <button type="button" onClick={() => cambiarEstadoRec(c, 'acreditado')} className={accionBtn}>Acreditar</button>
+                                <button type="button" onClick={() => openAcreditar(c)} className={accionBtn}>Acreditar</button>
                                 <button type="button" onClick={() => cambiarEstadoRec(c, 'rechazado')} className={cn(accionBtn, 'text-rose-600')}>Rechazar</button>
                               </>
                             )}
@@ -24622,8 +25071,29 @@ const ChequesView = ({
                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Pago hasta</label>
                 <input type="date" value={filtroHastaEmi} onChange={(e) => setFiltroHastaEmi(e.target.value)} className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
               </div>
-              {(filtroEstadoEmi !== 'todos' || filtroDesdeEmi || filtroHastaEmi) && (
-                <button type="button" onClick={() => { setFiltroEstadoEmi('todos'); setFiltroDesdeEmi(''); setFiltroHastaEmi(''); }} className="px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">Limpiar</button>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Tipo</label>
+                <select value={filtroTipoEmi} onChange={(e) => setFiltroTipoEmi(e.target.value as 'todos' | 'fisico' | 'echeq')} className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                  <option value="todos">Todos</option>
+                  <option value="fisico">Físico</option>
+                  <option value="echeq">e-Cheq</option>
+                </select>
+              </div>
+              <div className="min-w-[220px] flex-1">
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Buscar</label>
+                <div className="relative">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={busquedaEmi}
+                    onChange={(e) => setBusquedaEmi(e.target.value)}
+                    placeholder="Buscar por beneficiario, banco, número, monto..."
+                    className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm"
+                  />
+                </div>
+              </div>
+              {(filtroEstadoEmi !== 'todos' || filtroDesdeEmi || filtroHastaEmi || busquedaEmi || filtroTipoEmi !== 'todos') && (
+                <button type="button" onClick={() => { setFiltroEstadoEmi('todos'); setFiltroDesdeEmi(''); setFiltroHastaEmi(''); setBusquedaEmi(''); setFiltroTipoEmi('todos'); }} className="px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">Limpiar</button>
               )}
             </div>
           </div>
@@ -24670,7 +25140,7 @@ const ChequesView = ({
                             )}
                             {c.estado === 'pendiente' && (
                               <>
-                                <button type="button" onClick={() => cambiarEstadoEmi(c, 'debitado')} className={accionBtn}>Debitado</button>
+                                <button type="button" onClick={() => openDebitar(c)} className={accionBtn}>Debitado</button>
                                 <button type="button" onClick={() => cambiarEstadoEmi(c, 'rechazado')} className={cn(accionBtn, 'text-rose-600')}>Rechazar</button>
                                 <button type="button" onClick={() => cambiarEstadoEmi(c, 'anulado')} className={cn(accionBtn, 'text-rose-600')}>Anular cheque</button>
                               </>
@@ -24852,6 +25322,115 @@ const ChequesView = ({
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" onClick={() => { setModal(''); setEndosandoRec(null); }} className="px-4 py-2 text-slate-500 font-bold text-sm">Cancelar</button>
             <button type="submit" disabled={saving} className="px-6 py-2 bg-sleek-accent text-white font-bold rounded-lg text-sm">{saving ? 'Procesando...' : 'Endosar'}</button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal isOpen={modal === 'depositar'} onClose={() => { setModal(''); setOperRec(null); }} title="Depositar cheque">
+        <form onSubmit={handleDepositar} className="space-y-4">
+          {operRec && (
+            <p className="text-xs text-slate-500 font-medium">
+              {operRec.banco}{operRec.numero ? ` Nº ${operRec.numero}` : ''} · {formatNumber(operRec.monto, 2)}
+            </p>
+          )}
+          <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 font-medium">
+            El depósito no impacta el saldo de tesorería hasta acreditar el cheque.
+          </p>
+          <div>
+            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Cuenta destino *</label>
+            <select
+              required
+              value={formDeposito.cuentaDestinoId}
+              onChange={(e) => setFormDeposito({ cuentaDestinoId: e.target.value })}
+              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm"
+            >
+              <option value="">Seleccionar cuenta...</option>
+              {cuentasTesHab.map((c) => (
+                <option key={c.id} value={c.id}>{c.nombre} ({c.moneda})</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={() => { setModal(''); setOperRec(null); }} className="px-4 py-2 text-slate-500 font-bold text-sm">Cancelar</button>
+            <button type="submit" disabled={saving} className="px-6 py-2 bg-sleek-accent text-white font-bold rounded-lg text-sm">{saving ? 'Guardando...' : 'Depositar'}</button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal isOpen={modal === 'acreditar'} onClose={() => { setModal(''); setOperRec(null); }} title="Acreditar cheque">
+        <form onSubmit={handleAcreditar} className="space-y-4">
+          {operRec && (
+            <p className="text-xs text-slate-500 font-medium">
+              {operRec.banco}{operRec.numero ? ` Nº ${operRec.numero}` : ''} · {formatNumber(operRec.monto, 2)}
+            </p>
+          )}
+          <div>
+            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Cuenta destino *</label>
+            {operRec?.cuentaDestinoId && operRec.estado === 'depositado' ? (
+              <p className="px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-sleek-dark">
+                {cuentaTesNombre(formAcreditar.cuentaDestinoId)}
+              </p>
+            ) : (
+              <select
+                required
+                value={formAcreditar.cuentaDestinoId}
+                onChange={(e) => setFormAcreditar((prev) => ({ ...prev, cuentaDestinoId: e.target.value }))}
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm"
+              >
+                <option value="">Seleccionar cuenta...</option>
+                {cuentasTesHab.map((c) => (
+                  <option key={c.id} value={c.id}>{c.nombre} ({c.moneda})</option>
+                ))}
+              </select>
+            )}
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Monto a acreditar</label>
+            <input readOnly value={operRec ? formatNumber(operRec.monto, 2) : ''} className="w-full px-4 py-3 bg-slate-100 border border-slate-200 rounded-lg text-sm font-mono font-bold" />
+          </div>
+          {renderGrillaImpuestos(formAcreditar.impuestos, (impuestos) => setFormAcreditar((prev) => ({ ...prev, impuestos })))}
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={() => { setModal(''); setOperRec(null); }} className="px-4 py-2 text-slate-500 font-bold text-sm">Cancelar</button>
+            <button type="submit" disabled={saving} className="px-6 py-2 bg-sleek-accent text-white font-bold rounded-lg text-sm">{saving ? 'Procesando...' : 'Acreditar'}</button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal isOpen={modal === 'debitar'} onClose={() => { setModal(''); setOperEmi(null); }} title="Debitar cheque emitido">
+        <form onSubmit={handleDebitar} className="space-y-4">
+          {operEmi && (
+            <p className="text-xs text-slate-500 font-medium">
+              {operEmi.banco}{operEmi.numero ? ` Nº ${operEmi.numero}` : ''} · {formatNumber(operEmi.monto, 2)}
+            </p>
+          )}
+          <div>
+            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Cuenta origen *</label>
+            {operEmi?.cuentaOrigenId ? (
+              <p className="px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-sleek-dark">
+                {cuentaTesNombre(formDebitar.cuentaOrigenId)}
+              </p>
+            ) : (
+              <select
+                required
+                value={formDebitar.cuentaOrigenId}
+                onChange={(e) => setFormDebitar((prev) => ({ ...prev, cuentaOrigenId: e.target.value }))}
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm"
+              >
+                <option value="">Seleccionar cuenta...</option>
+                {cuentasTesHab.map((c) => (
+                  <option key={c.id} value={c.id}>{c.nombre} ({c.moneda})</option>
+                ))}
+              </select>
+            )}
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Monto a debitar</label>
+            <input readOnly value={operEmi ? formatNumber(operEmi.monto, 2) : ''} className="w-full px-4 py-3 bg-slate-100 border border-slate-200 rounded-lg text-sm font-mono font-bold" />
+          </div>
+          {renderGrillaImpuestos(formDebitar.impuestos, (impuestos) => setFormDebitar((prev) => ({ ...prev, impuestos })))}
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={() => { setModal(''); setOperEmi(null); }} className="px-4 py-2 text-slate-500 font-bold text-sm">Cancelar</button>
+            <button type="submit" disabled={saving} className="px-6 py-2 bg-sleek-accent text-white font-bold rounded-lg text-sm">{saving ? 'Procesando...' : 'Debitar'}</button>
           </div>
         </form>
       </Modal>
@@ -26206,9 +26785,12 @@ export default function App() {
                 emitidos={chequesEmitidos}
                 loading={chequesLoading}
                 onReload={reloadCheques}
+                onReloadTesoreria={reloadTesoreria}
                 showNotification={showNotification}
                 clientes={clientes}
                 proveedores={proveedores}
+                tesoreriaCuentas={tesoreriaCuentas}
+                planCuentas={planCuentas}
                 disponibleTesoreria={safeRound((tesoreriaCuentas || []).filter((c: any) => c.habilitada && c.moneda === 'ARS').reduce((sum: number, c: any) => sum + (tesoreriaSaldos[c.id] ?? c.saldoInicial ?? 0), 0), 2)}
               />
             )}
