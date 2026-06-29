@@ -385,6 +385,63 @@ export async function anularMovimientosPago(origenId: string): Promise<boolean> 
   return true;
 }
 
+/** Movimientos de tesorería vinculados a acreditación/débito/impuestos de un cheque (origen_id = id cheque). */
+export async function crearMovimientoCheque(mov: {
+  cuentaId: string;
+  fecha: string;
+  debe: number;
+  haber: number;
+  origenTipo: 'cheque_acred' | 'cheque_deb' | 'cheque_imp';
+  origenId: string;
+  detalle?: string;
+  contraparte?: string;
+  planCuentaId?: string;
+}): Promise<MovimientoTesoreriaRow | null> {
+  const dbOrigenTipo = mov.origenTipo === 'cheque_acred' ? 'cobro' : 'pago';
+  const row: Record<string, any> = {
+    cuenta_id: mov.cuentaId,
+    fecha: mov.fecha,
+    origen_tipo: dbOrigenTipo,
+    origen_id: mov.origenId,
+    origen_referencia:
+      mov.origenTipo === 'cheque_imp' && mov.planCuentaId
+        ? mov.planCuentaId
+        : mov.origenTipo,
+    detalle: mov.detalle || null,
+    contraparte: mov.contraparte || null,
+    debe: mov.debe,
+    haber: mov.haber,
+    es_manual: false,
+    updated_by: SESSION_ID,
+    updated_at: nowIso(),
+  };
+  const { data, error } = await supabase.from('tesoreria_movimientos').insert(row).select().single();
+  if (error) {
+    console.error('crearMovimientoCheque:', error);
+    return null;
+  }
+  return mapMovimiento(data);
+}
+
+export async function anularMovimientosCheque(chequeId: string, motivo: string): Promise<boolean> {
+  const { error } = await supabase
+    .from('tesoreria_movimientos')
+    .update({
+      anulado: true,
+      anulado_motivo: motivo,
+      anulado_at: nowIso(),
+      updated_by: SESSION_ID,
+      updated_at: nowIso(),
+    })
+    .eq('origen_id', chequeId)
+    .eq('anulado', false);
+  if (error) {
+    console.error('anularMovimientosCheque:', error);
+    return false;
+  }
+  return true;
+}
+
 export async function anularMovimiento(id: string, motivo: string): Promise<boolean> {
   const { error } = await supabase
     .from('tesoreria_movimientos')
