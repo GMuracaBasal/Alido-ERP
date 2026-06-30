@@ -13958,9 +13958,10 @@ const VentasPedidosView = ({
   };
 
   const sincronizarCobrosTesoreria = async (ventaFin: any, esEdicion: boolean) => {
-    if (esEdicion) {
-      await anularMovimientosCobroDeVenta(ventaFin.id);
-    }
+    // SIEMPRE anular movimientos previos de esta venta antes de recrear (idempotente):
+    // evita duplicados si el flujo se ejecuta más de una vez.
+    await anularMovimientosCobroDeVenta(ventaFin.id);
+
     for (const cobro of ventaFin.cobros || []) {
       if (!cobro.cuentaTesoreriaId || cobro.monto <= 0) continue;
       const cliente = clientes.find((c: any) => c.id === ventaFin.clienteId);
