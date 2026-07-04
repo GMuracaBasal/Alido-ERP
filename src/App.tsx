@@ -16013,7 +16013,8 @@ const ValoresGridEditor = ({
     : ['efectivo', 'transferencia', 'mercadopago', 'cheque_tercero', 'ajuste'];
 
   const cuentasHab = (tesoreriaCuentas || []).filter((c: any) => c.habilitada);
-  const carteraDisponible = (chequesRecibidos || []).filter((r: any) => !r.anulado && r.estado === 'en_cartera');
+  const idsYaUsados = (valores || []).filter((v) => v.chequeReciboId).map((v) => v.chequeReciboId);
+  const carteraDisponible = (chequesRecibidos || []).filter((r: any) => !r.anulado && r.estado === 'en_cartera' && !idsYaUsados.includes(r.id));
 
   const cuentaNombre = (id?: string) => (tesoreriaCuentas || []).find((c: any) => c.id === id)?.nombre || '—';
 
