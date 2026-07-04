@@ -1906,6 +1906,8 @@ interface PagoProveedor {
   chequeModo?: 'cartera' | 'propio';
   chequeReciboId?: string;
   valores?: ValorMovimiento[];
+  anulado?: boolean;
+  anuladoAt?: string;
 }
 
 interface EgresoItem {
@@ -3200,6 +3202,17 @@ const unionById = (primary: any[], secondary: any[], idKey: string = 'id'): any[
   });
   return Array.from(map.values());
 };
+
+const MERGE_KEYS = [
+  'alido_ventas',
+  'alido_movimientos',
+  'alido_cobros_clientes',
+  'alido_pagos_proveedores',
+  'alido_egresos',
+];
+
+const isCobroClienteActivo = (c: any) => !c?.anulado && c?.estado !== 'Anulado';
+const isPagoProveedorActivo = (p: any) => !p?.anulado;
 
 // Guarda en Supabase pero ANTES combina con lo que ya hay en la base,
 // para no pisar registros que existan remotamente pero no en el estado local.
@@ -16307,7 +16320,7 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
       .reduce((sum: number, v: any) => sum + (parseFloat(v.totalCobrado) || 0), 0);
       
     const cobrosInd = (cobrosClientes || [])
-      .filter((c: any) => c.clienteId === clienteId && c.estado !== 'Anulado')
+      .filter((c: any) => c.clienteId === clienteId && isCobroClienteActivo(c))
       .reduce((sum: number, c: any) => sum + (parseFloat(c.monto) || 0), 0);
       
     return safeRound(totalVentas - cobrosVentas - cobrosInd, 2);
@@ -16698,7 +16711,11 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
 
   const handleDeleteCobro = (cobro: any) => {
     confirmDialog('¿Estás seguro de eliminar este cobro?', () => {
-      setCobrosClientes((cobrosClientes || []).filter((c: any) => c.id !== cobro.id));
+      setCobrosClientes((cobrosClientes || []).map((c: any) =>
+        c.id === cobro.id
+          ? { ...c, anulado: true, anuladoAt: new Date().toISOString(), estado: 'Anulado' }
+          : c
+      ));
       // Anular impactos por origen: movimientos de tesorería y cheques de cartera (sin borrar)
       const tieneCheques = cobro.metodo === 'Cheque' || (Array.isArray(cobro.valores) && cobro.valores.some((v: any) => v.tipo === 'cheque_tercero' || v.tipo === 'cheque_propio'));
       (async () => {
@@ -17215,7 +17232,7 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
       
     const cobradoIndependiente = safeRound(
       (cobrosClientes || [])
-        .filter((c: any) => c.clienteId === selectedCliente.id && c.estado !== 'Anulado')
+        .filter((c: any) => c.clienteId === selectedCliente.id && isCobroClienteActivo(c))
         .reduce((s: number, c: any) => s + (parseFloat(c.monto) || 0), 0),
       2
     );
@@ -17252,7 +17269,7 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
           raw: v
         }))),
       ...(cobrosClientes || [])
-        .filter((c: any) => c.clienteId === selectedCliente.id && c.estado !== 'Anulado')
+        .filter((c: any) => c.clienteId === selectedCliente.id && isCobroClienteActivo(c))
         .map((c: any) => {
           const esAjuste = c.tipoMovimiento === 'Ajuste' || String(c.comprobante || '').startsWith('AJC-');
           const montoSigned = parseFloat(c.monto) || 0;
@@ -18770,7 +18787,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
         .filter((e: any) => e.proveedorId === selectedProveedor.id && e.estado === 'Confirmado')
         .map((e: any) => ({ ...e, type: 'EGRESO' as const })),
       ...pagosProveedores
-        .filter((p: any) => p.proveedorId === selectedProveedor.id)
+        .filter((p: any) => p.proveedorId === selectedProveedor.id && isPagoProveedorActivo(p))
         .map((p: any) => ({ ...p, type: 'PAGO' as const })),
     ];
 
@@ -18820,7 +18837,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
     );
     const totalPagos = safeRound(
       pagosProveedores
-        .filter((p: any) => p.proveedorId === proveedorId)
+        .filter((p: any) => p.proveedorId === proveedorId && isPagoProveedorActivo(p))
         .reduce((sum: number, p: any) => sum + p.monto, 0),
       2
     );
@@ -18905,7 +18922,9 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
 
   const handleDeleteMovimiento = (pago: PagoProveedor) => {
     confirmDialog('¿Estás seguro de eliminar este movimiento?', () => {
-      setPagosProveedores(pagosProveedores.filter((p: any) => p.id !== pago.id));
+      setPagosProveedores(pagosProveedores.map((p: any) =>
+        p.id === pago.id ? { ...p, anulado: true, anuladoAt: new Date().toISOString() } : p
+      ));
       // Anular impactos por origen: tesorería y cheques de cartera (sin borrar)
       const tieneCheques = pago.metodo === 'Cheque' || (Array.isArray(pago.valores) && pago.valores.some((v: any) => v.tipo === 'cheque_propio' || v.tipo === 'cheque_tercero'));
       (async () => {
@@ -21247,9 +21266,9 @@ const EgresosView = ({
                           {eg.estado === 'Borrador' && (
                             <button 
                               onClick={() => {
-                                confirmDialog(`¿Eliminar el egreso ${eg.comprobante}? Esta acción no se puede deshacer.`, () => {
-                                  setEgresos(egresos.filter((e: any) => e.id !== eg.id));
-                                  showNotification(`Egreso ${eg.comprobante} eliminado.`, 'success');
+                                confirmDialog(`¿Eliminar el egreso ${eg.comprobante}? Se marcará como anulado.`, () => {
+                                  setEgresos(egresos.map((e: any) => e.id === eg.id ? { ...e, estado: 'Anulado' } : e));
+                                  showNotification(`Egreso ${eg.comprobante} anulado.`, 'success');
                                 });
                               }}
                               className="p-2 hover:bg-rose-50 text-rose-400 rounded transition-all"
@@ -23648,7 +23667,7 @@ const PosicionFinancieraView = ({
           .filter((v: any) => v.clienteId === cl.id && v.estado !== 'Anulado')
           .reduce((s: number, v: any) => s + (parseFloat(v.totalCobrado) || 0), 0);
         const cobrosInd = (cobrosClientes || [])
-          .filter((c: any) => c.clienteId === cl.id && c.estado !== 'Anulado')
+          .filter((c: any) => c.clienteId === cl.id && isCobroClienteActivo(c))
           .reduce((s: number, c: any) => s + (parseFloat(c.monto) || 0), 0);
         const saldo = totalVentas - cobrosVentas - cobrosInd;
         return sum + (saldo > 0 ? saldo : 0);
@@ -23669,7 +23688,7 @@ const PosicionFinancieraView = ({
           .filter((e: any) => e.proveedorId === pr.id && e.estado === 'Confirmado')
           .reduce((s: number, e: any) => s + (Number(e.total) || 0), 0);
         const totalPagos = (pagosProveedores || [])
-          .filter((p: any) => p.proveedorId === pr.id)
+          .filter((p: any) => p.proveedorId === pr.id && isPagoProveedorActivo(p))
           .reduce((s: number, p: any) => s + (Number(p.monto) || 0), 0);
         const saldo = totalEgresos - totalPagos;
         return sum + (saldo > 0 ? saldo : 0);
@@ -23700,7 +23719,7 @@ const PosicionFinancieraView = ({
           .filter((v: any) => v.clienteId === cl.id && v.estado !== 'Anulado')
           .reduce((s: number, v: any) => s + (parseFloat(v.totalCobrado) || 0), 0);
         const cobrosInd = (cobrosClientes || [])
-          .filter((c: any) => c.clienteId === cl.id && c.estado !== 'Anulado')
+          .filter((c: any) => c.clienteId === cl.id && isCobroClienteActivo(c))
           .reduce((s: number, c: any) => s + (parseFloat(c.monto) || 0), 0);
         const saldo = safeRound(totalVentas - cobrosVentas - cobrosInd, 2);
         return { id: cl.id, nombre: cl.razonSocial || cl.nombre || 'Sin nombre', saldo };
@@ -23716,7 +23735,7 @@ const PosicionFinancieraView = ({
           .filter((e: any) => e.proveedorId === pr.id && e.estado === 'Confirmado')
           .reduce((s: number, e: any) => s + (Number(e.total) || 0), 0);
         const totalPagos = (pagosProveedores || [])
-          .filter((p: any) => p.proveedorId === pr.id)
+          .filter((p: any) => p.proveedorId === pr.id && isPagoProveedorActivo(p))
           .reduce((s: number, p: any) => s + (Number(p.monto) || 0), 0);
         const saldo = safeRound(totalEgresos - totalPagos, 2);
         return { id: pr.id, nombre: pr.razonSocial || pr.nombre || 'Sin nombre', saldo };
@@ -25925,7 +25944,7 @@ export default function App() {
           }
         }
         // Keys críticas: guardar con merge para no perder registros remotos
-        if (key === 'alido_ventas' || key === 'alido_movimientos') {
+        if (MERGE_KEYS.includes(key)) {
           persistMerged(key, value, (local, remote) => unionById(local, remote));
         } else if (key === 'alido_lotes_etiquetados') {
           persistMerged(key, value, (local, remote) => mergeLotesEtiquetados(local, remote));
@@ -25935,7 +25954,7 @@ export default function App() {
       });
       // Also keep localStorage as offline cache
       Object.entries(dataMap).forEach(([key, value]) => {
-        if (key === 'alido_ventas' || key === 'alido_movimientos' || key === 'alido_lotes_etiquetados') {
+        if (MERGE_KEYS.includes(key) || key === 'alido_lotes_etiquetados') {
           return; // Ya persistido (Supabase + localStorage) por persistMerged
         }
         const protection = protectedKeys[key];
@@ -26041,6 +26060,19 @@ export default function App() {
             // MERGE para movimientos: no perder movimientos locales no sincronizados
             if (key === 'alido_movimientos' && Array.isArray(value)) {
               setMovimientos((localData: any[]) => unionById(value, localData));
+              return;
+            }
+
+            if (key === 'alido_cobros_clientes' && Array.isArray(value)) {
+              setCobrosClientes((localData: any[]) => unionById(value, localData));
+              return;
+            }
+            if (key === 'alido_pagos_proveedores' && Array.isArray(value)) {
+              setPagosProveedores((localData: any[]) => unionById(value, localData));
+              return;
+            }
+            if (key === 'alido_egresos' && Array.isArray(value)) {
+              setEgresos((localData: any[]) => unionById(value, localData));
               return;
             }
 
