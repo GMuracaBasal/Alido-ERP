@@ -100,7 +100,9 @@ import {
   Truck,
   RotateCcw,
   Wallet,
-  Ban
+  Ban,
+  FileX,
+  Building2
 } from 'lucide-react';
 import { 
   Chart as ChartJS, 
@@ -19423,6 +19425,16 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
                       </td>
                     </tr>
                   ))}
+                  {filtered.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="px-8 py-20 text-center">
+                        <Building2 className="w-12 h-12 text-slate-200 mx-auto mb-4" />
+                        <p className="text-sm font-bold text-slate-400 uppercase tracking-widest italic">
+                          No se encontraron proveedores
+                        </p>
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -21309,6 +21321,16 @@ const EgresosView = ({
                     </td>
                   </tr>
                 ))}
+                {filtered.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-8 py-20 text-center">
+                      <FileX className="w-12 h-12 text-slate-200 mx-auto mb-4" />
+                      <p className="text-sm font-bold text-slate-400 uppercase tracking-widest italic">
+                        No hay egresos para los filtros aplicados
+                      </p>
+                    </td>
+                  </tr>
+                )}
               </tbody>
            </table>
         </div>
