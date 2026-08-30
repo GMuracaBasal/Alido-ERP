@@ -20908,6 +20908,10 @@ const EgresosView = ({
       showNotification('Debe agregar al menos un item', 'error');
       return;
     }
+    if (!editingItem.fecha || editingItem.fecha.trim() === '') {
+      showNotification('La fecha del egreso es obligatoria', 'error');
+      return;
+    }
 
     const data = {
       ...editingItem,
@@ -21349,7 +21353,7 @@ const EgresosView = ({
               <div className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Fecha</label>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Fecha *</label>
                     <DateInput
                       value={editingItem?.fecha || ''}
                       onChange={(iso) => setEditingItem({ ...editingItem, fecha: iso })}
