@@ -31,6 +31,12 @@ import {
   crearMovimientoCheque,
   anularMovimientosCheque,
   anularChequesPorOrigen,
+  loadEgresos,
+  loadPagosProveedores,
+  saveEgresoRelacional,
+  savePagoProveedorRelacional,
+  anularEgresoRelacional,
+  anularPagoProveedorRelacional,
 } from './supabaseClient';
 import type { ChequeRecibidoRow, ChequeEmitidoRow } from './supabaseClient';
 import { 
@@ -18928,6 +18934,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
       setPagosProveedores(pagosProveedores.map((p: any) =>
         p.id === pago.id ? { ...p, anulado: true, anuladoAt: new Date().toISOString() } : p
       ));
+      anularPagoProveedorRelacional(pago.id).catch((e) => console.error('anularPagoProveedorRelacional:', e));
       // Anular impactos por origen: tesorería y cheques de cartera (sin borrar)
       const tieneCheques = pago.metodo === 'Cheque' || (Array.isArray(pago.valores) && pago.valores.some((v: any) => v.tipo === 'cheque_propio' || v.tipo === 'cheque_tercero'));
       (async () => {
@@ -19018,6 +19025,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
             ? { ...p, fecha: fechaMovimiento, monto, metodo: 'Ajuste', referencia: pagoData.referencia, observaciones: pagoData.observaciones, tipoMovimiento: 'Ajuste', cuentaTesoreriaId: undefined, valores: undefined }
             : p
         ));
+        savePagoProveedorRelacional({ ...pagosProveedores.find((p: any) => p.id === editingPagoId), fecha: fechaMovimiento, monto, metodo: 'Ajuste', tipoMovimiento: 'Ajuste', anulado: false } as any).catch((e) => console.error('savePagoRelacional ajuste edit:', e));
         showNotification('Ajuste actualizado', 'success');
       } else {
         const count = pagosProveedores.filter((p: any) => String(p.comprobante || '').startsWith('AJ-')).length;
@@ -19034,6 +19042,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
           cuentaTesoreriaId: undefined,
         };
         setPagosProveedores([...pagosProveedores, newPago]);
+        savePagoProveedorRelacional({ ...newPago, anulado: false } as any).catch((e) => console.error('savePagoRelacional ajuste new:', e));
         showNotification('Ajuste registrado con éxito', 'success');
       }
       setIsPagoModalOpen(false);
@@ -19072,6 +19081,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
             }
           : p
       ));
+      savePagoProveedorRelacional({ ...pagosProveedores.find((p: any) => p.id === editingPagoId), fecha: fechaMovimiento, monto, metodo: metodoResumen, tipoMovimiento: 'Pago', valores, anulado: false } as any).catch((e) => console.error('savePagoRelacional pago edit:', e));
       (async () => {
         await anularMovimientosPago(editingPagoId);
         await anularChequesPorOrigen(editingPagoId);
@@ -19096,6 +19106,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
         valores,
       };
       setPagosProveedores([...pagosProveedores, newPago]);
+      savePagoProveedorRelacional({ ...newPago, anulado: false } as any).catch((e) => console.error('savePagoRelacional pago new:', e));
       generarImpactosPago(newPago.id, comprobante, valores, newPago.fecha);
       if (pagoEgresoId && typeof setEgresos === 'function') {
         const eg = (egresos || []).find((x: any) => x.id === pagoEgresoId);
@@ -21011,6 +21022,7 @@ const EgresosView = ({
       };
 
       setEgresos(egresos.map((eg: any) => (eg.id === egresoEditado.id ? egresoEditado : eg)));
+      saveEgresoRelacional(egresoEditado as any).catch((e) => console.error('saveEgresoRelacional edit:', e));
       if (tipoEgreso?.impactaInventario && (itemsNuevos.length > 0 || itemsEliminados.length > 0)) {
         setMovimientos(movimientosFinal);
       }
@@ -21033,6 +21045,7 @@ const EgresosView = ({
 
     if (isUpdate) {
       setEgresos(egresos.map((eg: any) => (eg.id === data.id ? data : eg)));
+      saveEgresoRelacional(data as any).catch((e) => console.error('saveEgresoRelacional update:', e));
 
       if (data.estado === 'Confirmado' && tipoEgreso?.impactaInventario) {
         const updatedMovs = movimientos.filter((m: any) => m.referencia !== data.comprobante);
@@ -21043,6 +21056,7 @@ const EgresosView = ({
       }
     } else {
       setEgresos([...egresos, data]);
+      saveEgresoRelacional(data as any).catch((e) => console.error('saveEgresoRelacional create:', e));
 
       if (data.estado === 'Confirmado' && tipoEgreso?.impactaInventario) {
         setMovimientos([...movimientosCompra, ...movimientos]);
@@ -21283,10 +21297,11 @@ const EgresosView = ({
                           {eg.estado === 'Borrador' && (
                             <button 
                               onClick={() => {
-                                confirmDialog(`¿Eliminar el egreso ${eg.comprobante}? Se marcará como anulado.`, () => {
-                                  setEgresos(egresos.map((e: any) => e.id === eg.id ? { ...e, estado: 'Anulado' } : e));
-                                  showNotification(`Egreso ${eg.comprobante} anulado.`, 'success');
-                                });
+                confirmDialog(`¿Eliminar el egreso ${eg.comprobante}? Se marcará como anulado.`, () => {
+                  setEgresos(egresos.map((e: any) => e.id === eg.id ? { ...e, estado: 'Anulado' } : e));
+                  anularEgresoRelacional(eg.id, currentUser.name).catch((e) => console.error('anularEgresoRelacional borrador:', e));
+                  showNotification(`Egreso ${eg.comprobante} anulado.`, 'success');
+                });
                               }}
                               className="p-2 hover:bg-rose-50 text-rose-400 rounded transition-all"
                               title="Eliminar Borrador"
@@ -21297,10 +21312,11 @@ const EgresosView = ({
                           {eg.estado === 'Confirmado' && (
                             <button 
                               onClick={() => {
-                                confirmDialog(`¿Anular el egreso ${eg.comprobante} por $${displayNum(eg.total, 2)}? Se revertirá el stock ingresado y la deuda con el proveedor.`, () => {
-                                  setEgresos(egresos.map((e: any) => e.id === eg.id ? { ...e, estado: 'Anulado' } : e));
-                                  
-                                  // Anular movimientos asociados
+                confirmDialog(`¿Anular el egreso ${eg.comprobante} por $${displayNum(eg.total, 2)}? Se revertirá el stock ingresado y la deuda con el proveedor.`, () => {
+                  setEgresos(egresos.map((e: any) => e.id === eg.id ? { ...e, estado: 'Anulado' } : e));
+                  anularEgresoRelacional(eg.id, currentUser.name).catch((e) => console.error('anularEgresoRelacional confirmado:', e));
+                  
+                  // Anular movimientos asociados
                                   const updatedMovs = movimientos.map((m: any) => 
                                     m.referencia === eg.comprobante ? { 
                                       ...m, 
@@ -25710,8 +25726,6 @@ export default function App() {
       setPlanCuentas(d.alido_plan_cuentas);
       setTiposEgreso(d.alido_tipos_egreso);
       setProveedores(d.alido_proveedores);
-      setEgresos(d.alido_egresos);
-      setPagosProveedores(d.alido_pagos_proveedores);
       setPlantillasEgresos(d.alido_plantillas_egresos);
       setMercaderiaPendiente(d.alido_mercaderia_pendiente);
 
@@ -25726,6 +25740,15 @@ export default function App() {
       });
 
       setIsLoading(false);
+
+      // Cargar egresos y pagos desde tablas relacionales (en paralelo, no bloquean el arranque)
+      loadEgresos().then((rows) => {
+        if (rows.length > 0) setEgresos(rows as any);
+      }).catch((err) => console.error('Error cargando egresos relacionales:', err));
+
+      loadPagosProveedores().then((rows) => {
+        if (rows.length > 0) setPagosProveedores(rows as any);
+      }).catch((err) => console.error('Error cargando pagos proveedores relacionales:', err));
     });
   }, []);
 
