@@ -813,3 +813,353 @@ export async function anularChequesPorOrigen(origenId: string): Promise<boolean>
     return false;
   }
 }
+
+// ============================================================
+// EGRESOS — tablas relacionales
+// ============================================================
+
+// --- Tipos ---
+
+export type EgresoItemRow = {
+  id: string;
+  productoId?: string;
+  cantidad?: number;
+  precioUnitario?: number;
+  loteProveedor?: string;
+  numeroLoteGenerado?: string;
+  fechaVencimiento?: string;
+  almacenDestinoId?: string;
+  concepto?: string;
+  monto?: number;
+  subtotal: number;
+  orden: number;
+};
+
+export type EgresoRow = {
+  id: string;
+  comprobante: string;
+  fecha: string;
+  fechaCreacion: string;
+  fechaVencimientoPago?: string;
+  proveedorId?: string;
+  tipoEgresoId: string;
+  cuentaContableId: string;
+  nroFacturaProveedor?: string;
+  neto: number;
+  tipoIva: string;
+  iva: number;
+  total: number;
+  estado: 'Borrador' | 'Confirmado' | 'Anulado';
+  estadoPago: 'Pendiente' | 'Parcial' | 'Pagado';
+  usuario: string;
+  observaciones?: string;
+  editHistory?: { fecha: string; usuario: string; detalle: string }[];
+  items: EgresoItemRow[];
+};
+
+export type PagoProveedorRow = {
+  id: string;
+  comprobante: string;
+  proveedorId: string;
+  egresoId?: string;
+  fecha: string;
+  monto: number;
+  metodo: string;
+  tipoMovimiento: 'Pago' | 'Ajuste';
+  referencia?: string;
+  observaciones?: string;
+  cuentaTesoreriaId?: string;
+  valores?: any[];
+  anulado: boolean;
+  anuladoAt?: string;
+};
+
+// --- Mappers: fila SQL → objeto TypeScript ---
+
+function mapEgresoItem(r: any, idx: number): EgresoItemRow {
+  return {
+    id: r.id,
+    productoId: r.producto_id ?? undefined,
+    cantidad: r.cantidad != null ? Number(r.cantidad) : undefined,
+    precioUnitario: r.precio_unitario != null ? Number(r.precio_unitario) : undefined,
+    loteProveedor: r.lote_proveedor ?? undefined,
+    numeroLoteGenerado: r.numero_lote_generado ?? undefined,
+    fechaVencimiento: r.fecha_vencimiento ?? undefined,
+    almacenDestinoId: r.almacen_destino_id ?? undefined,
+    concepto: r.concepto ?? undefined,
+    monto: r.monto != null ? Number(r.monto) : undefined,
+    subtotal: Number(r.subtotal ?? 0),
+    orden: r.orden ?? idx,
+  };
+}
+
+function mapEgreso(r: any, items: EgresoItemRow[]): EgresoRow {
+  return {
+    id: r.id,
+    comprobante: r.comprobante,
+    fecha: r.fecha,
+    fechaCreacion: r.fecha_creacion,
+    fechaVencimientoPago: r.fecha_vencimiento_pago ?? undefined,
+    proveedorId: r.proveedor_id ?? undefined,
+    tipoEgresoId: r.tipo_egreso_id,
+    cuentaContableId: r.cuenta_contable_id,
+    nroFacturaProveedor: r.nro_factura_proveedor ?? undefined,
+    neto: Number(r.neto ?? 0),
+    tipoIva: r.tipo_iva ?? 'Exento / No aplica',
+    iva: Number(r.iva ?? 0),
+    total: Number(r.total ?? 0),
+    estado: r.estado ?? 'Borrador',
+    estadoPago: r.estado_pago ?? 'Pendiente',
+    usuario: r.usuario ?? '',
+    observaciones: r.observaciones ?? undefined,
+    editHistory: r.edit_history ?? undefined,
+    items,
+  };
+}
+
+function mapPagoProveedor(r: any): PagoProveedorRow {
+  return {
+    id: r.id,
+    comprobante: r.comprobante,
+    proveedorId: r.proveedor_id,
+    egresoId: r.egreso_id ?? undefined,
+    fecha: r.fecha,
+    monto: Number(r.monto ?? 0),
+    metodo: r.metodo ?? 'Efectivo',
+    tipoMovimiento: r.tipo_movimiento ?? 'Pago',
+    referencia: r.referencia ?? undefined,
+    observaciones: r.observaciones ?? undefined,
+    cuentaTesoreriaId: r.cuenta_tesoreria_id ?? undefined,
+    valores: Array.isArray(r.valores) ? r.valores : undefined,
+    anulado: !!r.anulado,
+    anuladoAt: r.anulado_at ?? undefined,
+  };
+}
+
+// --- Carga completa ---
+
+export async function loadEgresos(): Promise<EgresoRow[]> {
+  try {
+    const [egresosRes, itemsRes] = await Promise.all([
+      supabase
+        .from('egresos')
+        .select('*')
+        .order('fecha', { ascending: false }),
+      supabase
+        .from('egreso_items')
+        .select('*')
+        .order('orden', { ascending: true }),
+    ]);
+
+    if (egresosRes.error || itemsRes.error) {
+      console.error('loadEgresos error:', egresosRes.error || itemsRes.error);
+      return [];
+    }
+
+    const itemsByEgreso: Record<string, EgresoItemRow[]> = {};
+    for (const [idx, item] of (itemsRes.data || []).entries()) {
+      const eId = item.egreso_id;
+      if (!itemsByEgreso[eId]) itemsByEgreso[eId] = [];
+      itemsByEgreso[eId].push(mapEgresoItem(item, idx));
+    }
+
+    return (egresosRes.data || []).map((r) =>
+      mapEgreso(r, itemsByEgreso[r.id] || [])
+    );
+  } catch (err) {
+    console.error('loadEgresos exception:', err);
+    return [];
+  }
+}
+
+export async function loadPagosProveedores(): Promise<PagoProveedorRow[]> {
+  try {
+    const { data, error } = await supabase
+      .from('pagos_proveedores')
+      .select('*')
+      .order('fecha', { ascending: false });
+
+    if (error) {
+      console.error('loadPagosProveedores error:', error);
+      return [];
+    }
+    return (data || []).map(mapPagoProveedor);
+  } catch (err) {
+    console.error('loadPagosProveedores exception:', err);
+    return [];
+  }
+}
+
+// --- Guardar egreso (upsert egreso + sus items) ---
+
+export async function saveEgresoRelacional(egreso: EgresoRow): Promise<boolean> {
+  try {
+    const now = new Date().toISOString();
+
+    // 1. Upsert del egreso principal
+    const { error: eErr } = await supabase
+      .from('egresos')
+      .upsert({
+        id: egreso.id,
+        comprobante: egreso.comprobante,
+        fecha: egreso.fecha,
+        fecha_creacion: egreso.fechaCreacion || now,
+        fecha_vencimiento_pago: egreso.fechaVencimientoPago || null,
+        proveedor_id: egreso.proveedorId || null,
+        tipo_egreso_id: egreso.tipoEgresoId,
+        cuenta_contable_id: egreso.cuentaContableId,
+        nro_factura_proveedor: egreso.nroFacturaProveedor || null,
+        neto: egreso.neto,
+        tipo_iva: egreso.tipoIva,
+        iva: egreso.iva,
+        total: egreso.total,
+        estado: egreso.estado,
+        estado_pago: egreso.estadoPago,
+        usuario: egreso.usuario,
+        observaciones: egreso.observaciones || null,
+        edit_history: egreso.editHistory || null,
+        anulado: egreso.estado === 'Anulado',
+        updated_by: SESSION_ID,
+        updated_at: now,
+      }, { onConflict: 'id' });
+
+    if (eErr) {
+      console.error('saveEgresoRelacional - egreso error:', eErr);
+      return false;
+    }
+
+    // 2. Eliminar items viejos y reinsertar los actuales
+    // (estrategia simple: delete + insert, segura para colecciones pequeñas)
+    await supabase.from('egreso_items').delete().eq('egreso_id', egreso.id);
+
+    if (egreso.items && egreso.items.length > 0) {
+      const rows = egreso.items.map((item, idx) => ({
+        id: item.id,
+        egreso_id: egreso.id,
+        producto_id: item.productoId || null,
+        cantidad: item.cantidad ?? null,
+        precio_unitario: item.precioUnitario ?? null,
+        subtotal: item.subtotal,
+        lote_proveedor: item.loteProveedor || null,
+        numero_lote_generado: item.numeroLoteGenerado || null,
+        fecha_vencimiento: item.fechaVencimiento || null,
+        almacen_destino_id: item.almacenDestinoId || null,
+        concepto: item.concepto || null,
+        monto: item.monto ?? null,
+        orden: item.orden ?? idx,
+      }));
+
+      const { error: iErr } = await supabase
+        .from('egreso_items')
+        .insert(rows);
+
+      if (iErr) {
+        console.error('saveEgresoRelacional - items error:', iErr);
+        return false;
+      }
+    }
+
+    return true;
+  } catch (err) {
+    console.error('saveEgresoRelacional exception:', err);
+    return false;
+  }
+}
+
+// --- Guardar pago a proveedor ---
+
+export async function savePagoProveedorRelacional(
+  pago: PagoProveedorRow
+): Promise<boolean> {
+  try {
+    const now = new Date().toISOString();
+    const { error } = await supabase
+      .from('pagos_proveedores')
+      .upsert({
+        id: pago.id,
+        comprobante: pago.comprobante,
+        proveedor_id: pago.proveedorId,
+        egreso_id: pago.egresoId || null,
+        fecha: pago.fecha,
+        monto: pago.monto,
+        metodo: pago.metodo,
+        tipo_movimiento: pago.tipoMovimiento,
+        referencia: pago.referencia || null,
+        observaciones: pago.observaciones || null,
+        cuenta_tesoreria_id: pago.cuentaTesoreriaId || null,
+        valores: pago.valores || null,
+        anulado: pago.anulado,
+        anulado_at: pago.anuladoAt || null,
+        updated_by: SESSION_ID,
+        updated_at: now,
+      }, { onConflict: 'id' });
+
+    if (error) {
+      console.error('savePagoProveedorRelacional error:', error);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error('savePagoProveedorRelacional exception:', err);
+    return false;
+  }
+}
+
+// --- Anular egreso ---
+
+export async function anularEgresoRelacional(
+  id: string,
+  usuarioNombre: string
+): Promise<boolean> {
+  try {
+    const now = new Date().toISOString();
+    const { error } = await supabase
+      .from('egresos')
+      .update({
+        estado: 'Anulado',
+        anulado: true,
+        anulado_at: now,
+        anulado_por: usuarioNombre,
+        updated_by: SESSION_ID,
+        updated_at: now,
+      })
+      .eq('id', id);
+
+    if (error) {
+      console.error('anularEgresoRelacional error:', error);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error('anularEgresoRelacional exception:', err);
+    return false;
+  }
+}
+
+// --- Anular pago a proveedor ---
+
+export async function anularPagoProveedorRelacional(
+  id: string
+): Promise<boolean> {
+  try {
+    const now = new Date().toISOString();
+    const { error } = await supabase
+      .from('pagos_proveedores')
+      .update({
+        anulado: true,
+        anulado_at: now,
+        updated_by: SESSION_ID,
+        updated_at: now,
+      })
+      .eq('id', id);
+
+    if (error) {
+      console.error('anularPagoProveedorRelacional error:', error);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error('anularPagoProveedorRelacional exception:', err);
+    return false;
+  }
+}
