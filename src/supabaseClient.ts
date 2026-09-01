@@ -1163,3 +1163,300 @@ export async function anularPagoProveedorRelacional(
     return false;
   }
 }
+
+// ============================================================
+// RRHH — tablas relacionales
+// ============================================================
+
+export type RhEmpleadoRow = {
+  id: string;
+  nombre: string;
+  dni?: string;
+  cuil?: string;
+  fechaIngreso: string;
+  puesto?: string;
+  area?: string;
+  tipoContrato: string;
+  horarioEntrada?: string;
+  horarioSalida?: string;
+  sueldoBasico: number;
+  cbu?: string;
+  telefono?: string;
+  direccion?: string;
+  estado: 'activo' | 'inactivo';
+  fechaBaja?: string;
+  observaciones?: string;
+  createdAt?: string;
+};
+
+export type RhAdelantoRow = {
+  id: string;
+  empleadoId: string;
+  fecha: string;
+  monto: number;
+  motivo?: string;
+  estado: 'pendiente' | 'descontado';
+  liquidacionId?: string;
+  createdAt?: string;
+};
+
+export type RhAusenciaRow = {
+  id: string;
+  empleadoId: string;
+  fecha: string;
+  tipo: 'injustificada' | 'enfermedad' | 'vacaciones' | 'licencia' | 'tardanza';
+  justificada: boolean;
+  impactaSueldo: boolean;
+  observaciones?: string;
+  createdAt?: string;
+};
+
+export type RhLiquidacionRow = {
+  id: string;
+  empleadoId: string;
+  periodo: string;
+  sueldoBasico: number;
+  horasExtraQty: number;
+  horasExtraValor: number;
+  adelantosDescontados: number;
+  adelantosIds: string[];
+  otrosDescuentos: number;
+  totalBruto: number;
+  totalDescuentos: number;
+  netoAPagar: number;
+  observaciones?: string;
+  estado: 'borrador' | 'liquidado' | 'pagado';
+  fechaPago?: string;
+  formaPago?: string;
+  egresoId?: string;
+  createdAt?: string;
+};
+
+function mapRhEmpleado(r: any): RhEmpleadoRow {
+  return {
+    id: r.id,
+    nombre: r.nombre,
+    dni: r.dni ?? undefined,
+    cuil: r.cuil ?? undefined,
+    fechaIngreso: r.fecha_ingreso,
+    puesto: r.puesto ?? undefined,
+    area: r.area ?? undefined,
+    tipoContrato: r.tipo_contrato ?? 'dependencia',
+    horarioEntrada: r.horario_entrada ?? undefined,
+    horarioSalida: r.horario_salida ?? undefined,
+    sueldoBasico: parseNum(r.sueldo_basico),
+    cbu: r.cbu ?? undefined,
+    telefono: r.telefono ?? undefined,
+    direccion: r.direccion ?? undefined,
+    estado: r.estado ?? 'activo',
+    fechaBaja: r.fecha_baja ?? undefined,
+    observaciones: r.observaciones ?? undefined,
+    createdAt: r.created_at ?? undefined,
+  };
+}
+
+function mapRhAdelanto(r: any): RhAdelantoRow {
+  return {
+    id: r.id,
+    empleadoId: r.empleado_id,
+    fecha: r.fecha,
+    monto: parseNum(r.monto),
+    motivo: r.motivo ?? undefined,
+    estado: r.estado ?? 'pendiente',
+    liquidacionId: r.liquidacion_id ?? undefined,
+    createdAt: r.created_at ?? undefined,
+  };
+}
+
+function mapRhAusencia(r: any): RhAusenciaRow {
+  return {
+    id: r.id,
+    empleadoId: r.empleado_id,
+    fecha: r.fecha,
+    tipo: r.tipo,
+    justificada: !!r.justificada,
+    impactaSueldo: !!r.impacta_sueldo,
+    observaciones: r.observaciones ?? undefined,
+    createdAt: r.created_at ?? undefined,
+  };
+}
+
+function mapRhLiquidacion(r: any): RhLiquidacionRow {
+  return {
+    id: r.id,
+    empleadoId: r.empleado_id,
+    periodo: r.periodo,
+    sueldoBasico: parseNum(r.sueldo_basico),
+    horasExtraQty: parseNum(r.horas_extra_qty),
+    horasExtraValor: parseNum(r.horas_extra_valor),
+    adelantosDescontados: parseNum(r.adelantos_descontados),
+    adelantosIds: Array.isArray(r.adelantos_ids) ? r.adelantos_ids : [],
+    otrosDescuentos: parseNum(r.otros_descuentos),
+    totalBruto: parseNum(r.total_bruto),
+    totalDescuentos: parseNum(r.total_descuentos),
+    netoAPagar: parseNum(r.neto_a_pagar),
+    observaciones: r.observaciones ?? undefined,
+    estado: r.estado ?? 'borrador',
+    fechaPago: r.fecha_pago ?? undefined,
+    formaPago: r.forma_pago ?? undefined,
+    egresoId: r.egreso_id ?? undefined,
+    createdAt: r.created_at ?? undefined,
+  };
+}
+
+export async function loadRhEmpleados(): Promise<RhEmpleadoRow[]> {
+  try {
+    const { data, error } = await supabase
+      .from('rh_empleados')
+      .select('*')
+      .order('nombre');
+    if (error) { console.error('loadRhEmpleados:', error); return []; }
+    return (data || []).map(mapRhEmpleado);
+  } catch (err) { console.error('loadRhEmpleados exception:', err); return []; }
+}
+
+export async function loadRhAdelantos(): Promise<RhAdelantoRow[]> {
+  try {
+    const { data, error } = await supabase
+      .from('rh_adelantos')
+      .select('*')
+      .order('fecha', { ascending: false });
+    if (error) { console.error('loadRhAdelantos:', error); return []; }
+    return (data || []).map(mapRhAdelanto);
+  } catch (err) { console.error('loadRhAdelantos exception:', err); return []; }
+}
+
+export async function loadRhAusencias(): Promise<RhAusenciaRow[]> {
+  try {
+    const { data, error } = await supabase
+      .from('rh_ausencias')
+      .select('*')
+      .order('fecha', { ascending: false });
+    if (error) { console.error('loadRhAusencias:', error); return []; }
+    return (data || []).map(mapRhAusencia);
+  } catch (err) { console.error('loadRhAusencias exception:', err); return []; }
+}
+
+export async function loadRhLiquidaciones(): Promise<RhLiquidacionRow[]> {
+  try {
+    const { data, error } = await supabase
+      .from('rh_liquidaciones')
+      .select('*')
+      .order('periodo', { ascending: false });
+    if (error) { console.error('loadRhLiquidaciones:', error); return []; }
+    return (data || []).map(mapRhLiquidacion);
+  } catch (err) { console.error('loadRhLiquidaciones exception:', err); return []; }
+}
+
+export async function saveRhEmpleado(emp: RhEmpleadoRow): Promise<RhEmpleadoRow | null> {
+  const row: Record<string, any> = {
+    nombre: emp.nombre,
+    dni: emp.dni || null,
+    cuil: emp.cuil || null,
+    fecha_ingreso: emp.fechaIngreso,
+    puesto: emp.puesto || null,
+    area: emp.area || null,
+    tipo_contrato: emp.tipoContrato,
+    horario_entrada: emp.horarioEntrada || null,
+    horario_salida: emp.horarioSalida || null,
+    sueldo_basico: emp.sueldoBasico,
+    cbu: emp.cbu || null,
+    telefono: emp.telefono || null,
+    direccion: emp.direccion || null,
+    estado: emp.estado,
+    fecha_baja: emp.fechaBaja || null,
+    observaciones: emp.observaciones || null,
+    updated_by: SESSION_ID,
+    updated_at: nowIso(),
+  };
+  if (emp.id) row.id = emp.id;
+  const { data, error } = await supabase
+    .from('rh_empleados')
+    .upsert(row)
+    .select()
+    .single();
+  if (error) { console.error('saveRhEmpleado:', error); return null; }
+  return mapRhEmpleado(data);
+}
+
+export async function saveRhAdelanto(ad: RhAdelantoRow): Promise<RhAdelantoRow | null> {
+  const row: Record<string, any> = {
+    empleado_id: ad.empleadoId,
+    fecha: ad.fecha,
+    monto: ad.monto,
+    motivo: ad.motivo || null,
+    estado: ad.estado,
+    liquidacion_id: ad.liquidacionId || null,
+    updated_by: SESSION_ID,
+    updated_at: nowIso(),
+  };
+  if (ad.id) row.id = ad.id;
+  const { data, error } = await supabase
+    .from('rh_adelantos')
+    .upsert(row)
+    .select()
+    .single();
+  if (error) { console.error('saveRhAdelanto:', error); return null; }
+  return mapRhAdelanto(data);
+}
+
+export async function saveRhAusencia(aus: RhAusenciaRow): Promise<RhAusenciaRow | null> {
+  const row: Record<string, any> = {
+    empleado_id: aus.empleadoId,
+    fecha: aus.fecha,
+    tipo: aus.tipo,
+    justificada: aus.justificada,
+    impacta_sueldo: aus.impactaSueldo,
+    observaciones: aus.observaciones || null,
+    updated_by: SESSION_ID,
+    updated_at: nowIso(),
+  };
+  if (aus.id) row.id = aus.id;
+  const { data, error } = await supabase
+    .from('rh_ausencias')
+    .upsert(row)
+    .select()
+    .single();
+  if (error) { console.error('saveRhAusencia:', error); return null; }
+  return mapRhAusencia(data);
+}
+
+export async function saveRhLiquidacion(liq: RhLiquidacionRow): Promise<RhLiquidacionRow | null> {
+  const row: Record<string, any> = {
+    empleado_id: liq.empleadoId,
+    periodo: liq.periodo,
+    sueldo_basico: liq.sueldoBasico,
+    horas_extra_qty: liq.horasExtraQty,
+    horas_extra_valor: liq.horasExtraValor,
+    adelantos_descontados: liq.adelantosDescontados,
+    adelantos_ids: liq.adelantosIds,
+    otros_descuentos: liq.otrosDescuentos,
+    total_bruto: liq.totalBruto,
+    total_descuentos: liq.totalDescuentos,
+    neto_a_pagar: liq.netoAPagar,
+    observaciones: liq.observaciones || null,
+    estado: liq.estado,
+    fecha_pago: liq.fechaPago || null,
+    forma_pago: liq.formaPago || null,
+    egreso_id: liq.egresoId || null,
+    updated_by: SESSION_ID,
+    updated_at: nowIso(),
+  };
+  if (liq.id) row.id = liq.id;
+  const { data, error } = await supabase
+    .from('rh_liquidaciones')
+    .upsert(row)
+    .select()
+    .single();
+  if (error) { console.error('saveRhLiquidacion:', error); return null; }
+  return mapRhLiquidacion(data);
+}
+
+export async function deleteRhRegistro(
+  tabla: 'rh_adelantos' | 'rh_ausencias',
+  id: string
+): Promise<boolean> {
+  const { error } = await supabase.from(tabla).delete().eq('id', id);
+  if (error) { console.error('deleteRhRegistro:', error); return false; }
+  return true;
+}

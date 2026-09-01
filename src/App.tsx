@@ -51,6 +51,7 @@ import {
   Copy,
   Factory, 
   Users, 
+  UserCog,
   LogOut, 
   ChevronDown, 
   ChevronRight, 
@@ -1383,6 +1384,7 @@ interface Permisos {
   egresos: PermisosModulo;
   finanzas: PermisosModulo;
   usuarios: PermisosModulo;
+  rrhh: PermisosModulo;
 }
 
 type UserRole = 'Administrador' | 'Administración' | 'Operario';
@@ -1437,7 +1439,8 @@ const DEFAULT_PERMISSIONS: Permisos = {
   ventas: { ventas_pedidos: true, dashboard_ventas: true, clientes: true, listas_precios: true, puntos_venta: true },
   egresos: { egresos_compras: true, proveedores: true, tipos_egreso: true, plan_cuentas: true },
   finanzas: { tesoreria: true, cheques: true, proyeccion: true, posicion: true },
-  usuarios: { gestion_usuarios: true }
+  usuarios: { gestion_usuarios: true },
+  rrhh: { empleados: true, liquidaciones: true, presentismo: true, adelantos: true }
 };
 
 const EMPTY_PERMISSIONS: Permisos = {
@@ -1446,7 +1449,8 @@ const EMPTY_PERMISSIONS: Permisos = {
   ventas: { ventas_pedidos: false, dashboard_ventas: false, clientes: false, listas_precios: false, puntos_venta: false },
   egresos: { egresos_compras: false, proveedores: false, tipos_egreso: false, plan_cuentas: false },
   finanzas: { tesoreria: false, cheques: false, proyeccion: false, posicion: false },
-  usuarios: { gestion_usuarios: false }
+  usuarios: { gestion_usuarios: false },
+  rrhh: { empleados: false, liquidaciones: false, presentismo: false, adelantos: false }
 };
 
 const normalizeSection = (section: string) => section.toLowerCase().replace(/ de /g, ' ').replace(/ y /g, '_').replace(/ /g, '_').replace(/á/g, 'a').replace(/é/g, 'e').replace(/í/g, 'i').replace(/ó/g, 'o').replace(/ú/g, 'u');
@@ -2142,7 +2146,8 @@ const INITIAL_USERS: User[] = [
     ventas: { ventas_pedidos: true, dashboard_ventas: true, clientes: true, listas_precios: true, puntos_venta: true },
     egresos: { egresos_compras: true, proveedores: true, tipos_egreso: true, plan_cuentas: true },
     finanzas: { tesoreria: true, cheques: true, proyeccion: true, posicion: true },
-    usuarios: { gestion_usuarios: true }
+    usuarios: { gestion_usuarios: true },
+    rrhh: { empleados: true, liquidaciones: true, presentismo: true, adelantos: true }
   }},
   { id: '2', username: 'Operario1', password: '123', role: 'Operario', name: 'Juan Pérez', estado: 'activo', inicioConfig: { ...DEFAULT_INICIO_CONFIG }, permisos: {
     inventario: { dashboard: false, almacenes: true, productos: false, movimientos: true, alertas: false, reportes: false },
@@ -2150,7 +2155,8 @@ const INITIAL_USERS: User[] = [
     ventas: { ventas_pedidos: true, dashboard_ventas: false, clientes: false, listas_precios: false, puntos_venta: false },
     egresos: { egresos_compras: false, proveedores: false, tipos_egreso: false, plan_cuentas: false },
     finanzas: { tesoreria: false, cheques: false, proyeccion: false, posicion: false },
-    usuarios: { gestion_usuarios: false }
+    usuarios: { gestion_usuarios: false },
+    rrhh: { empleados: false, liquidaciones: false, presentismo: false, adelantos: false }
   }}
 ];
 
@@ -9962,6 +9968,7 @@ const UserForm = ({ editingItem, loggedUser, tesoreriaCuentas = [], onSave, onCl
     { key: 'ventas', label: '💰 VENTAS', color: 'bg-amber-50 outline-amber-200', sections: [ {key: 'ventas_pedidos', label: 'Ventas y Pedidos'}, {key: 'dashboard_ventas', label: 'Dashboard de Ventas'}, {key: 'clientes', label: 'Clientes'}, {key: 'listas_precios', label: 'Listas de Precios'}, {key: 'puntos_venta', label: 'Puntos de Venta'} ] },
     { key: 'egresos', label: '📤 EGRESOS', color: 'bg-rose-50 outline-rose-200', sections: [ {key: 'egresos_compras', label: 'Egresos y Compras'}, {key: 'proveedores', label: 'Proveedores'}, {key: 'tipos_egreso', label: 'Tipos de Egreso'}, {key: 'plan_cuentas', label: 'Plan de Cuentas'} ] },
     { key: 'finanzas', label: '💳 FINANZAS', color: 'bg-violet-50 outline-violet-200', sections: [ {key: 'tesoreria', label: 'Tesorería'}, {key: 'cheques', label: 'Cheques'}, {key: 'proyeccion', label: 'Proyección'}, {key: 'posicion', label: 'Posición'} ] },
+    { key: 'rrhh', label: '👥 RRHH', color: 'bg-teal-50 outline-teal-200', sections: [ {key: 'empleados', label: 'Empleados'}, {key: 'liquidaciones', label: 'Liquidaciones'}, {key: 'presentismo', label: 'Presentismo'}, {key: 'adelantos', label: 'Adelantos'} ] },
     { key: 'usuarios', label: '👤 USUARIOS', color: 'bg-slate-100 outline-slate-300', sections: [ {key: 'gestion_usuarios', label: 'Gestión de Usuarios'} ] }
   ];
 
@@ -25520,7 +25527,7 @@ export default function App() {
     const stored = localStorage.getItem('alido_logged_user');
     return stored ? JSON.parse(stored) : null;
   });
-  const [activeModule, setActiveModule] = useState<'INICIO' | 'INVENTARIO' | 'PRODUCCIÓN' | 'VENTAS' | 'EGRESOS' | 'FINANZAS' | 'USUARIOS'>('INICIO');
+  const [activeModule, setActiveModule] = useState<'INICIO' | 'INVENTARIO' | 'PRODUCCIÓN' | 'VENTAS' | 'EGRESOS' | 'FINANZAS' | 'USUARIOS' | 'RRHH'>('INICIO');
   const [activeSubSection, setActiveSubSection] = useState<string>('Inicio');
   const [clienteAAbrir, setClienteAAbrir] = useState<string | null>(null);
   const [proveedorAAbrir, setProveedorAAbrir] = useState<string | null>(null);
@@ -25531,13 +25538,14 @@ export default function App() {
   useEffect(() => {
     if (activeModule === 'INICIO') return;
     if (currentUser && !hasPermission(currentUser, activeModule, activeSubSection)) {
-      const ms = ['INVENTARIO', 'PRODUCCIÓN', 'VENTAS', 'EGRESOS', 'FINANZAS', 'USUARIOS'];
+      const ms = ['INVENTARIO', 'PRODUCCIÓN', 'VENTAS', 'EGRESOS', 'FINANZAS', 'USUARIOS', 'RRHH'];
       const defaultSub = {
         'INVENTARIO': ['Dashboard', 'Almacenes', 'Productos', 'Movimientos', 'Alertas', 'Reportes'],
         'PRODUCCIÓN': ['Lotes de Producción', 'Lotes de Despiece', 'Recetas Estándar', 'Plantillas de Despiece', 'Etiquetas', 'Dashboard', 'Trazabilidad'],
         'VENTAS': ['Ventas y Pedidos', 'Dashboard Ventas', 'Clientes', 'Listas de Precios', 'Puntos de Venta'],
         'EGRESOS': ['Egresos y Compras', 'Dashboard Egresos', 'Proveedores', 'Tipos de Egreso', 'Plan de Cuentas'],
         'FINANZAS': ['Tesorería', 'Cheques', 'Proyección', 'Posición'],
+        'RRHH': ['Empleados', 'Liquidaciones', 'Presentismo', 'Adelantos'],
         'USUARIOS': ['Gestión de Usuarios']
       };
 
@@ -26409,6 +26417,20 @@ export default function App() {
             currentUser={currentUser}
           />
           <SidebarItem 
+            icon={CreditCard} 
+            label="EGRESOS" 
+            module="EGRESOS" 
+            activeModule={activeModule}
+            activeSubSection={activeSubSection}
+            expandedModule={expandedModule}
+            setExpandedModule={setExpandedModule}
+            setActiveModule={setActiveModule}
+            setActiveSubSection={setActiveSubSection}
+            subItems={['Egresos y Compras', 'Dashboard Egresos', 'Proveedores', 'Tipos de Egreso', 'Plan de Cuentas']} 
+            sidebarExpanded={sidebarExpanded}
+            currentUser={currentUser}
+          />
+          <SidebarItem 
             icon={Wallet} 
             label="FINANZAS" 
             module="FINANZAS" 
@@ -26423,16 +26445,16 @@ export default function App() {
             currentUser={currentUser}
           />
           <SidebarItem 
-            icon={CreditCard} 
-            label="EGRESOS" 
-            module="EGRESOS" 
+            icon={UserCog} 
+            label="RRHH" 
+            module="RRHH" 
             activeModule={activeModule}
             activeSubSection={activeSubSection}
             expandedModule={expandedModule}
             setExpandedModule={setExpandedModule}
             setActiveModule={setActiveModule}
             setActiveSubSection={setActiveSubSection}
-            subItems={['Egresos y Compras', 'Dashboard Egresos', 'Proveedores', 'Tipos de Egreso', 'Plan de Cuentas']} 
+            subItems={['Empleados', 'Liquidaciones', 'Presentismo', 'Adelantos']} 
             sidebarExpanded={sidebarExpanded}
             currentUser={currentUser}
           />
