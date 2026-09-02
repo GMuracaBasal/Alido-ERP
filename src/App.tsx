@@ -34,6 +34,12 @@ import {
   loadEgresos,
   loadPagosProveedores,
   saveEgresoRelacional,
+  loadRhEmpleados, saveRhEmpleado,
+  loadRhAdelantos, saveRhAdelanto,
+  loadRhAusencias, saveRhAusencia,
+  loadRhLiquidaciones, saveRhLiquidacion,
+  deleteRhRegistro,
+  type RhEmpleadoRow, type RhAdelantoRow, type RhAusenciaRow, type RhLiquidacionRow,
   savePagoProveedorRelacional,
   anularEgresoRelacional,
   anularPagoProveedorRelacional,
@@ -18422,6 +18428,908 @@ const ListasPreciosView = ({ listasPrecios, setListasPrecios, productos, familia
   );
 };
 
+const RRHHModule = ({
+  activeSubSection, empleados, adelantos, ausencias, liquidaciones,
+  loading, currentUser, showNotification, onReload,
+  egresos, setEgresos,
+}: any) => {
+  const hoyIso = () => new Date().toISOString().split('T')[0];
+  const periodoActual = () => new Date().toISOString().slice(0, 7);
+
+  const nombreEmp = (id: string) =>
+    (empleados as RhEmpleadoRow[]).find((e) => e.id === id)?.nombre || '—';
+
+  const empleadosActivos: RhEmpleadoRow[] = (empleados as RhEmpleadoRow[]).filter((e) => e.estado === 'activo');
+  const empOptions = empleadosActivos.map((e) => ({ value: e.id, label: e.nombre }));
+
+  const [saving, setSaving] = useState(false);
+
+  const emptyEmp = (): Partial<RhEmpleadoRow> => ({
+    id: '',
+    nombre: '',
+    dni: '',
+    cuil: '',
+    fechaIngreso: hoyIso(),
+    puesto: '',
+    area: '',
+    tipoContrato: 'dependencia',
+    horarioEntrada: '',
+    horarioSalida: '',
+    sueldoBasico: 0,
+    cbu: '',
+    telefono: '',
+    direccion: '',
+    estado: 'activo',
+    observaciones: '',
+  });
+
+  const [empModal, setEmpModal] = useState(false);
+  const [empForm, setEmpForm] = useState<Partial<RhEmpleadoRow>>(emptyEmp());
+
+  const [adelantoModal, setAdelantoModal] = useState(false);
+  const [adelantoForm, setAdelantoForm] = useState({ empleadoId: '', fecha: hoyIso(), monto: 0, motivo: '' });
+
+  const [ausenciaModal, setAusenciaModal] = useState(false);
+  const [ausenciaForm, setAusenciaForm] = useState({
+    empleadoId: '',
+    fecha: hoyIso(),
+    tipo: 'injustificada' as RhAusenciaRow['tipo'],
+    justificada: false,
+    impactaSueldo: false,
+    observaciones: '',
+  });
+
+  const [liqModal, setLiqModal] = useState<'nueva' | 'detalle' | null>(null);
+  const [detalleLiq, setDetalleLiq] = useState<RhLiquidacionRow | null>(null);
+  const [liqForm, setLiqForm] = useState({
+    empleadoId: '',
+    periodo: periodoActual(),
+    sueldoBasico: 0,
+    horasExtraQty: 0,
+    horasExtraValor: 0,
+    otrosDescuentos: 0,
+    observaciones: '',
+  });
+  const [selectedAdelantoIds, setSelectedAdelantoIds] = useState<string[]>([]);
+
+  const adelantosPendientesEmp: RhAdelantoRow[] = (adelantos as RhAdelantoRow[]).filter(
+    (a) => a.empleadoId === liqForm.empleadoId && a.estado === 'pendiente'
+  );
+
+  const adelantosTildados = adelantosPendientesEmp.filter((a) => selectedAdelantoIds.includes(a.id));
+  const adelantosDescontados = safeRound(adelantosTildados.reduce((s, a) => s + (a.monto || 0), 0), 2);
+  const totalBruto = safeRound((liqForm.sueldoBasico || 0) + (liqForm.horasExtraQty || 0) * (liqForm.horasExtraValor || 0), 2);
+  const totalDescuentos = safeRound(adelantosDescontados + (liqForm.otrosDescuentos || 0), 2);
+  const netoAPagar = safeRound(totalBruto - totalDescuentos, 2);
+
+  const thClass = 'px-5 py-3 text-[10px] font-black text-white uppercase tracking-widest';
+  const tdClass = 'px-5 py-3.5 text-xs font-bold text-slate-600';
+
+  const PageHeader = ({ title, subtitle, actionLabel, onAction }: { title: string; subtitle: string; actionLabel: string; onAction: () => void }) => (
+    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div>
+        <h2 className="text-2xl font-black text-sleek-dark uppercase tracking-tighter">{title}</h2>
+        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mt-1">{subtitle}</p>
+      </div>
+      <button
+        type="button"
+        onClick={onAction}
+        className="bg-orange-500 hover:bg-orange-600 text-white px-6 py-3 rounded text-[10px] font-black uppercase tracking-widest shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all flex items-center gap-3"
+      >
+        <Plus className="w-4 h-4" /> {actionLabel}
+      </button>
+    </div>
+  );
+
+  const EmptyRow = ({ colSpan, text }: { colSpan: number; text: string }) => (
+    <tr>
+      <td colSpan={colSpan} className="px-8 py-20 text-center">
+        <Users className="w-12 h-12 text-slate-200 mx-auto mb-4" />
+        <p className="text-sm font-bold text-slate-400 uppercase tracking-widest italic">{text}</p>
+      </td>
+    </tr>
+  );
+
+  const inputClass = 'w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-lg focus:ring-2 focus:ring-sleek-accent outline-none font-bold text-slate-700 text-sm';
+  const labelClass = 'text-[10px] font-bold text-slate-400 uppercase tracking-widest';
+
+  const crearEgresoYVincular = async (liq: RhLiquidacionRow, empNombre: string) => {
+    const hoy = hoyIso();
+    const nuevoEgreso = {
+      id: crypto.randomUUID(),
+      comprobante: generarComprobanteEgreso(egresos, new Date()),
+      fecha: hoy,
+      tipoEgresoId: 'te2',
+      cuentaContableId: 'pc10',
+      proveedorId: undefined,
+      observaciones: 'Sueldo ' + empNombre + ' - ' + liq.periodo,
+      items: [{ id: crypto.randomUUID(), concepto: 'Sueldo ' + liq.periodo, monto: liq.netoAPagar, subtotal: liq.netoAPagar }],
+      neto: liq.netoAPagar,
+      tipoIva: 'Exento / No aplica' as const,
+      iva: 0,
+      total: liq.netoAPagar,
+      estado: 'Confirmado' as const,
+      estadoPago: 'Pagado' as const,
+      usuario: currentUser?.name || 'Sistema',
+      fechaCreacion: new Date().toISOString(),
+    };
+    setEgresos((prev: any) => [...prev, nuevoEgreso]);
+    await saveEgresoRelacional(nuevoEgreso as any);
+    await saveRhLiquidacion({
+      ...liq,
+      estado: 'pagado',
+      egresoId: nuevoEgreso.id,
+      fechaPago: hoy,
+      formaPago: 'transferencia',
+    });
+  };
+
+  const marcarAdelantosDescontados = async (liqId: string, ads: RhAdelantoRow[]) => {
+    for (const ad of ads) {
+      await saveRhAdelanto({ ...ad, estado: 'descontado', liquidacionId: liqId });
+    }
+  };
+
+  const handleSaveEmpleado = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!empForm.nombre?.trim() || !empForm.fechaIngreso) {
+      showNotification('Completá nombre y fecha de ingreso', 'error');
+      return;
+    }
+    setSaving(true);
+    try {
+      const saved = await saveRhEmpleado({
+        id: empForm.id || '',
+        nombre: empForm.nombre.trim(),
+        dni: empForm.dni || undefined,
+        cuil: empForm.cuil || undefined,
+        fechaIngreso: empForm.fechaIngreso,
+        puesto: empForm.puesto || undefined,
+        area: empForm.area || undefined,
+        tipoContrato: empForm.tipoContrato || 'dependencia',
+        horarioEntrada: empForm.horarioEntrada || undefined,
+        horarioSalida: empForm.horarioSalida || undefined,
+        sueldoBasico: Number(empForm.sueldoBasico) || 0,
+        cbu: empForm.cbu || undefined,
+        telefono: empForm.telefono || undefined,
+        direccion: empForm.direccion || undefined,
+        estado: (empForm.estado as RhEmpleadoRow['estado']) || 'activo',
+        fechaBaja: empForm.fechaBaja,
+        observaciones: empForm.observaciones || undefined,
+      });
+      if (!saved) {
+        showNotification('No se pudo guardar el empleado', 'error');
+        return;
+      }
+      await onReload();
+      showNotification('Empleado guardado', 'success');
+      setEmpModal(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleEstadoEmpleado = (emp: RhEmpleadoRow) => {
+    if (emp.estado === 'activo') {
+      confirmDialog(`¿Desactivar a ${emp.nombre}?`, async () => {
+        const saved = await saveRhEmpleado({ ...emp, estado: 'inactivo', fechaBaja: hoyIso() });
+        if (!saved) { showNotification('No se pudo desactivar', 'error'); return; }
+        await onReload();
+        showNotification('Empleado desactivado', 'success');
+      });
+    } else {
+      confirmDialog(`¿Reactivar a ${emp.nombre}?`, async () => {
+        const saved = await saveRhEmpleado({ ...emp, estado: 'activo', fechaBaja: undefined });
+        if (!saved) { showNotification('No se pudo activar', 'error'); return; }
+        await onReload();
+        showNotification('Empleado activado', 'success');
+      });
+    }
+  };
+
+  const handleSaveAdelanto = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adelantoForm.empleadoId || !adelantoForm.fecha || !adelantoForm.monto) {
+      showNotification('Completá empleado, fecha y monto', 'error');
+      return;
+    }
+    setSaving(true);
+    try {
+      const saved = await saveRhAdelanto({
+        id: '',
+        empleadoId: adelantoForm.empleadoId,
+        fecha: adelantoForm.fecha,
+        monto: Number(adelantoForm.monto) || 0,
+        motivo: adelantoForm.motivo || undefined,
+        estado: 'pendiente',
+      });
+      if (!saved) {
+        showNotification('No se pudo guardar el adelanto', 'error');
+        return;
+      }
+      await onReload();
+      showNotification('Adelanto registrado', 'success');
+      setAdelantoModal(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteAdelanto = (ad: RhAdelantoRow) => {
+    if (ad.estado !== 'pendiente') return;
+    confirmDialog('¿Eliminar este adelanto?', async () => {
+      const ok = await deleteRhRegistro('rh_adelantos', ad.id);
+      if (!ok) { showNotification('No se pudo eliminar', 'error'); return; }
+      await onReload();
+      showNotification('Adelanto eliminado', 'success');
+    });
+  };
+
+  const handleSaveAusencia = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!ausenciaForm.empleadoId || !ausenciaForm.fecha || !ausenciaForm.tipo) {
+      showNotification('Completá empleado, fecha y tipo', 'error');
+      return;
+    }
+    setSaving(true);
+    try {
+      const saved = await saveRhAusencia({
+        id: '',
+        empleadoId: ausenciaForm.empleadoId,
+        fecha: ausenciaForm.fecha,
+        tipo: ausenciaForm.tipo,
+        justificada: !!ausenciaForm.justificada,
+        impactaSueldo: !!ausenciaForm.impactaSueldo,
+        observaciones: ausenciaForm.observaciones || undefined,
+      });
+      if (!saved) {
+        showNotification('No se pudo guardar la ausencia', 'error');
+        return;
+      }
+      await onReload();
+      showNotification('Ausencia registrada', 'success');
+      setAusenciaModal(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteAusencia = (aus: RhAusenciaRow) => {
+    confirmDialog('¿Eliminar este registro de presentismo?', async () => {
+      const ok = await deleteRhRegistro('rh_ausencias', aus.id);
+      if (!ok) { showNotification('No se pudo eliminar', 'error'); return; }
+      await onReload();
+      showNotification('Registro eliminado', 'success');
+    });
+  };
+
+  const handleSaveLiquidacion = async (estado: 'borrador' | 'pagado') => {
+    if (!liqForm.empleadoId || !liqForm.periodo) {
+      showNotification('Seleccioná empleado y período', 'error');
+      return;
+    }
+    setSaving(true);
+    try {
+      const emp = (empleados as RhEmpleadoRow[]).find((e) => e.id === liqForm.empleadoId);
+      const payload: RhLiquidacionRow = {
+        id: '',
+        empleadoId: liqForm.empleadoId,
+        periodo: liqForm.periodo,
+        sueldoBasico: Number(liqForm.sueldoBasico) || 0,
+        horasExtraQty: Number(liqForm.horasExtraQty) || 0,
+        horasExtraValor: Number(liqForm.horasExtraValor) || 0,
+        adelantosDescontados,
+        adelantosIds: [...selectedAdelantoIds],
+        otrosDescuentos: Number(liqForm.otrosDescuentos) || 0,
+        totalBruto,
+        totalDescuentos,
+        netoAPagar,
+        observaciones: liqForm.observaciones || undefined,
+        estado,
+      };
+      const liqGuardada = await saveRhLiquidacion(payload);
+      if (!liqGuardada) {
+        showNotification('No se pudo guardar la liquidación', 'error');
+        return;
+      }
+      if (estado === 'pagado') {
+        await marcarAdelantosDescontados(liqGuardada.id, adelantosTildados);
+        await crearEgresoYVincular(liqGuardada, emp?.nombre || 'Empleado');
+      }
+      await onReload();
+      showNotification(estado === 'pagado' ? 'Liquidación pagada y egreso generado' : 'Borrador guardado', 'success');
+      setLiqModal(null);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleMarcarPagado = (liq: RhLiquidacionRow) => {
+    if (liq.estado === 'pagado') return;
+    confirmDialog('¿Marcar esta liquidación como pagada y generar el egreso?', async () => {
+      setSaving(true);
+      try {
+        const emp = (empleados as RhEmpleadoRow[]).find((e) => e.id === liq.empleadoId);
+        const ads = (adelantos as RhAdelantoRow[]).filter((a) => (liq.adelantosIds || []).includes(a.id));
+        const liqGuardada = await saveRhLiquidacion({ ...liq, estado: 'pagado' });
+        if (!liqGuardada) {
+          showNotification('No se pudo actualizar la liquidación', 'error');
+          return;
+        }
+        await marcarAdelantosDescontados(liqGuardada.id, ads);
+        await crearEgresoYVincular(liqGuardada, emp?.nombre || 'Empleado');
+        await onReload();
+        showNotification('Liquidación pagada y egreso generado', 'success');
+      } finally {
+        setSaving(false);
+      }
+    });
+  };
+
+  const badgeEstadoEmp = (estado: string) =>
+    estado === 'activo'
+      ? <Badge variant="success">ACTIVO</Badge>
+      : <Badge variant="default">INACTIVO</Badge>;
+
+  const badgeEstadoAd = (estado: string) =>
+    estado === 'pendiente'
+      ? <Badge variant="warning">PENDIENTE</Badge>
+      : <Badge variant="default">DESCONTADO</Badge>;
+
+  const badgeEstadoLiq = (estado: string) => {
+    if (estado === 'pagado') return <Badge variant="success">PAGADO</Badge>;
+    if (estado === 'liquidado') return <Badge variant="info">LIQUIDADO</Badge>;
+    return <Badge variant="default">BORRADOR</Badge>;
+  };
+
+  const tipoAusenciaLabel: Record<string, string> = {
+    injustificada: 'Injustificada',
+    enfermedad: 'Enfermedad',
+    vacaciones: 'Vacaciones',
+    licencia: 'Licencia',
+    tardanza: 'Tardanza',
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-24">
+        <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">Cargando RRHH...</p>
+      </div>
+    );
+  }
+
+  const renderEmpleados = () => (
+    <div className="space-y-8 animate-in fade-in duration-500">
+      <PageHeader
+        title="Empleados"
+        subtitle="Legajos y datos laborales"
+        actionLabel="+ Nuevo Empleado"
+        onAction={() => { setEmpForm(emptyEmp()); setEmpModal(true); }}
+      />
+      <Card className="border-none shadow-xl overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead className="bg-slate-800">
+              <tr>
+                <th className={thClass}>Nombre</th>
+                <th className={thClass}>DNI</th>
+                <th className={thClass}>Puesto</th>
+                <th className={thClass}>Área</th>
+                <th className={thClass}>Horario</th>
+                <th className={thClass}>Sueldo Básico</th>
+                <th className={thClass}>Estado</th>
+                <th className={thClass + ' text-right'}>Acciones</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {(empleados as RhEmpleadoRow[]).length === 0 && (
+                <EmptyRow colSpan={8} text="Todavía no hay empleados registrados" />
+              )}
+              {(empleados as RhEmpleadoRow[]).map((emp) => (
+                <tr key={emp.id} className="hover:bg-slate-50/50 transition-colors">
+                  <td className={tdClass}><span className="font-black text-sleek-dark uppercase">{emp.nombre}</span></td>
+                  <td className={tdClass}>{emp.dni || '—'}</td>
+                  <td className={tdClass}>{emp.puesto || '—'}</td>
+                  <td className={tdClass}>{emp.area || '—'}</td>
+                  <td className={tdClass}>{(emp.horarioEntrada || '—') + ' – ' + (emp.horarioSalida || '—')}</td>
+                  <td className={tdClass}>$ {formatCurrency(emp.sueldoBasico)}</td>
+                  <td className={tdClass}>{badgeEstadoEmp(emp.estado)}</td>
+                  <td className={tdClass + ' text-right'}>
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        title="Editar"
+                        onClick={() => { setEmpForm({ ...emp }); setEmpModal(true); }}
+                        className="p-2 bg-slate-50 text-slate-400 hover:bg-sleek-dark hover:text-white rounded transition-all shadow-sm"
+                      >
+                        <Edit2 className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        title={emp.estado === 'activo' ? 'Desactivar' : 'Activar'}
+                        onClick={() => toggleEstadoEmpleado(emp)}
+                        className="p-2 bg-slate-50 text-slate-400 hover:bg-sleek-dark hover:text-white rounded transition-all shadow-sm"
+                      >
+                        {emp.estado === 'activo' ? <Ban className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <Modal isOpen={empModal} onClose={() => setEmpModal(false)} title={empForm.id ? 'Editar Empleado' : 'Nuevo Empleado'}>
+        <form onSubmit={handleSaveEmpleado} className="space-y-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2 md:col-span-2">
+              <label className={labelClass}>Nombre *</label>
+              <input required className={inputClass} value={empForm.nombre || ''} onChange={(e) => setEmpForm({ ...empForm, nombre: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <label className={labelClass}>DNI</label>
+              <input className={inputClass} value={empForm.dni || ''} onChange={(e) => setEmpForm({ ...empForm, dni: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <label className={labelClass}>CUIL</label>
+              <input className={inputClass} value={empForm.cuil || ''} onChange={(e) => setEmpForm({ ...empForm, cuil: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <label className={labelClass}>Fecha de ingreso *</label>
+              <input type="date" required className={inputClass} value={empForm.fechaIngreso || ''} onChange={(e) => setEmpForm({ ...empForm, fechaIngreso: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <label className={labelClass}>Puesto</label>
+              <input className={inputClass} value={empForm.puesto || ''} onChange={(e) => setEmpForm({ ...empForm, puesto: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <label className={labelClass}>Área</label>
+              <input className={inputClass} value={empForm.area || ''} onChange={(e) => setEmpForm({ ...empForm, area: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <label className={labelClass}>Tipo de contrato</label>
+              <select className={inputClass} value={empForm.tipoContrato || 'dependencia'} onChange={(e) => setEmpForm({ ...empForm, tipoContrato: e.target.value })}>
+                <option value="dependencia">Dependencia</option>
+                <option value="parcial">Parcial</option>
+                <option value="otro">Otro</option>
+              </select>
+            </div>
+            <div className="space-y-2">
+              <label className={labelClass}>Horario entrada</label>
+              <input type="time" className={inputClass} value={empForm.horarioEntrada || ''} onChange={(e) => setEmpForm({ ...empForm, horarioEntrada: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <label className={labelClass}>Horario salida</label>
+              <input type="time" className={inputClass} value={empForm.horarioSalida || ''} onChange={(e) => setEmpForm({ ...empForm, horarioSalida: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <label className={labelClass}>Sueldo básico *</label>
+              <input type="number" required min={0} step="0.01" className={inputClass} value={empForm.sueldoBasico ?? 0} onChange={(e) => setEmpForm({ ...empForm, sueldoBasico: Number(e.target.value) })} />
+            </div>
+            <div className="space-y-2">
+              <label className={labelClass}>CBU</label>
+              <input className={inputClass} value={empForm.cbu || ''} onChange={(e) => setEmpForm({ ...empForm, cbu: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <label className={labelClass}>Teléfono</label>
+              <input className={inputClass} value={empForm.telefono || ''} onChange={(e) => setEmpForm({ ...empForm, telefono: e.target.value })} />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <label className={labelClass}>Dirección</label>
+              <input className={inputClass} value={empForm.direccion || ''} onChange={(e) => setEmpForm({ ...empForm, direccion: e.target.value })} />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <label className={labelClass}>Observaciones</label>
+              <textarea className={inputClass} rows={2} value={empForm.observaciones || ''} onChange={(e) => setEmpForm({ ...empForm, observaciones: e.target.value })} />
+            </div>
+          </div>
+          <div className="flex gap-4 pt-2">
+            <button type="button" onClick={() => setEmpModal(false)} className="flex-1 py-4 bg-slate-100 text-slate-600 font-black rounded-xl uppercase tracking-widest text-[10px]">Cancelar</button>
+            <button type="submit" disabled={saving} className="flex-[2] py-4 bg-orange-500 hover:bg-orange-600 text-white font-black rounded-xl shadow-xl uppercase tracking-widest text-[10px] disabled:opacity-50">
+              {saving ? 'Guardando...' : 'Guardar'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+    </div>
+  );
+
+  const renderAdelantos = () => (
+    <div className="space-y-8 animate-in fade-in duration-500">
+      <PageHeader
+        title="Adelantos"
+        subtitle="Anticipos a descontar en liquidación"
+        actionLabel="+ Nuevo Adelanto"
+        onAction={() => { setAdelantoForm({ empleadoId: '', fecha: hoyIso(), monto: 0, motivo: '' }); setAdelantoModal(true); }}
+      />
+      <Card className="border-none shadow-xl overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead className="bg-slate-800">
+              <tr>
+                <th className={thClass}>Empleado</th>
+                <th className={thClass}>Fecha</th>
+                <th className={thClass}>Monto</th>
+                <th className={thClass}>Motivo</th>
+                <th className={thClass}>Estado</th>
+                <th className={thClass + ' text-right'}>Acciones</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {(adelantos as RhAdelantoRow[]).length === 0 && (
+                <EmptyRow colSpan={6} text="No hay adelantos registrados" />
+              )}
+              {(adelantos as RhAdelantoRow[]).map((ad) => (
+                <tr key={ad.id} className="hover:bg-slate-50/50 transition-colors">
+                  <td className={tdClass}><span className="font-black text-sleek-dark uppercase">{nombreEmp(ad.empleadoId)}</span></td>
+                  <td className={tdClass}>{isoToDisplayDate(ad.fecha)}</td>
+                  <td className={tdClass}>$ {formatCurrency(ad.monto)}</td>
+                  <td className={tdClass}>{ad.motivo || '—'}</td>
+                  <td className={tdClass}>{badgeEstadoAd(ad.estado)}</td>
+                  <td className={tdClass + ' text-right'}>
+                    {ad.estado === 'pendiente' && (
+                      <button
+                        type="button"
+                        title="Eliminar"
+                        onClick={() => handleDeleteAdelanto(ad)}
+                        className="p-2 bg-slate-50 text-slate-400 hover:bg-rose-500 hover:text-white rounded transition-all shadow-sm"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <Modal isOpen={adelantoModal} onClose={() => setAdelantoModal(false)} title="Nuevo Adelanto">
+        <form onSubmit={handleSaveAdelanto} className="space-y-5">
+          <div className="space-y-2">
+            <label className={labelClass}>Empleado *</label>
+            <SearchableSelect
+              options={empOptions}
+              value={adelantoForm.empleadoId}
+              onChange={(v) => setAdelantoForm({ ...adelantoForm, empleadoId: v })}
+              placeholder="Buscar empleado..."
+            />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className={labelClass}>Fecha *</label>
+              <input type="date" required className={inputClass} value={adelantoForm.fecha} onChange={(e) => setAdelantoForm({ ...adelantoForm, fecha: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <label className={labelClass}>Monto *</label>
+              <input type="number" required min={0} step="0.01" className={inputClass} value={adelantoForm.monto} onChange={(e) => setAdelantoForm({ ...adelantoForm, monto: Number(e.target.value) })} />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <label className={labelClass}>Motivo</label>
+            <input className={inputClass} value={adelantoForm.motivo} onChange={(e) => setAdelantoForm({ ...adelantoForm, motivo: e.target.value })} />
+          </div>
+          <div className="flex gap-4 pt-2">
+            <button type="button" onClick={() => setAdelantoModal(false)} className="flex-1 py-4 bg-slate-100 text-slate-600 font-black rounded-xl uppercase tracking-widest text-[10px]">Cancelar</button>
+            <button type="submit" disabled={saving} className="flex-[2] py-4 bg-orange-500 hover:bg-orange-600 text-white font-black rounded-xl shadow-xl uppercase tracking-widest text-[10px] disabled:opacity-50">
+              {saving ? 'Guardando...' : 'Guardar'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+    </div>
+  );
+
+  const renderPresentismo = () => (
+    <div className="space-y-8 animate-in fade-in duration-500">
+      <PageHeader
+        title="Presentismo"
+        subtitle="Ausencias, licencias y tardanzas"
+        actionLabel="+ Registrar Ausencia"
+        onAction={() => {
+          setAusenciaForm({ empleadoId: '', fecha: hoyIso(), tipo: 'injustificada', justificada: false, impactaSueldo: false, observaciones: '' });
+          setAusenciaModal(true);
+        }}
+      />
+      <Card className="border-none shadow-xl overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead className="bg-slate-800">
+              <tr>
+                <th className={thClass}>Empleado</th>
+                <th className={thClass}>Fecha</th>
+                <th className={thClass}>Tipo</th>
+                <th className={thClass}>Justificada</th>
+                <th className={thClass}>Impacta Sueldo</th>
+                <th className={thClass}>Observaciones</th>
+                <th className={thClass + ' text-right'}>Acciones</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {(ausencias as RhAusenciaRow[]).length === 0 && (
+                <EmptyRow colSpan={7} text="No hay registros de presentismo" />
+              )}
+              {(ausencias as RhAusenciaRow[]).map((aus) => (
+                <tr key={aus.id} className="hover:bg-slate-50/50 transition-colors">
+                  <td className={tdClass}><span className="font-black text-sleek-dark uppercase">{nombreEmp(aus.empleadoId)}</span></td>
+                  <td className={tdClass}>{isoToDisplayDate(aus.fecha)}</td>
+                  <td className={tdClass}>{tipoAusenciaLabel[aus.tipo] || aus.tipo}</td>
+                  <td className={tdClass}>{aus.justificada ? 'Sí' : 'No'}</td>
+                  <td className={tdClass}>{aus.impactaSueldo ? 'Sí' : 'No'}</td>
+                  <td className={tdClass}>{aus.observaciones || '—'}</td>
+                  <td className={tdClass + ' text-right'}>
+                    <button
+                      type="button"
+                      title="Eliminar"
+                      onClick={() => handleDeleteAusencia(aus)}
+                      className="p-2 bg-slate-50 text-slate-400 hover:bg-rose-500 hover:text-white rounded transition-all shadow-sm"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <Modal isOpen={ausenciaModal} onClose={() => setAusenciaModal(false)} title="Registrar Ausencia">
+        <form onSubmit={handleSaveAusencia} className="space-y-5">
+          <div className="space-y-2">
+            <label className={labelClass}>Empleado *</label>
+            <SearchableSelect
+              options={empOptions}
+              value={ausenciaForm.empleadoId}
+              onChange={(v) => setAusenciaForm({ ...ausenciaForm, empleadoId: v })}
+              placeholder="Buscar empleado..."
+            />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className={labelClass}>Fecha *</label>
+              <input type="date" required className={inputClass} value={ausenciaForm.fecha} onChange={(e) => setAusenciaForm({ ...ausenciaForm, fecha: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <label className={labelClass}>Tipo *</label>
+              <select required className={inputClass} value={ausenciaForm.tipo} onChange={(e) => setAusenciaForm({ ...ausenciaForm, tipo: e.target.value as RhAusenciaRow['tipo'] })}>
+                <option value="injustificada">Injustificada</option>
+                <option value="enfermedad">Enfermedad</option>
+                <option value="vacaciones">Vacaciones</option>
+                <option value="licencia">Licencia</option>
+                <option value="tardanza">Tardanza</option>
+              </select>
+            </div>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-4">
+            <label className="flex items-center gap-3 p-4 bg-slate-50 rounded-xl border border-slate-100 flex-1">
+              <input type="checkbox" checked={ausenciaForm.justificada} onChange={(e) => setAusenciaForm({ ...ausenciaForm, justificada: e.target.checked })} className="w-5 h-5 rounded border-slate-300 text-sleek-accent focus:ring-sleek-accent" />
+              <span className="text-xs font-bold text-sleek-dark uppercase">Justificada</span>
+            </label>
+            <label className="flex items-center gap-3 p-4 bg-slate-50 rounded-xl border border-slate-100 flex-1">
+              <input type="checkbox" checked={ausenciaForm.impactaSueldo} onChange={(e) => setAusenciaForm({ ...ausenciaForm, impactaSueldo: e.target.checked })} className="w-5 h-5 rounded border-slate-300 text-sleek-accent focus:ring-sleek-accent" />
+              <span className="text-xs font-bold text-sleek-dark uppercase">Impacta sueldo</span>
+            </label>
+          </div>
+          <div className="space-y-2">
+            <label className={labelClass}>Observaciones</label>
+            <textarea className={inputClass} rows={2} value={ausenciaForm.observaciones} onChange={(e) => setAusenciaForm({ ...ausenciaForm, observaciones: e.target.value })} />
+          </div>
+          <div className="flex gap-4 pt-2">
+            <button type="button" onClick={() => setAusenciaModal(false)} className="flex-1 py-4 bg-slate-100 text-slate-600 font-black rounded-xl uppercase tracking-widest text-[10px]">Cancelar</button>
+            <button type="submit" disabled={saving} className="flex-[2] py-4 bg-orange-500 hover:bg-orange-600 text-white font-black rounded-xl shadow-xl uppercase tracking-widest text-[10px] disabled:opacity-50">
+              {saving ? 'Guardando...' : 'Guardar'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+    </div>
+  );
+
+  const renderLiquidaciones = () => (
+    <div className="space-y-8 animate-in fade-in duration-500">
+      <PageHeader
+        title="Liquidaciones"
+        subtitle="Sueldos, horas extra y descuentos"
+        actionLabel="+ Nueva Liquidación"
+        onAction={() => {
+          setLiqForm({ empleadoId: '', periodo: periodoActual(), sueldoBasico: 0, horasExtraQty: 0, horasExtraValor: 0, otrosDescuentos: 0, observaciones: '' });
+          setSelectedAdelantoIds([]);
+          setLiqModal('nueva');
+        }}
+      />
+      <Card className="border-none shadow-xl overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead className="bg-slate-800">
+              <tr>
+                <th className={thClass}>Empleado</th>
+                <th className={thClass}>Período</th>
+                <th className={thClass}>Sueldo Básico</th>
+                <th className={thClass}>Horas Extra</th>
+                <th className={thClass}>Adelantos</th>
+                <th className={thClass}>Otros Desc.</th>
+                <th className={thClass}>Neto a Pagar</th>
+                <th className={thClass}>Estado</th>
+                <th className={thClass + ' text-right'}>Acciones</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {(liquidaciones as RhLiquidacionRow[]).length === 0 && (
+                <EmptyRow colSpan={9} text="No hay liquidaciones registradas" />
+              )}
+              {(liquidaciones as RhLiquidacionRow[]).map((liq) => (
+                <tr key={liq.id} className="hover:bg-slate-50/50 transition-colors">
+                  <td className={tdClass}><span className="font-black text-sleek-dark uppercase">{nombreEmp(liq.empleadoId)}</span></td>
+                  <td className={tdClass}>{liq.periodo}</td>
+                  <td className={tdClass}>$ {formatCurrency(liq.sueldoBasico)}</td>
+                  <td className={tdClass}>{formatNumber(liq.horasExtraQty)} × $ {formatCurrency(liq.horasExtraValor)}</td>
+                  <td className={tdClass}>$ {formatCurrency(liq.adelantosDescontados)}</td>
+                  <td className={tdClass}>$ {formatCurrency(liq.otrosDescuentos)}</td>
+                  <td className={tdClass}><span className="font-black text-sleek-dark">$ {formatCurrency(liq.netoAPagar)}</span></td>
+                  <td className={tdClass}>{badgeEstadoLiq(liq.estado)}</td>
+                  <td className={tdClass + ' text-right'}>
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        title="Ver detalle"
+                        onClick={() => { setDetalleLiq(liq); setLiqModal('detalle'); }}
+                        className="p-2 bg-slate-50 text-slate-400 hover:bg-sleek-dark hover:text-white rounded transition-all shadow-sm"
+                      >
+                        <Eye className="w-4 h-4" />
+                      </button>
+                      {liq.estado !== 'pagado' && (
+                        <button
+                          type="button"
+                          title="Marcar pagado"
+                          disabled={saving}
+                          onClick={() => handleMarcarPagado(liq)}
+                          className="p-2 bg-slate-50 text-slate-400 hover:bg-emerald-600 hover:text-white rounded transition-all shadow-sm"
+                        >
+                          <DollarSign className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <Modal isOpen={liqModal === 'nueva'} onClose={() => setLiqModal(null)} title="Nueva Liquidación" className="max-w-3xl">
+        <div className="space-y-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className={labelClass}>Empleado *</label>
+              <SearchableSelect
+                options={empOptions}
+                value={liqForm.empleadoId}
+                onChange={(id) => {
+                  const emp = (empleados as RhEmpleadoRow[]).find((e) => e.id === id);
+                  setLiqForm({ ...liqForm, empleadoId: id, sueldoBasico: emp?.sueldoBasico ?? 0 });
+                  const pending = (adelantos as RhAdelantoRow[]).filter((a) => a.empleadoId === id && a.estado === 'pendiente');
+                  setSelectedAdelantoIds(pending.map((a) => a.id));
+                }}
+                placeholder="Buscar empleado..."
+              />
+            </div>
+            <div className="space-y-2">
+              <label className={labelClass}>Período *</label>
+              <input type="month" required className={inputClass} value={liqForm.periodo} onChange={(e) => setLiqForm({ ...liqForm, periodo: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <label className={labelClass}>Sueldo básico</label>
+              <input type="number" min={0} step="0.01" className={inputClass} value={liqForm.sueldoBasico} onChange={(e) => setLiqForm({ ...liqForm, sueldoBasico: Number(e.target.value) })} />
+            </div>
+            <div className="space-y-2">
+              <label className={labelClass}>Horas extra (cantidad)</label>
+              <input type="number" min={0} step="0.01" className={inputClass} value={liqForm.horasExtraQty} onChange={(e) => setLiqForm({ ...liqForm, horasExtraQty: Number(e.target.value) })} />
+            </div>
+            <div className="space-y-2">
+              <label className={labelClass}>Horas extra (valor unitario)</label>
+              <input type="number" min={0} step="0.01" className={inputClass} value={liqForm.horasExtraValor} onChange={(e) => setLiqForm({ ...liqForm, horasExtraValor: Number(e.target.value) })} />
+            </div>
+            <div className="space-y-2">
+              <label className={labelClass}>Otros descuentos</label>
+              <input type="number" min={0} step="0.01" className={inputClass} value={liqForm.otrosDescuentos} onChange={(e) => setLiqForm({ ...liqForm, otrosDescuentos: Number(e.target.value) })} />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className={labelClass}>Adelantos pendientes a descontar</label>
+            {adelantosPendientesEmp.length === 0 ? (
+              <p className="text-xs font-bold text-slate-400 italic px-1">No hay adelantos pendientes para este empleado</p>
+            ) : (
+              <div className="border border-slate-100 rounded-xl divide-y divide-slate-100 bg-slate-50">
+                {adelantosPendientesEmp.map((ad) => (
+                  <label key={ad.id} className="flex items-center gap-3 px-4 py-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={selectedAdelantoIds.includes(ad.id)}
+                      onChange={(e) => {
+                        setSelectedAdelantoIds((prev) =>
+                          e.target.checked ? [...prev, ad.id] : prev.filter((id) => id !== ad.id)
+                        );
+                      }}
+                      className="w-5 h-5 rounded border-slate-300 text-sleek-accent focus:ring-sleek-accent"
+                    />
+                    <span className="text-xs font-bold text-slate-600 flex-1">{isoToDisplayDate(ad.fecha)}{ad.motivo ? ' · ' + ad.motivo : ''}</span>
+                    <span className="text-xs font-black text-sleek-dark">$ {formatCurrency(ad.monto)}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-3 gap-3">
+            <div className="p-4 rounded-xl bg-slate-50 border border-slate-100">
+              <p className={labelClass}>Total bruto</p>
+              <p className="text-base font-black text-sleek-dark mt-1">$ {formatCurrency(totalBruto)}</p>
+            </div>
+            <div className="p-4 rounded-xl bg-rose-50 border border-rose-100">
+              <p className={labelClass}>Total descuentos</p>
+              <p className="text-base font-black text-rose-600 mt-1">$ {formatCurrency(totalDescuentos)}</p>
+            </div>
+            <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-100">
+              <p className={labelClass}>Neto a pagar</p>
+              <p className="text-base font-black text-emerald-700 mt-1">$ {formatCurrency(netoAPagar)}</p>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className={labelClass}>Observaciones</label>
+            <textarea className={inputClass} rows={2} value={liqForm.observaciones} onChange={(e) => setLiqForm({ ...liqForm, observaciones: e.target.value })} />
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-3 pt-2">
+            <button type="button" onClick={() => setLiqModal(null)} className="flex-1 py-4 bg-slate-100 text-slate-600 font-black rounded-xl uppercase tracking-widest text-[10px]">Cancelar</button>
+            <button type="button" disabled={saving} onClick={() => handleSaveLiquidacion('borrador')} className="flex-1 py-4 bg-slate-800 hover:bg-slate-900 text-white font-black rounded-xl uppercase tracking-widest text-[10px] disabled:opacity-50">
+              Guardar borrador
+            </button>
+            <button type="button" disabled={saving} onClick={() => handleSaveLiquidacion('pagado')} className="flex-[1.4] py-4 bg-orange-500 hover:bg-orange-600 text-white font-black rounded-xl shadow-xl uppercase tracking-widest text-[10px] disabled:opacity-50">
+              Liquidar y pagar
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal isOpen={liqModal === 'detalle'} onClose={() => setLiqModal(null)} title="Detalle de Liquidación">
+        {detalleLiq && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 text-xs font-bold text-slate-600">
+              <p><span className={labelClass + ' block mb-1'}>Empleado</span>{nombreEmp(detalleLiq.empleadoId)}</p>
+              <p><span className={labelClass + ' block mb-1'}>Período</span>{detalleLiq.periodo}</p>
+              <p><span className={labelClass + ' block mb-1'}>Sueldo básico</span>$ {formatCurrency(detalleLiq.sueldoBasico)}</p>
+              <p><span className={labelClass + ' block mb-1'}>Horas extra</span>{formatNumber(detalleLiq.horasExtraQty)} × $ {formatCurrency(detalleLiq.horasExtraValor)}</p>
+              <p><span className={labelClass + ' block mb-1'}>Adelantos</span>$ {formatCurrency(detalleLiq.adelantosDescontados)}</p>
+              <p><span className={labelClass + ' block mb-1'}>Otros descuentos</span>$ {formatCurrency(detalleLiq.otrosDescuentos)}</p>
+              <p><span className={labelClass + ' block mb-1'}>Total bruto</span>$ {formatCurrency(detalleLiq.totalBruto)}</p>
+              <p><span className={labelClass + ' block mb-1'}>Total descuentos</span>$ {formatCurrency(detalleLiq.totalDescuentos)}</p>
+              <p className="col-span-2"><span className={labelClass + ' block mb-1'}>Neto a pagar</span><span className="text-lg font-black text-sleek-dark">$ {formatCurrency(detalleLiq.netoAPagar)}</span></p>
+              <p><span className={labelClass + ' block mb-1'}>Estado</span>{badgeEstadoLiq(detalleLiq.estado)}</p>
+              <p><span className={labelClass + ' block mb-1'}>Fecha de pago</span>{detalleLiq.fechaPago ? isoToDisplayDate(detalleLiq.fechaPago) : '—'}</p>
+              {detalleLiq.observaciones && (
+                <p className="col-span-2"><span className={labelClass + ' block mb-1'}>Observaciones</span>{detalleLiq.observaciones}</p>
+              )}
+            </div>
+            <button type="button" onClick={() => setLiqModal(null)} className="w-full py-4 bg-slate-800 text-white font-black rounded-xl uppercase tracking-widest text-[10px]">Cerrar</button>
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
+
+  if (activeSubSection === 'Adelantos') return renderAdelantos();
+  if (activeSubSection === 'Presentismo') return renderPresentismo();
+  if (activeSubSection === 'Liquidaciones') return renderLiquidaciones();
+  return renderEmpleados();
+};
+
 // --- EGRESOS VIEWS ---
 
 const PlanCuentasView = ({ planCuentas, setPlanCuentas, showNotification }: any) => {
@@ -25590,6 +26498,12 @@ export default function App() {
   const [clientes, setClientes] = useState<Cliente[]>(INITIAL_CLIENTES);
   const [listasPrecios, setListasPrecios] = useState<ListaPrecio[]>(INITIAL_LISTAS_PRECIOS);
   const [puntosVenta, setPuntosVenta] = useState<PuntoVenta[]>(INITIAL_PUNTOS_VENTA);
+  const [rhEmpleados, setRhEmpleados] = useState<RhEmpleadoRow[]>([]);
+  const [rhAdelantos, setRhAdelantos] = useState<RhAdelantoRow[]>([]);
+  const [rhAusencias, setRhAusencias] = useState<RhAusenciaRow[]>([]);
+  const [rhLiquidaciones, setRhLiquidaciones] = useState<RhLiquidacionRow[]>([]);
+  const [rhLoading, setRhLoading] = useState(false);
+
   const [ventas, setVentas] = useState<Venta[]>(INITIAL_VENTAS);
   const ventasRef = useRef<Venta[]>(INITIAL_VENTAS);
   const [cobrosClientes, setCobrosClientes] = useState<any[]>([]);
@@ -25640,10 +26554,28 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (activeModule === 'RRHH' && currentUser) {
+      setRhLoading(true);
+      Promise.all([loadRhEmpleados(), loadRhAdelantos(), loadRhAusencias(), loadRhLiquidaciones()])
+        .then(([emps, ads, aus, liqs]) => {
+          setRhEmpleados(emps);
+          setRhAdelantos(ads);
+          setRhAusencias(aus);
+          setRhLiquidaciones(liqs);
+        })
+        .finally(() => setRhLoading(false));
+    }
     if (activeModule === 'FINANZAS' && currentUser && (hasPermission(currentUser, 'FINANZAS', 'Tesorería') || hasPermission(currentUser, 'FINANZAS', 'Proyección') || hasPermission(currentUser, 'FINANZAS', 'Posición'))) {
       reloadTesoreria();
     }
   }, [activeModule, currentUser, reloadTesoreria]);
+
+  const reloadRRHH = async () => {
+    const [emps, ads, aus, liqs] = await Promise.all([
+      loadRhEmpleados(), loadRhAdelantos(), loadRhAusencias(), loadRhLiquidaciones()
+    ]);
+    setRhEmpleados(emps); setRhAdelantos(ads); setRhAusencias(aus); setRhLiquidaciones(liqs);
+  };
 
   useEffect(() => {
     if (activeModule === 'FINANZAS' && currentUser && (hasPermission(currentUser, 'FINANZAS', 'Cheques') || hasPermission(currentUser, 'FINANZAS', 'Proyección') || hasPermission(currentUser, 'FINANZAS', 'Posición'))) {
@@ -26726,6 +27658,21 @@ export default function App() {
         setMercaderiaPendiente={setMercaderiaPendiente}
       />
     )}
+            {activeModule === 'RRHH' && (
+              <RRHHModule
+                activeSubSection={activeSubSection}
+                empleados={rhEmpleados}
+                adelantos={rhAdelantos}
+                ausencias={rhAusencias}
+                liquidaciones={rhLiquidaciones}
+                loading={rhLoading}
+                currentUser={currentUser}
+                showNotification={showNotification}
+                onReload={reloadRRHH}
+                egresos={egresos}
+                setEgresos={setEgresos}
+              />
+            )}
             {activeModule === 'USUARIOS' && activeSubSection === 'Gestión de Usuarios' && (
               <UsuariosView 
                 users={users}
