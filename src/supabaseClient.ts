@@ -42,15 +42,22 @@ export async function saveToSupabase(key: string, value: any): Promise<void> {
   }
 }
 
-export async function loadAllData(keys: string[], initials: Record<string, any>): Promise<Record<string, any>> {
+export async function loadAllData(
+  keys: string[],
+  initials: Record<string, any>
+): Promise<{ data: Record<string, any>; ok: boolean; error: string | null }> {
   try {
     const { data, error } = await supabase
       .from('app_data')
       .select('key, value')
       .in('key', keys);
 
-    if (error || !data) {
-      return initials;
+    if (error) {
+      // La lectura FALLÓ: devolver ok:false para que la app NO cargue semilla ni guarde
+      return { data: initials, ok: false, error: error.message || 'Error de lectura' };
+    }
+    if (!data) {
+      return { data: initials, ok: false, error: 'Respuesta vacía de Supabase' };
     }
 
     const result: Record<string, any> = { ...initials };
@@ -59,9 +66,9 @@ export async function loadAllData(keys: string[], initials: Record<string, any>)
         result[row.key] = row.value;
       }
     }
-    return result;
-  } catch {
-    return initials;
+    return { data: result, ok: true, error: null };
+  } catch (e: any) {
+    return { data: initials, ok: false, error: e?.message || 'Excepción en la lectura' };
   }
 }
 

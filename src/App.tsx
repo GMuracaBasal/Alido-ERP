@@ -26431,6 +26431,7 @@ export default function App() {
 
   // --- State ---
   const [isLoading, setIsLoading] = useState(true);
+  const [cargaFallida, setCargaFallida] = useState(false);
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
     const stored = localStorage.getItem('alido_logged_user');
     return stored ? JSON.parse(stored) : null;
@@ -26634,7 +26635,21 @@ export default function App() {
       alido_mercaderia_pendiente: []
     };
 
-    loadAllData(DATA_KEYS, INITIALS).then((d) => {
+    loadAllData(DATA_KEYS, INITIALS).then((resultado) => {
+      const d = resultado.data;
+
+      // ─── PROTECCIÓN CRÍTICA ───
+      // Si la lectura de Supabase FALLÓ, NO cargar datos semilla y NO habilitar el guardado.
+      // Esto evita que un error de red pise los datos reales con los de ejemplo.
+      if (!resultado.ok) {
+        console.error('⚠️ CARGA FALLIDA desde Supabase:', resultado.error);
+        setIsLoading(false);
+        setCargaFallida(true); // muestra pantalla de error
+        // loadOkRef queda en false → el auto-save nunca se dispara
+        return;
+      }
+      loadOkRef.current = true;
+
       setUsers(d.alido_users?.length ? d.alido_users : INITIAL_USERS);
       setAlmacenes(d.alido_almacenes);
       setFamilias(d.alido_familias);
@@ -26811,6 +26826,7 @@ export default function App() {
   // --- Persistence: Save to Supabase (debounced) ---
   const saveTimerRef = useRef<any>(null);
   const dataLoadedRef = useRef(false);
+  const loadOkRef = useRef(false); // true solo si la carga inicial desde Supabase fue exitosa
   const isApplyingRemoteRef = useRef(false);
   const lastSyncRef = useRef(new Date().toISOString());
 
@@ -26825,6 +26841,9 @@ export default function App() {
   const MAESTROS_KEYS = [
     'alido_proveedores', 'alido_egresos', 'alido_pagos_proveedores',
     'alido_tipos_egreso', 'alido_plan_cuentas', 'alido_clientes', 'alido_cobros_clientes',
+    'alido_productos', 'alido_users', 'alido_listas_precios', 'alido_familias',
+    'alido_subfamilias', 'alido_unidades_medida', 'alido_almacenes', 'alido_puntos_venta',
+    'alido_recetas', 'alido_plantillas_despiece',
   ];
 
   // --- NUEVO: Trackear última versión válida de datos críticos ---
@@ -26854,14 +26873,20 @@ export default function App() {
       alido_pagos_proveedores: pagosProveedores, alido_tipos_egreso: tiposEgreso,
       alido_plan_cuentas: planCuentas, alido_clientes: clientes,
       alido_cobros_clientes: cobrosClientes,
+      alido_productos: productos, alido_users: users,
+      alido_listas_precios: listasPrecios, alido_familias: familias,
+      alido_subfamilias: subfamilias, alido_unidades_medida: unidades,
+      alido_almacenes: almacenes, alido_puntos_venta: puntosVenta,
+      alido_recetas: recetas, alido_plantillas_despiece: plantillasDespiece,
     };
     MAESTROS_KEYS.forEach((k) => {
       if (Array.isArray(snap[k]) && snap[k].length > 0) lastKnownMaestrosRef.current[k] = snap[k];
     });
-  }, [proveedores, egresos, pagosProveedores, tiposEgreso, planCuentas, clientes, cobrosClientes]);
+  }, [proveedores, egresos, pagosProveedores, tiposEgreso, planCuentas, clientes, cobrosClientes, productos, users, listasPrecios, familias, subfamilias, unidades, almacenes, puntosVenta, recetas, plantillasDespiece]);
 
   useEffect(() => {
     if (isLoading) return; // Don't save while loading from Supabase
+    if (!loadOkRef.current) return; // ⚠️ CRÍTICO: no guardar si la carga inicial NO fue exitosa
     if (isApplyingRemoteRef.current) return; // Don't save when applying remote changes
     if (!dataLoadedRef.current) {
       dataLoadedRef.current = true;
@@ -27280,6 +27305,24 @@ export default function App() {
       </div>
     </div>
   );
+
+  if (cargaFallida) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: '16px', background: '#1A2B3C', color: 'white', padding: '24px', textAlign: 'center' }}>
+        <h1 style={{ fontSize: '24px', fontWeight: 'bold' }}>No se pudieron cargar los datos</h1>
+        <p style={{ maxWidth: '480px', opacity: 0.8 }}>
+          Hubo un problema al conectar con la base de datos. Para proteger tu información,
+          la aplicación no se cargó. Revisá tu conexión y volvé a intentar. NO se modificó ningún dato.
+        </p>
+        <button
+          onClick={() => window.location.reload()}
+          style={{ background: '#F27D26', color: 'white', border: 'none', padding: '12px 24px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}
+        >
+          Reintentar
+        </button>
+      </div>
+    );
+  }
 
   if (!currentUser) return <LoginView onLogin={handleLogin} />;
 
