@@ -945,22 +945,16 @@ function mapPagoProveedor(r: any): PagoProveedorRow {
 
 // --- Carga completa ---
 
-export async function loadEgresos(): Promise<EgresoRow[]> {
+export async function loadEgresos(): Promise<{ data: EgresoRow[]; ok: boolean }> {
   try {
     const [egresosRes, itemsRes] = await Promise.all([
-      supabase
-        .from('egresos')
-        .select('*')
-        .order('fecha', { ascending: false }),
-      supabase
-        .from('egreso_items')
-        .select('*')
-        .order('orden', { ascending: true }),
+      supabase.from('egresos').select('*').order('fecha', { ascending: false }),
+      supabase.from('egreso_items').select('*').order('orden', { ascending: true }),
     ]);
 
     if (egresosRes.error || itemsRes.error) {
       console.error('loadEgresos error:', egresosRes.error || itemsRes.error);
-      return [];
+      return { data: [], ok: false }; // ⚠️ La lectura FALLÓ
     }
 
     const itemsByEgreso: Record<string, EgresoItemRow[]> = {};
@@ -970,16 +964,15 @@ export async function loadEgresos(): Promise<EgresoRow[]> {
       itemsByEgreso[eId].push(mapEgresoItem(item, idx));
     }
 
-    return (egresosRes.data || []).map((r) =>
-      mapEgreso(r, itemsByEgreso[r.id] || [])
-    );
+    const data = (egresosRes.data || []).map((r) => mapEgreso(r, itemsByEgreso[r.id] || []));
+    return { data, ok: true }; // Lectura exitosa (aunque data esté vacía, es válido)
   } catch (err) {
     console.error('loadEgresos exception:', err);
-    return [];
+    return { data: [], ok: false };
   }
 }
 
-export async function loadPagosProveedores(): Promise<PagoProveedorRow[]> {
+export async function loadPagosProveedores(): Promise<{ data: PagoProveedorRow[]; ok: boolean }> {
   try {
     const { data, error } = await supabase
       .from('pagos_proveedores')
@@ -988,12 +981,12 @@ export async function loadPagosProveedores(): Promise<PagoProveedorRow[]> {
 
     if (error) {
       console.error('loadPagosProveedores error:', error);
-      return [];
+      return { data: [], ok: false };
     }
-    return (data || []).map(mapPagoProveedor);
+    return { data: (data || []).map(mapPagoProveedor), ok: true };
   } catch (err) {
     console.error('loadPagosProveedores exception:', err);
-    return [];
+    return { data: [], ok: false };
   }
 }
 
