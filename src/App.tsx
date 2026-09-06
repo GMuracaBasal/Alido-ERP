@@ -3227,8 +3227,6 @@ const MERGE_KEYS = [
   'alido_ventas',
   'alido_movimientos',
   'alido_cobros_clientes',
-  'alido_pagos_proveedores',
-  'alido_egresos',
 ];
 
 const isCobroClienteActivo = (c: any) => !c?.anulado && c?.estado !== 'Anulado';
@@ -18431,7 +18429,7 @@ const ListasPreciosView = ({ listasPrecios, setListasPrecios, productos, familia
 const RRHHModule = ({
   activeSubSection, empleados, adelantos, ausencias, liquidaciones,
   loading, currentUser, showNotification, onReload,
-  egresos, setEgresos,
+  egresos, setEgresos, egresosCargadosOkRef,
 }: any) => {
   const hoyIso = () => new Date().toISOString().split('T')[0];
   const periodoActual = () => new Date().toISOString().slice(0, 7);
@@ -18534,6 +18532,10 @@ const RRHHModule = ({
   const labelClass = 'text-[10px] font-bold text-slate-400 uppercase tracking-widest';
 
   const crearEgresoYVincular = async (liq: RhLiquidacionRow, empNombre: string) => {
+    if (!egresosCargadosOkRef?.current) {
+      showNotification('No se puede guardar: los egresos no se cargaron correctamente. Recargá la página.', 'error');
+      return;
+    }
     const hoy = hoyIso();
     const nuevoEgreso = {
       id: crypto.randomUUID(),
@@ -19663,7 +19665,7 @@ const TiposEgresoView = ({ tiposEgreso, setTiposEgreso, planCuentas, showNotific
   );
 };
 
-const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPagosProveedores, egresos, setEgresos, tiposEgreso, planCuentas, showNotification, tesoreriaCuentas = [], chequesRecibidos = [], reloadCheques, proveedorAAbrir = null, onProveedorAbierto, productos = [] }: any) => {
+const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPagosProveedores, egresos, setEgresos, tiposEgreso, planCuentas, showNotification, tesoreriaCuentas = [], chequesRecibidos = [], reloadCheques, proveedorAAbrir = null, onProveedorAbierto, productos = [], pagosCargadosOkRef }: any) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isPagoModalOpen, setIsPagoModalOpen] = useState(false);
@@ -19927,6 +19929,10 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
 
   const handleSavePago = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!pagosCargadosOkRef?.current) {
+      showNotification('No se puede guardar: los pagos a proveedores no se cargaron correctamente. Recargá la página.', 'error');
+      return;
+    }
     const esAjuste = pagoData.tipoMovimiento === 'Ajuste';
     const hoyIso = new Date().toISOString().split('T')[0];
     const fechaMovimiento = pagoData.fecha || hoyIso;
@@ -21735,7 +21741,8 @@ const EgresosView = ({
   lotesProduccion = [],
   lotesDespiece = [],
   currentUser,
-  showNotification 
+  showNotification,
+  egresosCargadosOkRef,
 }: any) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -21830,6 +21837,10 @@ const EgresosView = ({
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!egresosCargadosOkRef?.current) {
+      showNotification('No se puede guardar: los egresos no se cargaron correctamente. Recargá la página.', 'error');
+      return;
+    }
     if (editingItem.items.length === 0) {
       showNotification('Debe agregar al menos un item', 'error');
       return;
@@ -26613,7 +26624,7 @@ export default function App() {
       'alido_descuentos_pendientes', 'alido_clientes', 'alido_listas_precios',
       'alido_puntos_venta', 'alido_ventas', 'alido_cobros_clientes',
       'alido_plan_cuentas', 'alido_tipos_egreso', 'alido_proveedores',
-      'alido_egresos', 'alido_pagos_proveedores', 'alido_plantillas_egresos',
+      'alido_plantillas_egresos',
       'alido_mercaderia_pendiente'
     ];
     const INITIALS: Record<string, any> = {
@@ -26630,8 +26641,7 @@ export default function App() {
       alido_listas_precios: INITIAL_LISTAS_PRECIOS, alido_puntos_venta: INITIAL_PUNTOS_VENTA,
       alido_ventas: INITIAL_VENTAS, alido_cobros_clientes: [],
       alido_plan_cuentas: INITIAL_PLAN_CUENTAS, alido_tipos_egreso: INITIAL_TIPOS_EGRESO,
-      alido_proveedores: INITIAL_PROVEEDORES, alido_egresos: INITIAL_EGRESOS,
-      alido_pagos_proveedores: [], alido_plantillas_egresos: [],
+      alido_proveedores: INITIAL_PROVEEDORES, alido_plantillas_egresos: [],
       alido_mercaderia_pendiente: []
     };
 
@@ -26696,14 +26706,27 @@ export default function App() {
 
       setIsLoading(false);
 
-      // Cargar egresos y pagos desde tablas relacionales (en paralelo, no bloquean el arranque)
-      loadEgresos().then((rows) => {
-        if (rows.length > 0) setEgresos(rows as any);
+      // Cargar egresos y pagos desde tablas relacionales.
+      // Si la lectura FALLA, no pisar el estado y avisar (ya NO hay blob de respaldo).
+      loadEgresos().then((res) => {
+        if (res.ok) {
+          setEgresos(res.data as any);
+          egresosCargadosOkRef.current = true;
+        } else {
+          console.error('⚠️ Carga de egresos relacionales FALLÓ. No se habilita el guardado de egresos.');
+          showNotification('No se pudieron cargar los egresos. Recargá la página.', 'error');
+        }
       }).catch((err) => console.error('Error cargando egresos relacionales:', err));
 
-      loadPagosProveedores().then((rows) => {
-        if (rows.length > 0) setPagosProveedores(rows as any);
-      }).catch((err) => console.error('Error cargando pagos proveedores relacionales:', err));
+      loadPagosProveedores().then((res) => {
+        if (res.ok) {
+          setPagosProveedores(res.data as any);
+          pagosCargadosOkRef.current = true;
+        } else {
+          console.error('⚠️ Carga de pagos proveedores relacionales FALLÓ.');
+          showNotification('No se pudieron cargar los pagos a proveedores. Recargá la página.', 'error');
+        }
+      }).catch((err) => console.error('Error cargando pagos relacionales:', err));
     });
   }, []);
 
@@ -26827,6 +26850,8 @@ export default function App() {
   const saveTimerRef = useRef<any>(null);
   const dataLoadedRef = useRef(false);
   const loadOkRef = useRef(false); // true solo si la carga inicial desde Supabase fue exitosa
+  const egresosCargadosOkRef = useRef(false);
+  const pagosCargadosOkRef = useRef(false);
   const isApplyingRemoteRef = useRef(false);
   const lastSyncRef = useRef(new Date().toISOString());
 
@@ -26839,7 +26864,7 @@ export default function App() {
   // --- Protección extendida para datos maestros/financieros ---
   const lastKnownMaestrosRef = useRef<Record<string, any[]>>({});
   const MAESTROS_KEYS = [
-    'alido_proveedores', 'alido_egresos', 'alido_pagos_proveedores',
+    'alido_proveedores',
     'alido_tipos_egreso', 'alido_plan_cuentas', 'alido_clientes', 'alido_cobros_clientes',
     'alido_productos', 'alido_users', 'alido_listas_precios', 'alido_familias',
     'alido_subfamilias', 'alido_unidades_medida', 'alido_almacenes', 'alido_puntos_venta',
@@ -26869,8 +26894,7 @@ export default function App() {
 
   useEffect(() => {
     const snap: Record<string, any[]> = {
-      alido_proveedores: proveedores, alido_egresos: egresos,
-      alido_pagos_proveedores: pagosProveedores, alido_tipos_egreso: tiposEgreso,
+      alido_proveedores: proveedores, alido_tipos_egreso: tiposEgreso,
       alido_plan_cuentas: planCuentas, alido_clientes: clientes,
       alido_cobros_clientes: cobrosClientes,
       alido_productos: productos, alido_users: users,
@@ -26882,7 +26906,7 @@ export default function App() {
     MAESTROS_KEYS.forEach((k) => {
       if (Array.isArray(snap[k]) && snap[k].length > 0) lastKnownMaestrosRef.current[k] = snap[k];
     });
-  }, [proveedores, egresos, pagosProveedores, tiposEgreso, planCuentas, clientes, cobrosClientes, productos, users, listasPrecios, familias, subfamilias, unidades, almacenes, puntosVenta, recetas, plantillasDespiece]);
+  }, [proveedores, tiposEgreso, planCuentas, clientes, cobrosClientes, productos, users, listasPrecios, familias, subfamilias, unidades, almacenes, puntosVenta, recetas, plantillasDespiece]);
 
   useEffect(() => {
     if (isLoading) return; // Don't save while loading from Supabase
@@ -26921,7 +26945,6 @@ export default function App() {
         alido_puntos_venta: puntosVenta, alido_ventas: ventas,
         alido_cobros_clientes: cobrosClientes, alido_plan_cuentas: planCuentas,
         alido_tipos_egreso: tiposEgreso, alido_proveedores: proveedores,
-        alido_egresos: egresos, alido_pagos_proveedores: pagosProveedores,
         alido_plantillas_egresos: plantillasEgresos, alido_mercaderia_pendiente: mercaderiaPendiente
       };
 
@@ -26989,7 +27012,7 @@ export default function App() {
         } catch {}
       });
     }, 800); // Debounce 800ms to batch rapid changes
-  }, [users, almacenes, familias, subfamilias, unidades, productos, stockSeguridad, movimientos, recetas, recetasHistorial, lotesProduccion, lotesHistorial, plantillasDespiece, plantillasDespieceHistorial, lotesDespiece, lotesDespieceHistorial, lotesEtiquetados, descuentosPendientes, clientes, listasPrecios, puntosVenta, ventas, cobrosClientes, planCuentas, tiposEgreso, proveedores, egresos, pagosProveedores, plantillasEgresos, mercaderiaPendiente, isLoading]);
+  }, [users, almacenes, familias, subfamilias, unidades, productos, stockSeguridad, movimientos, recetas, recetasHistorial, lotesProduccion, lotesHistorial, plantillasDespiece, plantillasDespieceHistorial, lotesDespiece, lotesDespieceHistorial, lotesEtiquetados, descuentosPendientes, clientes, listasPrecios, puntosVenta, ventas, cobrosClientes, planCuentas, tiposEgreso, proveedores, plantillasEgresos, mercaderiaPendiente, isLoading]);
 
   // --- Realtime Sync: poll for changes from other users every 10 seconds ---
   useEffect(() => {
@@ -27009,7 +27032,6 @@ export default function App() {
       alido_puntos_venta: setPuntosVenta, alido_ventas: setVentas,
       alido_cobros_clientes: setCobrosClientes, alido_plan_cuentas: setPlanCuentas,
       alido_tipos_egreso: setTiposEgreso, alido_proveedores: setProveedores,
-      alido_egresos: setEgresos, alido_pagos_proveedores: setPagosProveedores,
       alido_plantillas_egresos: setPlantillasEgresos, alido_mercaderia_pendiente: setMercaderiaPendiente
     };
 
@@ -27080,14 +27102,6 @@ export default function App() {
 
             if (key === 'alido_cobros_clientes' && Array.isArray(value)) {
               setCobrosClientes((localData: any[]) => unionById(value, localData));
-              return;
-            }
-            if (key === 'alido_pagos_proveedores' && Array.isArray(value)) {
-              setPagosProveedores((localData: any[]) => unionById(value, localData));
-              return;
-            }
-            if (key === 'alido_egresos' && Array.isArray(value)) {
-              setEgresos((localData: any[]) => unionById(value, localData));
               return;
             }
 
@@ -27714,6 +27728,7 @@ export default function App() {
                 onReload={reloadRRHH}
                 egresos={egresos}
                 setEgresos={setEgresos}
+                egresosCargadosOkRef={egresosCargadosOkRef}
               />
             )}
             {activeModule === 'USUARIOS' && activeSubSection === 'Gestión de Usuarios' && (
@@ -27816,6 +27831,7 @@ export default function App() {
                 lotesDespiece={lotesDespiece}
                 currentUser={currentUser}
                 showNotification={showNotification}
+                egresosCargadosOkRef={egresosCargadosOkRef}
               />
             )}
             {activeModule === 'EGRESOS' && activeSubSection === 'Dashboard Egresos' && (
@@ -27845,6 +27861,7 @@ export default function App() {
                 proveedorAAbrir={proveedorAAbrir}
                 onProveedorAbierto={() => setProveedorAAbrir(null)}
                 productos={productos}
+                pagosCargadosOkRef={pagosCargadosOkRef}
               />
             )}
             {activeModule === 'EGRESOS' && activeSubSection === 'Tipos de Egreso' && (
