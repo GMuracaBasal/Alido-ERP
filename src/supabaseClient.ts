@@ -1165,6 +1165,161 @@ export async function anularPagoProveedorRelacional(
 }
 
 // ============================================================
+// CLIENTES (relacional) — tablas: clientes, cliente_sucursales, cliente_descuentos
+// ============================================================
+
+export type ClienteRow = {
+  id: string;
+  razonSocial: string;
+  cuit?: string;
+  canal: string;
+  listaPrecioId: string;
+  condicionPago: string;
+  topeCredito?: number;
+  telefono?: string;
+  email?: string;
+  observaciones?: string;
+  estado: string;
+  sucursales: any[];
+  descuentosEspeciales: any[];
+};
+
+function mapCliente(r: any, sucursales: any[], descuentos: any[]): ClienteRow {
+  return {
+    id: r.id,
+    razonSocial: r.razon_social,
+    cuit: r.cuit || undefined,
+    canal: r.canal,
+    listaPrecioId: r.lista_precio_id,
+    condicionPago: r.condicion_pago,
+    topeCredito: r.tope_credito ?? undefined,
+    telefono: r.telefono || undefined,
+    email: r.email || undefined,
+    observaciones: r.observaciones || undefined,
+    estado: r.estado,
+    sucursales,
+    descuentosEspeciales: descuentos,
+  };
+}
+
+function mapSucursal(s: any): any {
+  return {
+    id: s.id,
+    nombre: s.nombre,
+    direccion: s.direccion || '',
+    telefono: s.telefono || undefined,
+    responsable: s.responsable || undefined,
+    horarioEntrega: s.horario_entrega || undefined,
+  };
+}
+
+// Devuelve { data, ok } — ok:false SOLO si la lectura falló (patrón anti-pérdida de datos)
+export async function loadClientes(): Promise<{ data: ClienteRow[]; ok: boolean }> {
+  try {
+    const [cliRes, sucRes, descRes] = await Promise.all([
+      supabase.from('clientes').select('*').order('razon_social', { ascending: true }),
+      supabase.from('cliente_sucursales').select('*'),
+      supabase.from('cliente_descuentos').select('*'),
+    ]);
+
+    if (cliRes.error || sucRes.error || descRes.error) {
+      console.error('loadClientes error:', cliRes.error || sucRes.error || descRes.error);
+      return { data: [], ok: false };
+    }
+
+    const sucByCliente: Record<string, any[]> = {};
+    for (const s of sucRes.data || []) {
+      if (!sucByCliente[s.cliente_id]) sucByCliente[s.cliente_id] = [];
+      sucByCliente[s.cliente_id].push(mapSucursal(s));
+    }
+
+    const descByCliente: Record<string, any[]> = {};
+    for (const d of descRes.data || []) {
+      if (!descByCliente[d.cliente_id]) descByCliente[d.cliente_id] = [];
+      descByCliente[d.cliente_id].push({ productoId: d.producto_id, porcentaje: Number(d.porcentaje) });
+    }
+
+    const data = (cliRes.data || []).map((r) =>
+      mapCliente(r, sucByCliente[r.id] || [], descByCliente[r.id] || [])
+    );
+    return { data, ok: true };
+  } catch (err) {
+    console.error('loadClientes exception:', err);
+    return { data: [], ok: false };
+  }
+}
+
+// Guarda un cliente con sus sucursales y descuentos (patrón padre + hijos, igual que egresos)
+export async function saveClienteRelacional(cliente: ClienteRow): Promise<boolean> {
+  try {
+    const now = new Date().toISOString();
+
+    // 1. Upsert del cliente
+    const { error: cErr } = await supabase
+      .from('clientes')
+      .upsert({
+        id: cliente.id,
+        razon_social: cliente.razonSocial,
+        cuit: cliente.cuit || null,
+        canal: cliente.canal,
+        lista_precio_id: cliente.listaPrecioId,
+        condicion_pago: cliente.condicionPago,
+        tope_credito: cliente.topeCredito ?? 0,
+        telefono: cliente.telefono || null,
+        email: cliente.email || null,
+        observaciones: cliente.observaciones || null,
+        estado: cliente.estado,
+        updated_by: SESSION_ID,
+        updated_at: now,
+      }, { onConflict: 'id' });
+
+    if (cErr) {
+      console.error('saveClienteRelacional - cliente error:', cErr);
+      return false;
+    }
+
+    // 2. Sucursales: borrar las viejas y reinsertar las actuales
+    await supabase.from('cliente_sucursales').delete().eq('cliente_id', cliente.id);
+    if (cliente.sucursales && cliente.sucursales.length > 0) {
+      const sucRows = cliente.sucursales.map((s: any) => ({
+        id: s.id,
+        cliente_id: cliente.id,
+        nombre: s.nombre,
+        direccion: s.direccion || null,
+        telefono: s.telefono || null,
+        responsable: s.responsable || null,
+        horario_entrega: s.horarioEntrega || null,
+      }));
+      const { error: sErr } = await supabase.from('cliente_sucursales').insert(sucRows);
+      if (sErr) {
+        console.error('saveClienteRelacional - sucursales error:', sErr);
+        return false;
+      }
+    }
+
+    // 3. Descuentos: borrar los viejos y reinsertar los actuales
+    await supabase.from('cliente_descuentos').delete().eq('cliente_id', cliente.id);
+    if (cliente.descuentosEspeciales && cliente.descuentosEspeciales.length > 0) {
+      const descRows = cliente.descuentosEspeciales.map((d: any) => ({
+        cliente_id: cliente.id,
+        producto_id: d.productoId,
+        porcentaje: d.porcentaje ?? 0,
+      }));
+      const { error: dErr } = await supabase.from('cliente_descuentos').insert(descRows);
+      if (dErr) {
+        console.error('saveClienteRelacional - descuentos error:', dErr);
+        return false;
+      }
+    }
+
+    return true;
+  } catch (err) {
+    console.error('saveClienteRelacional exception:', err);
+    return false;
+  }
+}
+
+// ============================================================
 // RRHH — tablas relacionales
 // ============================================================
 

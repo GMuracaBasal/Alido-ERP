@@ -34,6 +34,8 @@ import {
   loadEgresos,
   loadPagosProveedores,
   saveEgresoRelacional,
+  loadClientes,
+  saveClienteRelacional,
   loadRhEmpleados, saveRhEmpleado,
   loadRhAdelantos, saveRhAdelanto,
   loadRhAusencias, saveRhAusencia,
@@ -16914,6 +16916,14 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
       return;
     }
 
+    // Guardar en tablas relacionales (fuente principal)
+    saveClienteRelacional(formCliente).then((ok) => {
+      if (!ok) {
+        showNotification('Error al guardar el cliente en la base. Reintentá.', 'error');
+      }
+    });
+
+    // CONVIVENCIA: actualizar estado local (esto también persiste el blob en paralelo)
     if (clientes.find((c: any) => c.id === formCliente.id)) {
       setClientes(clientes.map((c: any) => c.id === formCliente.id ? formCliente : c));
       showNotification('Cliente actualizado con éxito', 'success');
@@ -17859,7 +17869,11 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
                         <button 
                           onClick={() => {
                             const nuevoEstado = cliente.estado === 'Activo' ? 'Inactivo' : 'Activo';
-                            setClientes(clientes.map((c: any) => c.id === cliente.id ? { ...c, estado: nuevoEstado } : c));
+                            const clienteActualizado = { ...cliente, estado: nuevoEstado };
+                            saveClienteRelacional(clienteActualizado).then((ok) => {
+                              if (!ok) showNotification('Error al actualizar el estado en la base.', 'error');
+                            });
+                            setClientes(clientes.map((c: any) => c.id === cliente.id ? clienteActualizado : c));
                             showNotification(`Cliente ${nuevoEstado === 'Activo' ? 'activado' : 'desactivado'}`, 'success');
                           }}
                           className={cn(
@@ -26727,6 +26741,16 @@ export default function App() {
           showNotification('No se pudieron cargar los pagos a proveedores. Recargá la página.', 'error');
         }
       }).catch((err) => console.error('Error cargando pagos relacionales:', err));
+
+      loadClientes().then((res) => {
+        if (res.ok) {
+          setClientes(res.data as any);
+          clientesCargadosOkRef.current = true;
+        } else {
+          console.error('⚠️ Carga de clientes relacionales FALLÓ.');
+          showNotification('No se pudieron cargar los clientes. Recargá la página.', 'error');
+        }
+      }).catch((err) => console.error('Error cargando clientes relacionales:', err));
     });
   }, []);
 
@@ -26852,6 +26876,7 @@ export default function App() {
   const loadOkRef = useRef(false); // true solo si la carga inicial desde Supabase fue exitosa
   const egresosCargadosOkRef = useRef(false);
   const pagosCargadosOkRef = useRef(false);
+  const clientesCargadosOkRef = useRef(false);
   const isApplyingRemoteRef = useRef(false);
   const lastSyncRef = useRef(new Date().toISOString());
 
