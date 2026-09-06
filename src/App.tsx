@@ -19748,7 +19748,20 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
       return matchesDesde && matchesHasta && matchesTipo && matchesSearch;
     });
 
-    return filtered.sort(compareRecientesPrimero);
+    const enOrden = [...filtered].sort(compareAntiguosPrimero);
+    let running = 0;
+    enOrden.forEach((item: any) => {
+      const montoSigned = item.monto ?? item.total ?? 0;
+      const isAjusteMov = item.type === 'PAGO' && (item.tipoMovimiento === 'Ajuste' || String(item.comprobante || '').startsWith('AJ-'));
+      const { debe, haber } = item.type === 'EGRESO'
+        ? getCcDebeHaberFromMonto(montoSigned, 'cargo')
+        : isAjusteMov
+          ? getCcDebeHaberFromMonto(montoSigned, 'ajuste')
+          : getCcDebeHaberFromMonto(montoSigned, 'haber');
+      running += debe - haber;
+      item.saldoAcumulado = running;
+    });
+    return enOrden.sort(compareRecientesPrimero);
   }, [selectedProveedor, egresos, pagosProveedores, filterCcDesde, filterCcHasta, filterCcTipo, filterCcSearch]);
 
   const handleSave = (e: React.FormEvent) => {
@@ -20198,6 +20211,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
                       <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Comprobante</th>
                       <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Debe (+)</th>
                       <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Haber (-)</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Saldo</th>
                       <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Acciones</th>
                     </tr>
                   </thead>
@@ -20255,6 +20269,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
                         <td className={cn("px-6 py-4 text-right font-black text-xs", haber > 0 ? "text-[#10B981]" : "text-slate-400")}>
                            {haber > 0 ? `$ ${formatCurrency(haber)}` : '-'}
                         </td>
+                        <td className="px-6 py-4 text-right font-black text-xs text-sleek-dark bg-slate-50/30">$ {formatCurrency(item.saldoAcumulado ?? 0)}</td>
                         <td className="px-6 py-4 text-right">
                            {item.type === 'PAGO' && (
                               <div className="flex justify-end gap-1">
@@ -20289,7 +20304,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
                     );})}
                     {movimientosProveedor.length === 0 && (
                       <tr>
-                        <td colSpan={6} className="py-20 text-center">
+                          <td colSpan={7} className="py-20 text-center">
                           <p className="text-xs font-bold text-slate-300 uppercase tracking-widest">Sin movimientos registrados</p>
                         </td>
                       </tr>
