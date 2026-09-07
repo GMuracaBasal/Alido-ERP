@@ -3233,6 +3233,9 @@ const MERGE_KEYS = [
 
 const isCobroClienteActivo = (c: any) => !c?.anulado && c?.estado !== 'Anulado';
 const isPagoProveedorActivo = (p: any) => !p?.anulado;
+// Una venta cuenta para la cuenta corriente solo si NO está anulada ni eliminada.
+// Centralizado acá para que ningún cálculo se olvide de un estado.
+const isVentaCuentaCorriente = (v: any) => v?.estado !== 'Anulado' && v?.estado !== 'Eliminado';
 
 // Guarda en Supabase pero ANTES combina con lo que ya hay en la base,
 // para no pisar registros que existan remotamente pero no en el estado local.
@@ -16334,11 +16337,11 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
 
   const getSaldoPendiente = (clienteId: string) => {
     const totalVentas = ventas
-      .filter((v: any) => v.clienteId === clienteId && v.estado !== 'Anulado')
+      .filter((v: any) => v.clienteId === clienteId && isVentaCuentaCorriente(v))
       .reduce((sum: number, v: any) => sum + (parseFloat(v.total) || 0), 0);
     
     const cobrosVentas = ventas
-      .filter((v: any) => v.clienteId === clienteId && v.estado !== 'Anulado')
+      .filter((v: any) => v.clienteId === clienteId && isVentaCuentaCorriente(v))
       .reduce((sum: number, v: any) => sum + (parseFloat(v.totalCobrado) || 0), 0);
       
     const cobrosInd = (cobrosClientes || [])
@@ -17273,7 +17276,7 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
     // Cuenta Corriente Logic
     const rawTransacciones = [
       ...ventas
-        .filter((v: any) => v.clienteId === selectedCliente.id && v.estado !== 'Anulado')
+        .filter((v: any) => v.clienteId === selectedCliente.id && isVentaCuentaCorriente(v))
         .map((v: any) => ({
           id: v.id,
           fecha: v.fechaHora || v.fecha,
@@ -17286,7 +17289,7 @@ const ClientesView = ({ clientes, setClientes, listasPrecios, productos, ventas,
           raw: v
         })),
       ...ventas
-        .filter((v: any) => v.clienteId === selectedCliente.id && v.estado !== 'Anulado')
+        .filter((v: any) => v.clienteId === selectedCliente.id && isVentaCuentaCorriente(v))
         .flatMap((v: any) => (v.cobros || []).map((c: any, idx: number) => ({
           id: `${v.id}-cobro-${idx}`,
           fecha: c.fecha,
@@ -24659,10 +24662,10 @@ const PosicionFinancieraView = ({
     const deudaClientes = safeRound(
       (clientes || []).reduce((sum: number, cl: any) => {
         const totalVentas = (ventas || [])
-          .filter((v: any) => v.clienteId === cl.id && v.estado !== 'Anulado')
+          .filter((v: any) => v.clienteId === cl.id && isVentaCuentaCorriente(v))
           .reduce((s: number, v: any) => s + (parseFloat(v.total) || 0), 0);
         const cobrosVentas = (ventas || [])
-          .filter((v: any) => v.clienteId === cl.id && v.estado !== 'Anulado')
+          .filter((v: any) => v.clienteId === cl.id && isVentaCuentaCorriente(v))
           .reduce((s: number, v: any) => s + (parseFloat(v.totalCobrado) || 0), 0);
         const cobrosInd = (cobrosClientes || [])
           .filter((c: any) => c.clienteId === cl.id && isCobroClienteActivo(c))
@@ -24711,10 +24714,10 @@ const PosicionFinancieraView = ({
     return (clientes || [])
       .map((cl: any) => {
         const totalVentas = (ventas || [])
-          .filter((v: any) => v.clienteId === cl.id && v.estado !== 'Anulado')
+          .filter((v: any) => v.clienteId === cl.id && isVentaCuentaCorriente(v))
           .reduce((s: number, v: any) => s + (parseFloat(v.total) || 0), 0);
         const cobrosVentas = (ventas || [])
-          .filter((v: any) => v.clienteId === cl.id && v.estado !== 'Anulado')
+          .filter((v: any) => v.clienteId === cl.id && isVentaCuentaCorriente(v))
           .reduce((s: number, v: any) => s + (parseFloat(v.totalCobrado) || 0), 0);
         const cobrosInd = (cobrosClientes || [])
           .filter((c: any) => c.clienteId === cl.id && isCobroClienteActivo(c))
