@@ -26013,6 +26013,11 @@ const ChequesView = ({
                               <Badge variant="warning">En tránsito</Badge>
                             )}
                           </div>
+                          {c.estado === 'endosado' && c.endosadoA && (
+                            <p className="text-[10px] text-slate-400 mt-1 truncate max-w-[140px]" title={`Endosado a: ${c.endosadoA}${c.fechaEndoso ? ` el ${safeFormat(c.fechaEndoso, 'dd/MM/yyyy')}` : ''}`}>
+                              → {c.endosadoA}
+                            </p>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-xs font-mono">{safeFormat(c.fechaCobro, 'dd/MM/yyyy')}</td>
                         <td className="px-4 py-3 text-xs">{c.originario || '—'}</td>
@@ -26246,6 +26251,21 @@ const ChequesView = ({
             <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Comentario</label>
             <textarea value={formRec.comentario} onChange={(e) => setFormRec({ ...formRec, comentario: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" rows={2} />
           </div>
+          {editingRec?.estado === 'endosado' && editingRec?.endosadoA && (
+            <div className="p-4 bg-violet-50/60 border border-violet-100 rounded-xl space-y-2">
+              <p className="text-[10px] font-black text-violet-500 uppercase tracking-widest">Información de endoso</p>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Endosado a</label>
+                  <p className="text-sm font-bold text-slate-700">{editingRec.endosadoA}</p>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Fecha de endoso</label>
+                  <p className="text-sm font-bold text-slate-700">{editingRec.fechaEndoso ? safeFormat(editingRec.fechaEndoso, 'dd/MM/yyyy') : '—'}</p>
+                </div>
+              </div>
+            </div>
+          )}
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" onClick={() => setModal('')} className="px-4 py-2 text-slate-500 font-bold text-sm">Cancelar</button>
             <button type="submit" disabled={saving} className="px-6 py-2 bg-sleek-accent text-white font-bold rounded-lg text-sm">{saving ? 'Guardando...' : 'Guardar'}</button>
