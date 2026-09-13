@@ -36,6 +36,8 @@ import {
   saveEgresoRelacional,
   loadClientes,
   saveClienteRelacional,
+  loadVentas,
+  getSiguienteComprobante,
   loadRhEmpleados, saveRhEmpleado,
   loadRhAdelantos, saveRhAdelanto,
   loadRhAusencias, saveRhAusencia,
@@ -14022,7 +14024,7 @@ const VentasPedidosView = ({
         isNewVenta={isNewVenta}
         isEditingFinalized={isEditingVenta}
         onClose={() => { clearVentaEditState(); setView('list'); }}
-        onSave={(savedVenta: any, shouldFinalize: boolean) => {
+        onSave={async (savedVenta: any, shouldFinalize: boolean) => {
           const oldVenta = ventas.find((v: any) => v.id === savedVenta.id);
           const originalProducts = editingOriginalProductsRef.current;
           const pvSeleccionado = puntosVenta.find((pv: any) => pv.id === savedVenta.puntoVentaId);
@@ -14238,20 +14240,25 @@ const VentasPedidosView = ({
             return;
           }
 
-          // VENTA NUEVA: generar comprobante DENTRO de setVentas para garantizar unicidad
+          // VENTA NUEVA: pedir el comprobante a la base de forma ATÓMICA (sin duplicados)
+          const fechaVenta = savedVenta.fecha || safeFormat(new Date(), 'yyyy-MM-dd');
+          let comprobanteDefinitivo = await getSiguienteComprobante(fechaVenta);
+
+          // Respaldo: si la base no responde, usar el método viejo (no bloquear la venta)
+          if (!comprobanteDefinitivo) {
+            console.error('⚠️ Numeración atómica no disponible, uso método local de respaldo.');
+            comprobanteDefinitivo = generarComprobanteVenta(ventas, fechaVenta);
+          }
+
+          ventaFinal = {
+            ...savedVenta,
+            id: comprobanteDefinitivo,
+            comprobante: comprobanteDefinitivo,
+            estado: 'En Proceso',
+          };
+
           setVentas((prevVentas: any[]) => {
-            const fechaVenta = savedVenta.fecha || safeFormat(new Date(), 'yyyy-MM-dd');
-            const comprobanteDefinitivo = generarComprobanteVenta(prevVentas, fechaVenta);
-            ventaFinal = {
-              ...savedVenta,
-              id: comprobanteDefinitivo,
-              comprobante: comprobanteDefinitivo,
-              // Siempre creamos el registro como borrador primero para evitar "desapariciones"
-              // si la finalización falla o si el usuario imprime/cierra antes del debounce.
-              estado: 'En Proceso',
-            };
             const next = [ventaFinal, ...prevVentas];
-            // Persistencia inmediata: no depender del debounce para ventas nuevas
             try {
               persistMerged('alido_ventas', next, (local, remote) => unionById(local, remote));
             } catch {}
@@ -26738,7 +26745,22 @@ export default function App() {
           modoVenta: pv.modoVenta || (pv.nombre?.toLowerCase().includes('mostrador') ? 'mostrador' : 'escaneo'),
         }))
       );
-      setVentas(d.alido_ventas);
+      // Ventas: blob solo como estado provisional (evita persistir la semilla INITIAL_VENTAS).
+      // La fuente de verdad de este bloque es relacional; si falla, el blob queda como respaldo.
+      if (d.alido_ventas?.length > 0) setVentas(d.alido_ventas);
+      loadVentas().then((res) => {
+        if (res.ok) {
+          setVentas(res.data as any);
+          ventasCargadasOkRef.current = true;
+        } else {
+          console.error('⚠️ Carga de ventas relacionales FALLÓ. Uso el blob como respaldo.');
+          setVentas(d.alido_ventas); // respaldo durante la convivencia
+          showNotification('Aviso: las ventas se cargaron desde el respaldo. Recargá si ves algo raro.', 'warning');
+        }
+      }).catch((err) => {
+        console.error('Error cargando ventas relacionales:', err);
+        setVentas(d.alido_ventas);
+      });
       setCobrosClientes(d.alido_cobros_clientes);
       setPlanCuentas(d.alido_plan_cuentas);
       setTiposEgreso(d.alido_tipos_egreso);
@@ -26915,6 +26937,7 @@ export default function App() {
   const egresosCargadosOkRef = useRef(false);
   const pagosCargadosOkRef = useRef(false);
   const clientesCargadosOkRef = useRef(false);
+  const ventasCargadasOkRef = useRef(false);
   const isApplyingRemoteRef = useRef(false);
   const lastSyncRef = useRef(new Date().toISOString());
 

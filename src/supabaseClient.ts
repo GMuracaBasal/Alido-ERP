@@ -1320,6 +1320,162 @@ export async function saveClienteRelacional(cliente: ClienteRow): Promise<boolea
 }
 
 // ============================================================
+// VENTAS (relacional) — tablas: ventas, venta_items, venta_cobros, venta_item_envases
+// ============================================================
+
+export type VentaRow = any; // usa la misma forma que el objeto Venta de App.tsx
+
+function mapVentaItem(r: any, envasesByItem: Record<string, any[]>): any {
+  const item: any = {
+    productoId: r.producto_id,
+    codigoBarras: r.codigo_barras,
+    cantidad: Number(r.cantidad),
+    unidad: r.unidad,
+    precioUnitario: Number(r.precio_unitario),
+    descuento: Number(r.descuento),
+    subtotal: Number(r.subtotal),
+    manualPrice: r.manual_price,
+    pesoKg: r.peso_kg != null ? Number(r.peso_kg) : undefined,
+    origenVenta: r.origen_venta || undefined,
+    pendienteDescuento: r.pendiente_descuento || undefined,
+  };
+  const envs = envasesByItem[r.id] || [];
+  if (envs.length > 0) {
+    item.descuentoEnvases = envs.map((e: any) => ({
+      envaseId: e.envase_id,
+      loteId: e.lote_id,
+      kgDescontados: Number(e.kg_descontados),
+    }));
+  }
+  return item;
+}
+
+function mapVentaCobro(r: any): any {
+  return {
+    monto: Number(r.monto),
+    metodo: r.metodo,
+    fecha: r.fecha,
+    observaciones: r.observaciones || '',
+    cuentaTesoreriaId: r.cuenta_tesoreria_id || undefined,
+  };
+}
+
+function mapVenta(r: any, items: any[], cobros: any[]): any {
+  return {
+    id: r.id,
+    comprobante: r.comprobante,
+    puntoVentaId: r.punto_venta_id,
+    clienteId: r.cliente_id,
+    sucursalId: r.sucursal_id,
+    fecha: r.fecha,
+    estado: r.estado,
+    productos: items,
+    subtotal: Number(r.subtotal),
+    descuentoGeneral: Number(r.descuento_general),
+    tipoDescuentoGeneral: r.tipo_descuento_general || '$',
+    total: Number(r.total),
+    cobros: cobros,
+    totalCobrado: Number(r.total_cobrado),
+    saldoPendiente: Number(r.saldo_pendiente),
+    estadoCobro: r.estado_cobro || 'Pendiente',
+    observaciones: r.observaciones || undefined,
+    usuario: r.usuario,
+    fechaCreacion: r.fecha_creacion,
+    editHistory: r.edit_history || [],
+  };
+}
+
+// PostgREST limita a 1000 filas por request; hay 4055 ventas / 9000+ items.
+async function fetchAllRows(
+  table: string,
+  orders: { column: string; ascending: boolean }[] = [{ column: 'id', ascending: true }]
+): Promise<{ data: any[] | null; error: any }> {
+  const pageSize = 1000;
+  const all: any[] = [];
+  let from = 0;
+  for (;;) {
+    let q = supabase.from(table).select('*').range(from, from + pageSize - 1);
+    for (const o of orders) {
+      q = q.order(o.column, { ascending: o.ascending });
+    }
+    const { data, error } = await q;
+    if (error) return { data: null, error };
+    all.push(...(data || []));
+    if (!data || data.length < pageSize) break;
+    from += pageSize;
+  }
+  return { data: all, error: null };
+}
+
+// Devuelve { data, ok } — ok:false SOLO si la lectura falló (patrón anti-pérdida de datos)
+export async function loadVentas(): Promise<{ data: any[]; ok: boolean }> {
+  try {
+    const [vRes, iRes, cRes, eRes] = await Promise.all([
+      fetchAllRows('ventas', [
+        { column: 'fecha_creacion', ascending: false },
+        { column: 'id', ascending: false },
+      ]),
+      fetchAllRows('venta_items', [
+        { column: 'orden', ascending: true },
+        { column: 'id', ascending: true },
+      ]),
+      fetchAllRows('venta_cobros'),
+      fetchAllRows('venta_item_envases'),
+    ]);
+
+    if (vRes.error || iRes.error || cRes.error || eRes.error) {
+      console.error('loadVentas error:', vRes.error || iRes.error || cRes.error || eRes.error);
+      return { data: [], ok: false };
+    }
+
+    // Agrupar envases por item
+    const envasesByItem: Record<string, any[]> = {};
+    for (const e of eRes.data || []) {
+      const k = String(e.venta_item_id);
+      if (!envasesByItem[k]) envasesByItem[k] = [];
+      envasesByItem[k].push(e);
+    }
+
+    // Agrupar items por venta
+    const itemsByVenta: Record<string, any[]> = {};
+    for (const it of iRes.data || []) {
+      if (!itemsByVenta[it.venta_id]) itemsByVenta[it.venta_id] = [];
+      itemsByVenta[it.venta_id].push(mapVentaItem(it, envasesByItem));
+    }
+
+    // Agrupar cobros por venta
+    const cobrosByVenta: Record<string, any[]> = {};
+    for (const co of cRes.data || []) {
+      if (!cobrosByVenta[co.venta_id]) cobrosByVenta[co.venta_id] = [];
+      cobrosByVenta[co.venta_id].push(mapVentaCobro(co));
+    }
+
+    const data = (vRes.data || []).map((r) =>
+      mapVenta(r, itemsByVenta[r.id] || [], cobrosByVenta[r.id] || [])
+    );
+    return { data, ok: true };
+  } catch (err) {
+    console.error('loadVentas exception:', err);
+    return { data: [], ok: false };
+  }
+}
+
+// Pide a la base el próximo comprobante de forma ATÓMICA (sin duplicados entre usuarios)
+export async function getSiguienteComprobante(fecha: string): Promise<string | null> {
+  try {
+    const { data, error } = await supabase.rpc('siguiente_comprobante_venta', { p_fecha: fecha });
+    if (error) {
+      console.error('getSiguienteComprobante error:', error);
+      return null;
+    }
+    return data as string;
+  } catch (err) {
+    console.error('getSiguienteComprobante exception:', err);
+    return null;
+  }
+}
+
+// ============================================================
 // RRHH — tablas relacionales
 // ============================================================
 
