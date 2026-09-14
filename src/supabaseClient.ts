@@ -1508,41 +1508,61 @@ export async function saveVentaRelacional(venta: any): Promise<boolean> {
       }, { onConflict: 'id' });
     if (vErr) { console.error('saveVentaRelacional - cabecera:', vErr); return false; }
 
-    // 2. Items: borrar los viejos y reinsertar (esto borra en cascada sus envases)
+    // 2. Items: reemplazar. SALVAGUARDA: si la venta llega SIN productos,
+    // verificar si en la base ya tiene productos. Si los tiene, NO borrarlos
+    // (evita perder los productos por una llamada con array vacío / carrera).
+    const productos = venta.productos || [];
+    if (productos.length === 0) {
+      const { count } = await supabase
+        .from('venta_items')
+        .select('id', { count: 'exact', head: true })
+        .eq('venta_id', venta.id);
+      if ((count ?? 0) > 0) {
+        console.warn(`⚠️ saveVentaRelacional: la venta ${venta.id} llegó sin productos pero en la base tiene ${count}. NO se borran los items (protección).`);
+        // Guardamos igual la cabecera (ya se hizo arriba) pero no tocamos items/cobros.
+        return true;
+      }
+    }
+
+    // Reemplazo normal de items: borrar los viejos y reinsertar en bloque
     await supabase.from('venta_items').delete().eq('venta_id', venta.id);
 
-    const productos = venta.productos || [];
-    for (let i = 0; i < productos.length; i++) {
-      const p = productos[i];
-      const { data: itemData, error: iErr } = await supabase
+    if (productos.length > 0) {
+      const itemRows = productos.map((p: any, i: number) => ({
+        venta_id: venta.id,
+        orden: i,
+        producto_id: p.productoId,
+        codigo_barras: p.codigoBarras || null,
+        cantidad: p.cantidad ?? 0,
+        unidad: p.unidad || null,
+        precio_unitario: p.precioUnitario ?? 0,
+        descuento: p.descuento ?? 0,
+        subtotal: p.subtotal ?? 0,
+        manual_price: p.manualPrice ?? false,
+        peso_kg: p.pesoKg ?? null,
+        origen_venta: p.origenVenta || null,
+        pendiente_descuento: p.pendienteDescuento ?? false,
+      }));
+      const { data: insertedItems, error: iErr } = await supabase
         .from('venta_items')
-        .insert({
-          venta_id: venta.id,
-          orden: i,
-          producto_id: p.productoId,
-          codigo_barras: p.codigoBarras || null,
-          cantidad: p.cantidad ?? 0,
-          unidad: p.unidad || null,
-          precio_unitario: p.precioUnitario ?? 0,
-          descuento: p.descuento ?? 0,
-          subtotal: p.subtotal ?? 0,
-          manual_price: p.manualPrice ?? false,
-          peso_kg: p.pesoKg ?? null,
-          origen_venta: p.origenVenta || null,
-          pendiente_descuento: p.pendienteDescuento ?? false,
-        })
-        .select('id')
-        .single();
+        .insert(itemRows)
+        .select('id, orden');
       if (iErr) { console.error('saveVentaRelacional - item:', iErr); return false; }
 
-      // 2b. Envases descontados de este item (si los hay)
-      if (itemData && p.descuentoEnvases && p.descuentoEnvases.length > 0) {
-        const envRows = p.descuentoEnvases.map((e: any) => ({
-          venta_item_id: itemData.id,
-          envase_id: e.envaseId,
-          lote_id: e.loteId || null,
-          kg_descontados: e.kgDescontados ?? 0,
-        }));
+      const envRows: any[] = [];
+      for (const row of insertedItems || []) {
+        const p = productos[row.orden];
+        if (!p?.descuentoEnvases?.length) continue;
+        for (const e of p.descuentoEnvases) {
+          envRows.push({
+            venta_item_id: row.id,
+            envase_id: e.envaseId,
+            lote_id: e.loteId || null,
+            kg_descontados: e.kgDescontados ?? 0,
+          });
+        }
+      }
+      if (envRows.length > 0) {
         const { error: eErr } = await supabase.from('venta_item_envases').insert(envRows);
         if (eErr) { console.error('saveVentaRelacional - envases:', eErr); return false; }
       }
