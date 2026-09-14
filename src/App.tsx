@@ -36,6 +36,9 @@ import {
   saveEgresoRelacional,
   loadClientes,
   saveClienteRelacional,
+  loadVentas,
+  getSiguienteComprobante,
+  saveVentaRelacional,
   loadRhEmpleados, saveRhEmpleado,
   loadRhAdelantos, saveRhAdelanto,
   loadRhAusencias, saveRhAusencia,
@@ -13941,6 +13944,17 @@ const VentasPedidosView = ({
     editingOriginalProductsRef.current = null;
   };
 
+  // Guarda una venta en las tablas relacionales (convivencia: además del blob).
+  // No bloquea la UI; si falla, avisa por consola/toast pero el blob queda como respaldo.
+  const persistVentaRelacional = (venta: any) => {
+    saveVentaRelacional(venta).then((ok) => {
+      if (!ok) {
+        console.error('⚠️ No se pudo guardar la venta en relacional:', venta.comprobante);
+        showNotification('Aviso: la venta se guardó en el respaldo. Si ves algo raro, recargá.', 'warning');
+      }
+    }).catch((err) => console.error('persistVentaRelacional error:', err));
+  };
+
   const handleDelete = (venta: any) => {
     confirmDialog(`¿Estás seguro de eliminar el pedido ${venta.comprobante}?`, () => {
       setVentas((prev: any[]) => prev.map((v: any) => 
@@ -13948,6 +13962,8 @@ const VentasPedidosView = ({
           ? { ...v, estado: 'Eliminado', fechaEliminacion: new Date().toISOString(), eliminadoPor: currentUser.name }
           : v
       ));
+      const ventaEliminada = { ...venta, estado: 'Eliminado', fechaEliminacion: new Date().toISOString(), eliminadoPor: currentUser.name };
+      persistVentaRelacional(ventaEliminada);
       showNotification(`Pedido ${venta.comprobante} marcado como eliminado.`, 'success');
     });
   };
@@ -13987,6 +14003,8 @@ const VentasPedidosView = ({
     setMovimientos(updatedMovimientos);
     setLotesEtiquetados(updatedLotesEtiquetados);
     setVentas(updatedVentas);
+    const ventaAnulada = updatedVentas.find((v: any) => v.id === venta.id);
+    if (ventaAnulada) persistVentaRelacional(ventaAnulada);
     
     setIsAnnulModalOpen(false);
     setVentaToAnnul(null);
@@ -14022,7 +14040,7 @@ const VentasPedidosView = ({
         isNewVenta={isNewVenta}
         isEditingFinalized={isEditingVenta}
         onClose={() => { clearVentaEditState(); setView('list'); }}
-        onSave={(savedVenta: any, shouldFinalize: boolean) => {
+        onSave={async (savedVenta: any, shouldFinalize: boolean) => {
           const oldVenta = ventas.find((v: any) => v.id === savedVenta.id);
           const originalProducts = editingOriginalProductsRef.current;
           const pvSeleccionado = puntosVenta.find((pv: any) => pv.id === savedVenta.puntoVentaId);
@@ -14150,6 +14168,7 @@ const VentasPedidosView = ({
             setMovimientos(finalMovimientos);
             setLotesEtiquetados(updatedLE);
             setVentas(ventas.map((v: any) => (v.id === ventaEditada.id ? ventaEditada : v)));
+            persistVentaRelacional(ventaEditada);
             sincronizarCobrosTesoreria(ventaEditada, true);
             clearVentaEditState();
             setView('list');
@@ -14219,6 +14238,7 @@ const VentasPedidosView = ({
                 } catch {}
                 return next;
               });
+              persistVentaRelacional(ventaConFracc);
               showNotification(`Venta ${ventaFinal.comprobante} finalizada. Stock descontado.`, 'success');
             } else {
               setMovimientos(finalMovimientos);
@@ -14230,6 +14250,7 @@ const VentasPedidosView = ({
                 } catch {}
                 return next;
               });
+              persistVentaRelacional(ventaFinal);
               showNotification(`Pedido ${ventaFinal.comprobante} guardado.`, 'info');
             }
             // setVentas se maneja arriba (con persistencia inmediata)
@@ -14238,25 +14259,32 @@ const VentasPedidosView = ({
             return;
           }
 
-          // VENTA NUEVA: generar comprobante DENTRO de setVentas para garantizar unicidad
+          // VENTA NUEVA: pedir el comprobante a la base de forma ATÓMICA (sin duplicados)
+          const fechaVenta = savedVenta.fecha || safeFormat(new Date(), 'yyyy-MM-dd');
+          let comprobanteDefinitivo = await getSiguienteComprobante(fechaVenta);
+
+          // Respaldo: si la base no responde, usar el método viejo (no bloquear la venta)
+          if (!comprobanteDefinitivo) {
+            console.error('⚠️ Numeración atómica no disponible, uso método local de respaldo.');
+            comprobanteDefinitivo = generarComprobanteVenta(ventas, fechaVenta);
+          }
+
+          ventaFinal = {
+            ...savedVenta,
+            id: comprobanteDefinitivo,
+            comprobante: comprobanteDefinitivo,
+            estado: 'En Proceso',
+          };
+
           setVentas((prevVentas: any[]) => {
-            const fechaVenta = savedVenta.fecha || safeFormat(new Date(), 'yyyy-MM-dd');
-            const comprobanteDefinitivo = generarComprobanteVenta(prevVentas, fechaVenta);
-            ventaFinal = {
-              ...savedVenta,
-              id: comprobanteDefinitivo,
-              comprobante: comprobanteDefinitivo,
-              // Siempre creamos el registro como borrador primero para evitar "desapariciones"
-              // si la finalización falla o si el usuario imprime/cierra antes del debounce.
-              estado: 'En Proceso',
-            };
             const next = [ventaFinal, ...prevVentas];
-            // Persistencia inmediata: no depender del debounce para ventas nuevas
             try {
               persistMerged('alido_ventas', next, (local, remote) => unionById(local, remote));
             } catch {}
             return next;
           });
+          // Si se finaliza en el mismo flujo, se persiste el estado final más abajo (evita carrera En Proceso vs Finalizado).
+          if (!shouldFinalize) persistVentaRelacional(ventaFinal);
 
           // Procesar stock DESPUÉS de asignar el comprobante
           if (shouldFinalize) {
@@ -14288,6 +14316,12 @@ const VentasPedidosView = ({
                   persistMerged('alido_ventas', next, (local, remote) => unionById(local, remote));
                 } catch {}
                 return next;
+              });
+              persistVentaRelacional({
+                ...ventaFinal,
+                estado: 'En Proceso',
+                finalizacionError: fracc.error,
+                finalizacionErrorAt: new Date().toISOString(),
               });
               return;
             }
@@ -14321,6 +14355,7 @@ const VentasPedidosView = ({
               } catch {}
               return next;
             });
+            persistVentaRelacional({ ...ventaConFracc, estado: 'Finalizado' });
             showNotification(`Venta ${ventaFinal.comprobante} finalizada. Stock descontado.`, 'success');
 
             sincronizarCobrosTesoreria(ventaConFracc, false);
@@ -14528,9 +14563,11 @@ const VentasPedidosView = ({
                          {venta.estado === 'Eliminado' && (
                            <button 
                              onClick={() => {
+                               const ventaRestaurada = { ...venta, estado: 'En Proceso', fechaEliminacion: undefined, eliminadoPor: undefined };
                                setVentas((prev: any[]) => prev.map((v: any) => 
-                                 v.id === venta.id ? { ...v, estado: 'En Proceso', fechaEliminacion: undefined, eliminadoPor: undefined } : v
+                                 v.id === venta.id ? ventaRestaurada : v
                                ));
+                               persistVentaRelacional(ventaRestaurada);
                                showNotification(`Pedido ${venta.comprobante} restaurado.`, 'success');
                              }} 
                              className="p-2 text-slate-400 hover:text-emerald-600 transition-all" 
@@ -26738,7 +26775,22 @@ export default function App() {
           modoVenta: pv.modoVenta || (pv.nombre?.toLowerCase().includes('mostrador') ? 'mostrador' : 'escaneo'),
         }))
       );
-      setVentas(d.alido_ventas);
+      // Ventas: blob solo como estado provisional (evita persistir la semilla INITIAL_VENTAS).
+      // La fuente de verdad de este bloque es relacional; si falla, el blob queda como respaldo.
+      if (d.alido_ventas?.length > 0) setVentas(d.alido_ventas);
+      loadVentas().then((res) => {
+        if (res.ok) {
+          setVentas(res.data as any);
+          ventasCargadasOkRef.current = true;
+        } else {
+          console.error('⚠️ Carga de ventas relacionales FALLÓ. Uso el blob como respaldo.');
+          setVentas(d.alido_ventas); // respaldo durante la convivencia
+          showNotification('Aviso: las ventas se cargaron desde el respaldo. Recargá si ves algo raro.', 'warning');
+        }
+      }).catch((err) => {
+        console.error('Error cargando ventas relacionales:', err);
+        setVentas(d.alido_ventas);
+      });
       setCobrosClientes(d.alido_cobros_clientes);
       setPlanCuentas(d.alido_plan_cuentas);
       setTiposEgreso(d.alido_tipos_egreso);
@@ -26915,6 +26967,7 @@ export default function App() {
   const egresosCargadosOkRef = useRef(false);
   const pagosCargadosOkRef = useRef(false);
   const clientesCargadosOkRef = useRef(false);
+  const ventasCargadasOkRef = useRef(false);
   const isApplyingRemoteRef = useRef(false);
   const lastSyncRef = useRef(new Date().toISOString());
 
