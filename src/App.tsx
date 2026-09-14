@@ -13945,25 +13945,30 @@ const VentasPedidosView = ({
   };
 
   // Guarda una venta en las tablas relacionales (convivencia: además del blob).
-  // No bloquea la UI; si falla, avisa por consola/toast pero el blob queda como respaldo.
-  const persistVentaRelacional = (venta: any) => {
-    saveVentaRelacional(venta).then((ok) => {
+  // Si falla, avisa por consola/toast pero el blob queda como respaldo.
+  const persistVentaRelacional = async (venta: any) => {
+    try {
+      const ok = await saveVentaRelacional(venta);
       if (!ok) {
         console.error('⚠️ No se pudo guardar la venta en relacional:', venta.comprobante);
         showNotification('Aviso: la venta se guardó en el respaldo. Si ves algo raro, recargá.', 'warning');
       }
-    }).catch((err) => console.error('persistVentaRelacional error:', err));
+      return ok;
+    } catch (err) {
+      console.error('persistVentaRelacional error:', err);
+      return false;
+    }
   };
 
   const handleDelete = (venta: any) => {
-    confirmDialog(`¿Estás seguro de eliminar el pedido ${venta.comprobante}?`, () => {
+    confirmDialog(`¿Estás seguro de eliminar el pedido ${venta.comprobante}?`, async () => {
       setVentas((prev: any[]) => prev.map((v: any) => 
         v.id === venta.id 
           ? { ...v, estado: 'Eliminado', fechaEliminacion: new Date().toISOString(), eliminadoPor: currentUser.name }
           : v
       ));
       const ventaEliminada = { ...venta, estado: 'Eliminado', fechaEliminacion: new Date().toISOString(), eliminadoPor: currentUser.name };
-      persistVentaRelacional(ventaEliminada);
+      await persistVentaRelacional(ventaEliminada);
       showNotification(`Pedido ${venta.comprobante} marcado como eliminado.`, 'success');
     });
   };
@@ -13973,7 +13978,7 @@ const VentasPedidosView = ({
     setIsAnnulModalOpen(true);
   };
 
-  const executeAnnul = (venta: any) => {
+  const executeAnnul = async (venta: any) => {
     if (!venta) return;
     setIsSubmitting(true);
 
@@ -14004,7 +14009,7 @@ const VentasPedidosView = ({
     setLotesEtiquetados(updatedLotesEtiquetados);
     setVentas(updatedVentas);
     const ventaAnulada = updatedVentas.find((v: any) => v.id === venta.id);
-    if (ventaAnulada) persistVentaRelacional(ventaAnulada);
+    if (ventaAnulada) await persistVentaRelacional(ventaAnulada);
     
     setIsAnnulModalOpen(false);
     setVentaToAnnul(null);
@@ -14168,7 +14173,7 @@ const VentasPedidosView = ({
             setMovimientos(finalMovimientos);
             setLotesEtiquetados(updatedLE);
             setVentas(ventas.map((v: any) => (v.id === ventaEditada.id ? ventaEditada : v)));
-            persistVentaRelacional(ventaEditada);
+            await persistVentaRelacional(ventaEditada);
             sincronizarCobrosTesoreria(ventaEditada, true);
             clearVentaEditState();
             setView('list');
@@ -14238,7 +14243,7 @@ const VentasPedidosView = ({
                 } catch {}
                 return next;
               });
-              persistVentaRelacional(ventaConFracc);
+              await persistVentaRelacional(ventaConFracc);
               showNotification(`Venta ${ventaFinal.comprobante} finalizada. Stock descontado.`, 'success');
             } else {
               setMovimientos(finalMovimientos);
@@ -14250,7 +14255,7 @@ const VentasPedidosView = ({
                 } catch {}
                 return next;
               });
-              persistVentaRelacional(ventaFinal);
+              await persistVentaRelacional(ventaFinal);
               showNotification(`Pedido ${ventaFinal.comprobante} guardado.`, 'info');
             }
             // setVentas se maneja arriba (con persistencia inmediata)
@@ -14284,7 +14289,7 @@ const VentasPedidosView = ({
             return next;
           });
           // Si se finaliza en el mismo flujo, se persiste el estado final más abajo (evita carrera En Proceso vs Finalizado).
-          if (!shouldFinalize) persistVentaRelacional(ventaFinal);
+          if (!shouldFinalize) await persistVentaRelacional(ventaFinal);
 
           // Procesar stock DESPUÉS de asignar el comprobante
           if (shouldFinalize) {
@@ -14317,7 +14322,7 @@ const VentasPedidosView = ({
                 } catch {}
                 return next;
               });
-              persistVentaRelacional({
+              await persistVentaRelacional({
                 ...ventaFinal,
                 estado: 'En Proceso',
                 finalizacionError: fracc.error,
@@ -14355,7 +14360,7 @@ const VentasPedidosView = ({
               } catch {}
               return next;
             });
-            persistVentaRelacional({ ...ventaConFracc, estado: 'Finalizado' });
+            await persistVentaRelacional({ ...ventaConFracc, estado: 'Finalizado' });
             showNotification(`Venta ${ventaFinal.comprobante} finalizada. Stock descontado.`, 'success');
 
             sincronizarCobrosTesoreria(ventaConFracc, false);
@@ -14562,12 +14567,12 @@ const VentasPedidosView = ({
                          )}
                          {venta.estado === 'Eliminado' && (
                            <button 
-                             onClick={() => {
+                             onClick={async () => {
                                const ventaRestaurada = { ...venta, estado: 'En Proceso', fechaEliminacion: undefined, eliminadoPor: undefined };
                                setVentas((prev: any[]) => prev.map((v: any) => 
                                  v.id === venta.id ? ventaRestaurada : v
                                ));
-                               persistVentaRelacional(ventaRestaurada);
+                               await persistVentaRelacional(ventaRestaurada);
                                showNotification(`Pedido ${venta.comprobante} restaurado.`, 'success');
                              }} 
                              className="p-2 text-slate-400 hover:text-emerald-600 transition-all" 
