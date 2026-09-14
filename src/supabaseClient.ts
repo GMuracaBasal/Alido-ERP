@@ -1475,6 +1475,102 @@ export async function getSiguienteComprobante(fecha: string): Promise<string | n
   }
 }
 
+// Guarda una venta COMPLETA (cabecera + items + cobros + envases).
+// Patrón: upsert cabecera, y para hijos borrar-y-reinsertar (como egresos/clientes).
+export async function saveVentaRelacional(venta: any): Promise<boolean> {
+  try {
+    const now = new Date().toISOString();
+
+    // 1. Upsert cabecera
+    const { error: vErr } = await supabase
+      .from('ventas')
+      .upsert({
+        id: venta.id,
+        comprobante: venta.comprobante,
+        punto_venta_id: venta.puntoVentaId || null,
+        cliente_id: venta.clienteId || null,
+        sucursal_id: venta.sucursalId || null,
+        fecha: venta.fecha,
+        estado: venta.estado,
+        subtotal: venta.subtotal ?? 0,
+        descuento_general: venta.descuentoGeneral ?? 0,
+        tipo_descuento_general: venta.tipoDescuentoGeneral || '$',
+        total: venta.total ?? 0,
+        total_cobrado: venta.totalCobrado ?? 0,
+        saldo_pendiente: venta.saldoPendiente ?? 0,
+        estado_cobro: venta.estadoCobro || 'Pendiente',
+        observaciones: venta.observaciones || null,
+        usuario: venta.usuario || null,
+        fecha_creacion: venta.fechaCreacion || now,
+        edit_history: venta.editHistory || [],
+        updated_by: SESSION_ID,
+        updated_at: now,
+      }, { onConflict: 'id' });
+    if (vErr) { console.error('saveVentaRelacional - cabecera:', vErr); return false; }
+
+    // 2. Items: borrar los viejos y reinsertar (esto borra en cascada sus envases)
+    await supabase.from('venta_items').delete().eq('venta_id', venta.id);
+
+    const productos = venta.productos || [];
+    for (let i = 0; i < productos.length; i++) {
+      const p = productos[i];
+      const { data: itemData, error: iErr } = await supabase
+        .from('venta_items')
+        .insert({
+          venta_id: venta.id,
+          orden: i,
+          producto_id: p.productoId,
+          codigo_barras: p.codigoBarras || null,
+          cantidad: p.cantidad ?? 0,
+          unidad: p.unidad || null,
+          precio_unitario: p.precioUnitario ?? 0,
+          descuento: p.descuento ?? 0,
+          subtotal: p.subtotal ?? 0,
+          manual_price: p.manualPrice ?? false,
+          peso_kg: p.pesoKg ?? null,
+          origen_venta: p.origenVenta || null,
+          pendiente_descuento: p.pendienteDescuento ?? false,
+        })
+        .select('id')
+        .single();
+      if (iErr) { console.error('saveVentaRelacional - item:', iErr); return false; }
+
+      // 2b. Envases descontados de este item (si los hay)
+      if (itemData && p.descuentoEnvases && p.descuentoEnvases.length > 0) {
+        const envRows = p.descuentoEnvases.map((e: any) => ({
+          venta_item_id: itemData.id,
+          envase_id: e.envaseId,
+          lote_id: e.loteId || null,
+          kg_descontados: e.kgDescontados ?? 0,
+        }));
+        const { error: eErr } = await supabase.from('venta_item_envases').insert(envRows);
+        if (eErr) { console.error('saveVentaRelacional - envases:', eErr); return false; }
+      }
+    }
+
+    // 3. Cobros: borrar los viejos y reinsertar
+    await supabase.from('venta_cobros').delete().eq('venta_id', venta.id);
+    const cobros = venta.cobros || [];
+    if (cobros.length > 0) {
+      const cobroRows = cobros.map((c: any) => ({
+        venta_id: venta.id,
+        monto: c.monto ?? 0,
+        metodo: c.metodo || null,
+        fecha: c.fecha || null,
+        observaciones: c.observaciones || null,
+        cuenta_tesoreria_id: c.cuentaTesoreriaId || null,
+      }));
+      const { error: cErr } = await supabase.from('venta_cobros').insert(cobroRows);
+      if (cErr) { console.error('saveVentaRelacional - cobros:', cErr); return false; }
+    }
+
+    return true;
+  } catch (err) {
+    console.error('saveVentaRelacional exception:', err);
+    return false;
+  }
+}
+
 // ============================================================
 // RRHH — tablas relacionales
 // ============================================================
