@@ -25239,12 +25239,11 @@ const ChequesView = ({
     return { filas, primeraNegativa };
   }, [fechaRefProy, recibidos, emitidos, disponibleTesoreria]);
   const [tab, setTab] = useState<'recibidos' | 'emitidos'>('recibidos');
-  const [modal, setModal] = useState<'recibido' | 'emitido' | 'endoso' | 'depositar' | 'acreditar' | 'debitar' | ''>('');
+  const [modal, setModal] = useState<'recibido' | 'emitido' | 'depositar' | 'acreditar' | 'debitar' | ''>('');
   const [saving, setSaving] = useState(false);
 
   const [editingRec, setEditingRec] = useState<ChequeRecibido | null>(null);
   const [editingEmi, setEditingEmi] = useState<ChequeEmitido | null>(null);
-  const [endosandoRec, setEndosandoRec] = useState<ChequeRecibido | null>(null);
   const [operRec, setOperRec] = useState<ChequeRecibido | null>(null);
   const [operEmi, setOperEmi] = useState<ChequeEmitido | null>(null);
 
@@ -25294,7 +25293,6 @@ const ChequesView = ({
     estado: 'pendiente' as ChequeEmitido['estado'],
     comentario: '',
   });
-  const [formEndoso, setFormEndoso] = useState({ endosadoA: '', fechaEndoso: hoy });
 
   const totalesRec = useMemo(() => {
     let porCobrar = 0;
@@ -25426,12 +25424,6 @@ const ChequesView = ({
     setModal('emitido');
   };
 
-  const openEndoso = (c: ChequeRecibido) => {
-    setEndosandoRec(c);
-    setFormEndoso({ endosadoA: '', fechaEndoso: hoy });
-    setModal('endoso');
-  };
-
   const handleSaveRecibido = async (e: React.FormEvent) => {
     e.preventDefault();
     const monto = parseFloat(formRec.monto);
@@ -25496,24 +25488,6 @@ const ChequesView = ({
     if (!saved) { showNotification('No se pudo guardar el cheque', 'error'); return; }
     showNotification(editingEmi ? 'Cheque actualizado' : 'Cheque emitido creado', 'success');
     setModal('');
-    await onReload();
-  };
-
-  const handleConfirmEndoso = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!endosandoRec) return;
-    if (!formEndoso.endosadoA.trim()) { showNotification('Indicá a quién se endosa', 'error'); return; }
-    setSaving(true);
-    const ok = await endosarChequeRecibido({
-      recibido: endosandoRec,
-      endosadoA: formEndoso.endosadoA.trim(),
-      fechaEndoso: formEndoso.fechaEndoso || hoy,
-    });
-    setSaving(false);
-    if (!ok) { showNotification('No se pudo endosar el cheque', 'error'); return; }
-    showNotification('Cheque endosado y emitido generado', 'success');
-    setModal('');
-    setEndosandoRec(null);
     await onReload();
   };
 
@@ -26076,7 +26050,6 @@ const ChequesView = ({
                             {c.estado === 'en_cartera' && (
                               <>
                                 <button type="button" onClick={() => openDepositar(c)} className={accionBtn}>Depositar</button>
-                                <button type="button" onClick={() => openEndoso(c)} className={accionBtn}>Endosar</button>
                                 <button type="button" onClick={() => openAcreditar(c)} className={accionBtn}>Acreditar</button>
                                 <button type="button" onClick={() => cambiarEstadoRec(c, 'rechazado')} className={cn(accionBtn, 'text-rose-600')}>Rechazar</button>
                               </>
@@ -26380,31 +26353,6 @@ const ChequesView = ({
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" onClick={() => setModal('')} className="px-4 py-2 text-slate-500 font-bold text-sm">Cancelar</button>
             <button type="submit" disabled={saving} className="px-6 py-2 bg-sleek-accent text-white font-bold rounded-lg text-sm">{saving ? 'Guardando...' : 'Guardar'}</button>
-          </div>
-        </form>
-      </Modal>
-
-      <Modal isOpen={modal === 'endoso'} onClose={() => { setModal(''); setEndosandoRec(null); }} title="Endosar cheque recibido">
-        <form onSubmit={handleConfirmEndoso} className="space-y-4">
-          <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 font-medium">
-            Se generará un cheque emitido por endoso a nombre del beneficiario indicado.
-          </p>
-          {endosandoRec && (
-            <p className="text-xs text-slate-500">
-              Cheque {endosandoRec.banco}{endosandoRec.numero ? ` Nº ${endosandoRec.numero}` : ''} · {formatNumber(endosandoRec.monto, 2)}
-            </p>
-          )}
-          <div>
-            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Endosado a *</label>
-            <input required value={formEndoso.endosadoA} onChange={(e) => setFormEndoso({ ...formEndoso, endosadoA: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
-          </div>
-          <div>
-            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Fecha endoso</label>
-            <input type="date" value={formEndoso.fechaEndoso} onChange={(e) => setFormEndoso({ ...formEndoso, fechaEndoso: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
-          </div>
-          <div className="flex justify-end gap-2 pt-2">
-            <button type="button" onClick={() => { setModal(''); setEndosandoRec(null); }} className="px-4 py-2 text-slate-500 font-bold text-sm">Cancelar</button>
-            <button type="submit" disabled={saving} className="px-6 py-2 bg-sleek-accent text-white font-bold rounded-lg text-sm">{saving ? 'Procesando...' : 'Endosar'}</button>
           </div>
         </form>
       </Modal>
