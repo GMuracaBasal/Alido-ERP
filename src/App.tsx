@@ -362,6 +362,95 @@ const DateInput: React.FC<{
   );
 };
 
+/** yyyy-MM → MM/yyyy */
+const isoToDisplayMonth = (value: string): string => {
+  const m = String(value || '').match(/^(\d{4})-(\d{2})/);
+  return m ? `${m[2]}/${m[1]}` : (value || '');
+};
+
+/** MM/yyyy → yyyy-MM (null si es inválido) */
+const displayToIsoMonth = (display: string): string | null => {
+  const m = display.match(/^(\d{2})\/(\d{4})$/);
+  if (!m) return null;
+  const mes = Number(m[1]);
+  if (mes < 1 || mes > 12) return null;
+  return `${m[2]}-${m[1]}`;
+};
+
+/** Input de mes mm/aaaa + selector nativo; valor interno yyyy-MM */
+const MonthInput: React.FC<{
+  value: string;
+  onChange: (isoMonth: string) => void;
+} & Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'type'>> = ({
+  value,
+  onChange,
+  className = '',
+  placeholder = 'mm/aaaa',
+  ...props
+}) => {
+  const nativePickerRef = useRef<HTMLInputElement>(null);
+  const [display, setDisplay] = useState(() => isoToDisplayMonth(value));
+
+  useEffect(() => {
+    setDisplay(isoToDisplayMonth(value));
+  }, [value]);
+
+  const openCalendar = () => {
+    const el = nativePickerRef.current;
+    if (!el) return;
+    try {
+      el.showPicker?.();
+    } catch {
+      el.focus();
+      el.click();
+    }
+  };
+
+  return (
+    <div className="relative w-full">
+      <input
+        {...props}
+        type="text"
+        inputMode="numeric"
+        placeholder={placeholder}
+        maxLength={7}
+        value={display}
+        onChange={(e) => {
+          const digits = e.target.value.replace(/\D/g, '').slice(0, 6);
+          const formatted = digits.length <= 2 ? digits : `${digits.slice(0, 2)}/${digits.slice(2)}`;
+          setDisplay(formatted);
+          const iso = displayToIsoMonth(formatted);
+          if (iso) onChange(iso);
+          else if (!formatted.trim()) onChange('');
+        }}
+        onBlur={() => {
+          if (!displayToIsoMonth(display) && display.trim()) setDisplay(isoToDisplayMonth(value));
+        }}
+        className={`${className} pr-10`.trim()}
+      />
+      <input
+        ref={nativePickerRef}
+        type="month"
+        value={/^\d{4}-\d{2}$/.test(value) ? value : ''}
+        onChange={(e) => onChange(e.target.value || '')}
+        tabIndex={-1}
+        className="sr-only"
+        aria-hidden
+      />
+      <button
+        type="button"
+        tabIndex={-1}
+        onClick={openCalendar}
+        className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-sleek-accent transition-colors z-[1]"
+        aria-label="Abrir calendario"
+        title="Seleccionar mes"
+      >
+        <Calendar className="w-4 h-4 shrink-0" />
+      </button>
+    </div>
+  );
+};
+
 /** Match estricto: código de envase pertenece al N° lote (prefijo + guión final). */
 const codigoEnvasePerteneceALote = (codigoEnvase: string, numeroLote: string): boolean => {
   const codigo = (codigoEnvase || '').toLowerCase();
@@ -11736,7 +11825,7 @@ const SalidaForm = ({
                           <span className={cn(
                             "px-2 py-0.5 rounded font-bold",
                             isVencido ? "bg-rose-100 text-rose-600" : isCerca ? "bg-amber-100 text-amber-600" : "bg-emerald-50 text-emerald-600"
-                          )}>
+                            )}>
                             {safeFormat(l.fechaVencimiento, 'dd/MM/yy')}
                           </span>
                         </td>
@@ -13309,19 +13398,17 @@ const VentasDashboardView = ({
           <div className="flex flex-wrap gap-4 items-end">
             <div>
               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Desde</label>
-              <input
-                type="date"
+              <DateInput
                 value={dashFechaDesde}
-                onChange={(e) => setDashFechaDesde(e.target.value)}
+                onChange={(iso) => setDashFechaDesde(iso)}
                 className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold uppercase tracking-widest"
               />
             </div>
             <div>
               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Hasta</label>
-              <input
-                type="date"
+              <DateInput
                 value={dashFechaHasta}
-                onChange={(e) => setDashFechaHasta(e.target.value)}
+                onChange={(iso) => setDashFechaHasta(iso)}
                 className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold uppercase tracking-widest"
               />
             </div>
@@ -16284,7 +16371,7 @@ const ValoresGridEditor = ({
               </div>
               <div className="space-y-1">
                 <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Vencimiento</label>
-                <input type="date" value={draft.vencimiento} onChange={(e) => setDraft({ ...draft, vencimiento: e.target.value })} className={inputCls} />
+                <DateInput value={draft.vencimiento} onChange={(iso) => setDraft({ ...draft, vencimiento: iso })} className={inputCls} />
               </div>
               <div className="space-y-1">
                 <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Tipo cheque</label>
@@ -18951,7 +19038,7 @@ const RRHHModule = ({
             </div>
             <div className="space-y-2">
               <label className={labelClass}>Fecha de ingreso *</label>
-              <input type="date" required className={inputClass} value={empForm.fechaIngreso || ''} onChange={(e) => setEmpForm({ ...empForm, fechaIngreso: e.target.value })} />
+              <DateInput required className={inputClass} value={empForm.fechaIngreso || ''} onChange={(iso) => setEmpForm({ ...empForm, fechaIngreso: iso })} />
             </div>
             <div className="space-y-2">
               <label className={labelClass}>Puesto</label>
@@ -19074,7 +19161,7 @@ const RRHHModule = ({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <label className={labelClass}>Fecha *</label>
-              <input type="date" required className={inputClass} value={adelantoForm.fecha} onChange={(e) => setAdelantoForm({ ...adelantoForm, fecha: e.target.value })} />
+              <DateInput required className={inputClass} value={adelantoForm.fecha} onChange={(iso) => setAdelantoForm({ ...adelantoForm, fecha: iso })} />
             </div>
             <div className="space-y-2">
               <label className={labelClass}>Monto *</label>
@@ -19164,7 +19251,7 @@ const RRHHModule = ({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <label className={labelClass}>Fecha *</label>
-              <input type="date" required className={inputClass} value={ausenciaForm.fecha} onChange={(e) => setAusenciaForm({ ...ausenciaForm, fecha: e.target.value })} />
+              <DateInput required className={inputClass} value={ausenciaForm.fecha} onChange={(iso) => setAusenciaForm({ ...ausenciaForm, fecha: iso })} />
             </div>
             <div className="space-y-2">
               <label className={labelClass}>Tipo *</label>
@@ -19237,7 +19324,7 @@ const RRHHModule = ({
               {(liquidaciones as RhLiquidacionRow[]).map((liq) => (
                 <tr key={liq.id} className="hover:bg-slate-50/50 transition-colors">
                   <td className={tdClass}><span className="font-black text-sleek-dark uppercase">{nombreEmp(liq.empleadoId)}</span></td>
-                  <td className={tdClass}>{liq.periodo}</td>
+                  <td className={tdClass}>{isoToDisplayMonth(liq.periodo)}</td>
                   <td className={tdClass}>$ {formatCurrency(liq.sueldoBasico)}</td>
                   <td className={tdClass}>{formatNumber(liq.horasExtraQty)} × $ {formatCurrency(liq.horasExtraValor)}</td>
                   <td className={tdClass}>$ {formatCurrency(liq.adelantosDescontados)}</td>
@@ -19293,7 +19380,7 @@ const RRHHModule = ({
             </div>
             <div className="space-y-2">
               <label className={labelClass}>Período *</label>
-              <input type="month" required className={inputClass} value={liqForm.periodo} onChange={(e) => setLiqForm({ ...liqForm, periodo: e.target.value })} />
+              <MonthInput required className={inputClass} value={liqForm.periodo} onChange={(iso) => setLiqForm({ ...liqForm, periodo: iso })} />
             </div>
             <div className="space-y-2">
               <label className={labelClass}>Sueldo básico</label>
@@ -19376,7 +19463,7 @@ const RRHHModule = ({
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3 text-xs font-bold text-slate-600">
               <p><span className={labelClass + ' block mb-1'}>Empleado</span>{nombreEmp(detalleLiq.empleadoId)}</p>
-              <p><span className={labelClass + ' block mb-1'}>Período</span>{detalleLiq.periodo}</p>
+              <p><span className={labelClass + ' block mb-1'}>Período</span>{isoToDisplayMonth(detalleLiq.periodo)}</p>
               <p><span className={labelClass + ' block mb-1'}>Sueldo básico</span>$ {formatCurrency(detalleLiq.sueldoBasico)}</p>
               <p><span className={labelClass + ' block mb-1'}>Horas extra</span>{formatNumber(detalleLiq.horasExtraQty)} × $ {formatCurrency(detalleLiq.horasExtraValor)}</p>
               <p><span className={labelClass + ' block mb-1'}>Adelantos</span>$ {formatCurrency(detalleLiq.adelantosDescontados)}</p>
@@ -24399,7 +24486,7 @@ const TesoreriaView = ({
               </div>
               <div>
                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Fecha apertura</label>
-                <input type="date" required value={formCuenta.fechaApertura || hoy} onChange={(e) => setFormCuenta({ ...formCuenta, fechaApertura: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border rounded-lg text-sm" />
+                <DateInput required value={formCuenta.fechaApertura || hoy} onChange={(iso) => setFormCuenta({ ...formCuenta, fechaApertura: iso })} className="w-full px-4 py-3 bg-slate-50 border rounded-lg text-sm" />
               </div>
             </div>
             <div>
@@ -24422,7 +24509,7 @@ const TesoreriaView = ({
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Fecha</label>
-                <input type="date" required value={formMov.fecha} onChange={(e) => setFormMov({ ...formMov, fecha: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border rounded-lg text-sm" />
+                <DateInput required value={formMov.fecha} onChange={(iso) => setFormMov({ ...formMov, fecha: iso })} className="w-full px-4 py-3 bg-slate-50 border rounded-lg text-sm" />
               </div>
               <div>
                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Medio de pago</label>
@@ -24477,7 +24564,7 @@ const TesoreriaView = ({
           <form onSubmit={handleSaveTransferencia} className="space-y-4">
             <div>
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Fecha</label>
-              <input type="date" required value={formTransf.fecha} onChange={(e) => setFormTransf({ ...formTransf, fecha: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border rounded-lg text-sm" />
+              <DateInput required value={formTransf.fecha} onChange={(iso) => setFormTransf({ ...formTransf, fecha: iso })} className="w-full px-4 py-3 bg-slate-50 border rounded-lg text-sm" />
             </div>
             <div>
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Cuenta origen</label>
@@ -25084,10 +25171,9 @@ const ProyeccionLiquidezView = ({
         <div className="flex items-end gap-4">
           <div>
             <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Arranca el</label>
-            <input
-              type="date"
+            <DateInput
               value={fechaInicio}
-              onChange={(e) => setFechaInicio(e.target.value)}
+              onChange={(iso) => setFechaInicio(iso)}
               className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-700"
             />
           </div>
@@ -25116,7 +25202,7 @@ const ProyeccionLiquidezView = ({
                 return (
                   <tr key={i} className={cn(deficit && 'bg-rose-50')}>
                     <td className="px-4 py-3 text-xs font-bold text-slate-600">
-                      {safeFormat(f.inicioIso, 'dd/MM')} – {safeFormat(f.finIso, 'dd/MM')}
+                      {safeFormat(f.inicioIso, 'dd/MM/yy')} – {safeFormat(f.finIso, 'dd/MM/yy')}
                     </td>
                     <td className="px-4 py-3 text-xs text-right font-mono text-emerald-600">{f.entra ? `$ ${formatNumber(f.entra, 2)}` : '—'}</td>
                     <td className="px-4 py-3 text-xs text-right font-mono text-rose-600">{f.sale ? `$ ${formatNumber(f.sale, 2)}` : '—'}</td>
@@ -25141,7 +25227,7 @@ const ProyeccionLiquidezView = ({
           <div>
             <p className="text-xs font-black text-rose-700 uppercase tracking-widest">Déficit proyectado</p>
             <p className="text-xs font-bold text-rose-600 mt-1">
-              La primera semana en déficit es {safeFormat(proyeccion.primeraNegativa.inicioIso, 'dd/MM')} – {safeFormat(proyeccion.primeraNegativa.finIso, 'dd/MM')}.
+              La primera semana en déficit es {safeFormat(proyeccion.primeraNegativa.inicioIso, 'dd/MM/yy')} – {safeFormat(proyeccion.primeraNegativa.finIso, 'dd/MM/yy')}.
               Necesitás cubrir ${formatNumber(proyeccion.montoACubrir, 2)} para mantener la liquidez positiva.
             </p>
           </div>
@@ -25881,10 +25967,9 @@ const ChequesView = ({
           </div>
           <div>
             <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Ver desde la semana de</label>
-            <input
-              type="date"
+            <DateInput
               value={fechaRefProy}
-              onChange={(e) => setFechaRefProy(e.target.value)}
+              onChange={(iso) => setFechaRefProy(iso)}
               className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-700"
             />
           </div>
@@ -25907,7 +25992,7 @@ const ChequesView = ({
                 const deficit = f.acumulado < 0;
                 return (
                   <tr key={i} className={cn(deficit && 'bg-rose-50')}>
-                    <td className="px-4 py-3 text-xs font-bold text-slate-600">{safeFormat(f.inicioIso, 'dd/MM')} – {safeFormat(f.finIso, 'dd/MM')}</td>
+                    <td className="px-4 py-3 text-xs font-bold text-slate-600">{safeFormat(f.inicioIso, 'dd/MM/yy')} – {safeFormat(f.finIso, 'dd/MM/yy')}</td>
                     <td className="px-4 py-3 text-xs text-right font-mono text-slate-400">$ {formatNumber(disponibleTesoreria, 2)}</td>
                     <td className="px-4 py-3 text-xs text-right font-mono text-emerald-600">{f.porCobrar ? `$ ${formatNumber(f.porCobrar, 2)}` : '—'}</td>
                     <td className="px-4 py-3 text-xs text-right font-mono text-rose-600">{f.porPagar ? `$ ${formatNumber(f.porPagar, 2)}` : '—'}</td>
@@ -25924,7 +26009,7 @@ const ChequesView = ({
           <div className="flex items-start gap-3 p-3 bg-rose-50 border border-rose-200 rounded-xl">
             <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
             <p className="text-xs font-bold text-rose-600">
-              Déficit proyectado: la primera semana en negativo es {safeFormat(proyeccionCheques.primeraNegativa.inicioIso, 'dd/MM')} – {safeFormat(proyeccionCheques.primeraNegativa.finIso, 'dd/MM')} (acumulado ${formatNumber(proyeccionCheques.primeraNegativa.acumulado, 2)}).
+              Déficit proyectado: la primera semana en negativo es {safeFormat(proyeccionCheques.primeraNegativa.inicioIso, 'dd/MM/yy')} – {safeFormat(proyeccionCheques.primeraNegativa.finIso, 'dd/MM/yy')} (acumulado ${formatNumber(proyeccionCheques.primeraNegativa.acumulado, 2)}).
             </p>
           </div>
         ) : (
@@ -25985,11 +26070,11 @@ const ChequesView = ({
               </div>
               <div>
                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Cobro desde</label>
-                <input type="date" value={filtroDesdeRec} onChange={(e) => setFiltroDesdeRec(e.target.value)} className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+                <DateInput value={filtroDesdeRec} onChange={(iso) => setFiltroDesdeRec(iso)} className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
               </div>
               <div>
                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Cobro hasta</label>
-                <input type="date" value={filtroHastaRec} onChange={(e) => setFiltroHastaRec(e.target.value)} className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+                <DateInput value={filtroHastaRec} onChange={(iso) => setFiltroHastaRec(iso)} className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
               </div>
               <div>
                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Tipo</label>
@@ -26126,11 +26211,11 @@ const ChequesView = ({
               </div>
               <div>
                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Pago desde</label>
-                <input type="date" value={filtroDesdeEmi} onChange={(e) => setFiltroDesdeEmi(e.target.value)} className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+                <DateInput value={filtroDesdeEmi} onChange={(iso) => setFiltroDesdeEmi(iso)} className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
               </div>
               <div>
                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Pago hasta</label>
-                <input type="date" value={filtroHastaEmi} onChange={(e) => setFiltroHastaEmi(e.target.value)} className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+                <DateInput value={filtroHastaEmi} onChange={(iso) => setFiltroHastaEmi(iso)} className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
               </div>
               <div>
                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Tipo</label>
@@ -26229,11 +26314,11 @@ const ChequesView = ({
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Fecha recepción</label>
-              <input type="date" value={formRec.fechaRecepcion} onChange={(e) => setFormRec({ ...formRec, fechaRecepcion: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+              <DateInput value={formRec.fechaRecepcion} onChange={(iso) => setFormRec({ ...formRec, fechaRecepcion: iso })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
             </div>
             <div>
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Fecha cobro *</label>
-              <input type="date" required value={formRec.fechaCobro} onChange={(e) => setFormRec({ ...formRec, fechaCobro: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+              <DateInput required value={formRec.fechaCobro} onChange={(iso) => setFormRec({ ...formRec, fechaCobro: iso })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
@@ -26313,11 +26398,11 @@ const ChequesView = ({
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Fecha emisión</label>
-              <input type="date" value={formEmi.fechaEmision} onChange={(e) => setFormEmi({ ...formEmi, fechaEmision: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+              <DateInput value={formEmi.fechaEmision} onChange={(iso) => setFormEmi({ ...formEmi, fechaEmision: iso })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
             </div>
             <div>
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Fecha pago *</label>
-              <input type="date" required value={formEmi.fechaPago} onChange={(e) => setFormEmi({ ...formEmi, fechaPago: e.target.value })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+              <DateInput required value={formEmi.fechaPago} onChange={(iso) => setFormEmi({ ...formEmi, fechaPago: iso })} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
