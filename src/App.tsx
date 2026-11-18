@@ -1844,6 +1844,18 @@ const VALOR_TIPO_LABEL: Record<ValorTipo, string> = {
   ajuste: 'Ajuste',
 };
 
+// pagos_proveedores.metodo tiene un CHECK: solo admite Efectivo | Transferencia | Cheque | Otro | Múltiple | Ajuste
+const metodoPagoProveedor = (valores: ValorMovimiento[]): 'Efectivo' | 'Transferencia' | 'Cheque' | 'Otro' | 'Múltiple' => {
+  if (valores.length !== 1) return 'Múltiple';
+  switch (valores[0].tipo) {
+    case 'efectivo': return 'Efectivo';
+    case 'transferencia': return 'Transferencia';
+    case 'cheque_propio':
+    case 'cheque_tercero': return 'Cheque';
+    default: return 'Otro';
+  }
+};
+
 interface Venta {
   id: string;
   puntoVentaId: string;
@@ -19749,6 +19761,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
   const [pagoValores, setPagoValores] = useState<ValorMovimiento[]>([]);
   const [editingPagoId, setEditingPagoId] = useState<string | null>(null);
   const [pagoMontoInput, setPagoMontoInput] = useState('0');
+  const guardandoPagoRef = useRef(false);
 
   useEffect(() => {
     if (!proveedorAAbrir) return;
@@ -19999,8 +20012,9 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
     reloadCheques?.();
   };
 
-  const handleSavePago = (e: React.FormEvent) => {
+  const handleSavePago = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (guardandoPagoRef.current) return;
     if (!pagosCargadosOkRef?.current) {
       showNotification('No se puede guardar: los pagos a proveedores no se cargaron correctamente. Recargá la página.', 'error');
       return;
@@ -20055,7 +20069,7 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
       showNotification('El total de la orden de pago debe ser mayor a cero', 'error');
       return;
     }
-    const metodoResumen = valores.length === 1 ? VALOR_TIPO_LABEL[valores[0].tipo] : 'Múltiple';
+    const metodoResumen = metodoPagoProveedor(valores);
 
     if (editingPagoId) {
       const pagoAnterior = (pagosProveedores || []).find((p: any) => p.id === editingPagoId);
@@ -20098,8 +20112,14 @@ const ProveedoresView = ({ proveedores, setProveedores, pagosProveedores, setPag
         egresoId: pagoEgresoId || undefined,
         valores,
       };
-      setPagosProveedores([...pagosProveedores, newPago]);
-      savePagoProveedorRelacional({ ...newPago, anulado: false } as any).catch((e) => console.error('savePagoRelacional pago new:', e));
+      guardandoPagoRef.current = true;
+      const guardado = await savePagoProveedorRelacional({ ...newPago, anulado: false } as any);
+      guardandoPagoRef.current = false;
+      if (!guardado) {
+        showNotification('No se pudo guardar el pago. No se generaron cheques ni movimientos; intentá de nuevo.', 'error');
+        return;
+      }
+      setPagosProveedores((prev: PagoProveedor[]) => [...prev, newPago]);
       generarImpactosPago(newPago.id, comprobante, valores, newPago.fecha);
       if (pagoEgresoId && typeof setEgresos === 'function') {
         const eg = (egresos || []).find((x: any) => x.id === pagoEgresoId);
